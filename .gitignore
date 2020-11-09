@@ -1,1 +1,6 @@
 .history
+*.o
+*.a
+*.o.cmd
+*.a.cmd
+*.o.d
