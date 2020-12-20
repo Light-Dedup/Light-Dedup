@@ -894,7 +894,7 @@ int nova_update_truncated_block_csum(struct super_block *sb,
 		if (tail_strp == NULL)
 			return -ENOMEM;
 
-		if (memcpy_mcsafe(tail_strp, strp_addr, strp_offset) < 0)
+		if (memcpy_mcsafe(tail_strp, strp_addr, strp_offset))
 			return -EIO;
 
 		nova_update_stripe_csum(sb, 1, strp_nr, tail_strp, 0);

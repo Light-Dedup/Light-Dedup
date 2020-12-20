@@ -397,7 +397,7 @@ int nova_update_truncated_block_parity(struct super_block *sb,
 		goto out;
 	}
 
-	if (memcpy_mcsafe(block, nvmm_addr, blocksize) < 0) {
+	if (memcpy_mcsafe(block, nvmm_addr, blocksize)) {
 		ret = -EIO;
 		goto out;
 	}
