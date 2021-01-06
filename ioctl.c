@@ -30,8 +30,8 @@ long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	struct nova_inode *pi;
 	struct super_block *sb = inode->i_sb;
 	struct nova_inode_update update;
-	unsigned int flags;
 	int ret;
+	unsigned long flags = 0;
 
 	pi = nova_get_inode(sb, inode);
 	if (!pi)
@@ -86,9 +86,9 @@ long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		ret = nova_append_link_change_entry(sb, pi, inode,
 					&update, &old_linkc, epoch_id);
 		if (!ret) {
-			nova_memunlock_inode(sb, pi);
+			nova_memunlock_inode(sb, pi, &flags);
 			nova_update_inode(sb, inode, pi, &update, 1);
-			nova_memlock_inode(sb, pi);
+			nova_memlock_inode(sb, pi, &flags);
 			nova_invalidate_link_change_entry(sb, old_linkc);
 		}
 		sih->trans_id++;
@@ -125,9 +125,9 @@ flags_out:
 		ret = nova_append_link_change_entry(sb, pi, inode,
 					&update, &old_linkc, epoch_id);
 		if (!ret) {
-			nova_memunlock_inode(sb, pi);
+			nova_memunlock_inode(sb, pi, &flags);
 			nova_update_inode(sb, inode, pi, &update, 1);
-			nova_memlock_inode(sb, pi);
+			nova_memlock_inode(sb, pi, &flags);
 			nova_invalidate_link_change_entry(sb, old_linkc);
 		}
 		sih->trans_id++;
