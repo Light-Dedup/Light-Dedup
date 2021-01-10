@@ -389,21 +389,18 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	int cpuid;
 	int new_node_used = 0;
 	int ret;
-	INIT_TIMING(free_time);
 
 	if (num <= 0) {
 		nova_dbg("%s ERROR: free %d\n", __func__, num);
 		return -EINVAL;
 	}
 
-	NOVA_START_TIMING(free_blocks_t, free_time);
 	cpuid = blocknr / sbi->per_list_blocks;
 
 	/* Pre-allocate blocknode */
 	curr_node = nova_alloc_blocknode(sb);
 	if (curr_node == NULL) {
 		/* returning without freeing the block*/
-		NOVA_END_TIMING(free_blocks_t, free_time);
 		return -ENOMEM;
 	}
 
@@ -496,7 +493,6 @@ out:
 	if (new_node_used == 0)
 		nova_free_blocknode(curr_node);
 
-	NOVA_END_TIMING(free_blocks_t, free_time);
 	return ret;
 }
 
@@ -877,7 +873,6 @@ static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	long ret_blocks = 0;
 	int retried = 0;
 	unsigned long flags = 0;
-	INIT_TIMING(alloc_time);
 
 	num_blocks = num * nova_get_numblocks(btype);
 	if (num_blocks == 0) {
@@ -885,7 +880,6 @@ static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 		return -EINVAL;
 	}
 
-	NOVA_START_TIMING(new_blocks_t, alloc_time);
 	if (cpuid == ANY_CPU)
 		cpuid = nova_get_cpuid(sb);
 
@@ -923,7 +917,6 @@ alloc:
 	}
 
 	spin_unlock(&free_list->s_lock);
-	NOVA_END_TIMING(new_blocks_t, alloc_time);
 
 	if (ret_blocks <= 0 || new_blocknr == 0) {
 		nova_dbgv("%s: not able to allocate %d blocks. "
