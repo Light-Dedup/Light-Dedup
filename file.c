@@ -177,23 +177,14 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_inode *pi;
-	struct nova_file_write_entry *entry;
-	struct nova_file_write_entry *entryc, entry_copy;
-	struct nova_file_write_entry entry_data;
 	struct nova_inode_update update;
-	unsigned long start_blk, num_blocks, ent_blks = 0;
-	unsigned long total_blocks = 0;
-	unsigned long blocknr = 0;
+	unsigned long start_blk, num_blocks;
 	unsigned long blockoff;
 	unsigned int data_bits;
 	loff_t new_size;
 	long ret = 0;
-	int inplace = 0;
 	int blocksize_mask;
-	int allocated = 0;
-	bool update_log = false;
 	INIT_TIMING(fallocate_time);
-	u64 begin_tail = 0;
 	u64 epoch_id;
 	u32 time;
 	unsigned long flags = 0;
@@ -242,88 +233,11 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	epoch_id = nova_get_epoch_id(sb);
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
-	while (num_blocks > 0) {
-		ent_blks = nova_check_existing_entry(sb, inode, num_blocks,
-						start_blk, &entry, &entry_copy,
-						1, epoch_id, &inplace, 1);
-
-		entryc = (metadata_csum == 0) ? entry : &entry_copy;
-
-		if (entry && inplace) {
-			if (entryc->size < new_size) {
-				/* Update existing entry */
-				nova_memunlock_range(sb, entry, CACHELINE_SIZE, &flags);
-				entry->size = new_size;
-				nova_update_entry_csum(entry);
-				nova_update_alter_entry(sb, entry);
-				nova_memlock_range(sb, entry, CACHELINE_SIZE, &flags);
-			}
-			allocated = ent_blks;
-			goto next;
-		}
-
-		/* Allocate zeroed blocks to fill hole */
-		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
-				 ent_blks, ALLOC_INIT_ZERO, ANY_CPU,
-				 ALLOC_FROM_HEAD);
-		nova_dbgv("%s: alloc %d blocks @ %lu\n", __func__,
-						allocated, blocknr);
-
-		if (allocated <= 0) {
-			nova_dbg("%s alloc %lu blocks failed!, %d\n",
-						__func__, ent_blks, allocated);
-			ret = allocated;
-			goto out;
-		}
-
-		/* Handle hole fill write */
-		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
-					start_blk, allocated, blocknr,
-					time, new_size);
-
-		ret = nova_append_file_write_entry(sb, pi, inode,
-					&entry_data, &update);
-		if (ret) {
-			nova_dbg("%s: append inode entry failed\n", __func__);
-			ret = -ENOSPC;
-			goto out;
-		}
-
-		entry = nova_get_block(sb, update.curr_entry);
-		nova_reset_csum_parity_range(sb, sih, entry, start_blk,
-					start_blk + allocated, 1, 0);
-
-		update_log = true;
-		if (begin_tail == 0)
-			begin_tail = update.curr_entry;
-
-		total_blocks += allocated;
-next:
-		num_blocks -= allocated;
-		start_blk += allocated;
-	}
 
 	data_bits = blk_type_to_shift[sih->i_blk_type];
-	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits));
+	sih->i_blocks += (num_blocks << (data_bits - sb->s_blocksize_bits));
 
 	inode->i_blocks = sih->i_blocks;
-
-	if (update_log) {
-		sih->log_tail = update.tail;
-		sih->alter_log_tail = update.alter_tail;
-
-		nova_memunlock_inode(sb, pi, &flags);
-		nova_update_tail(pi, update.tail);
-		if (metadata_csum)
-			nova_update_alter_tail(pi, update.alter_tail);
-		nova_memlock_inode(sb, pi, &flags);
-
-		/* Update file tree */
-		ret = nova_reassign_file_tree(sb, sih, begin_tail);
-		if (ret)
-			goto out;
-
-	}
 
 	nova_dbgv("blocks: %lu, %lu\n", inode->i_blocks, sih->i_blocks);
 
@@ -346,10 +260,6 @@ next:
 
 	sih->trans_id++;
 out:
-	if (ret < 0)
-		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
-						begin_tail, update.tail);
-
 	inode_unlock(inode);
 	NOVA_END_TIMING(fallocate_t, fallocate_time);
 	return ret;
