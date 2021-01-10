@@ -1,5 +1,6 @@
 #!/bin/sh
 
+echo umounting...
 umount /mnt/pmem
 rmmod nova
 insmod nova.ko measure_timing=0
