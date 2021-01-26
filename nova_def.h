@@ -22,6 +22,7 @@
 
 #include <linux/types.h>
 #include <linux/magic.h>
+#include <linux/cpufeature.h>
 
 #define	NOVA_SUPER_MAGIC	0x4E4F5641	/* NOVA */
 
@@ -151,5 +152,42 @@ static inline void nova_flush_buffer(void *buf, uint32_t len, bool fence)
 #define POISON_MASK		(~(POISON_RADIUS - 1))
 #define NOVA_STRIPE_SHIFT	(9) /* size should be no less than PR_SIZE */
 #define NOVA_STRIPE_SIZE	(1 << NOVA_STRIPE_SHIFT)
+
+
+/*
+ * Debug code
+ */
+#ifdef pr_fmt
+#undef pr_fmt
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#endif
+
+/* #define nova_dbg(s, args...)		pr_debug(s, ## args) */
+#define nova_dbg(s, args ...)		pr_info(s, ## args)
+#define nova_dbg1(s, args ...)
+#define nova_err(sb, s, args ...)	nova_error_mng(sb, s, ## args)
+#define nova_warn(s, args ...)		pr_warn(s, ## args)
+#define nova_info(s, args ...)		pr_info(s, ## args)
+
+extern unsigned int nova_dbgmask;
+#define NOVA_DBGMASK_MMAPHUGE	       (0x00000001)
+#define NOVA_DBGMASK_MMAP4K	       (0x00000002)
+#define NOVA_DBGMASK_MMAPVERBOSE       (0x00000004)
+#define NOVA_DBGMASK_MMAPVVERBOSE      (0x00000008)
+#define NOVA_DBGMASK_VERBOSE	       (0x00000010)
+#define NOVA_DBGMASK_TRANSACTION       (0x00000020)
+
+#define nova_dbg_mmap4k(s, args ...)		 \
+	((nova_dbgmask & NOVA_DBGMASK_MMAP4K) ? nova_dbg(s, args) : 0)
+#define nova_dbg_mmapv(s, args ...)		 \
+	((nova_dbgmask & NOVA_DBGMASK_MMAPVERBOSE) ? nova_dbg(s, args) : 0)
+#define nova_dbg_mmapvv(s, args ...)		 \
+	((nova_dbgmask & NOVA_DBGMASK_MMAPVVERBOSE) ? nova_dbg(s, args) : 0)
+
+#define nova_dbg_verbose(s, args ...)		 \
+	((nova_dbgmask & NOVA_DBGMASK_VERBOSE) ? nova_dbg(s, ##args) : 0)
+#define nova_dbgv(s, args ...)	nova_dbg_verbose(s, ##args)
+#define nova_dbg_trans(s, args ...)		 \
+	((nova_dbgmask & NOVA_DBGMASK_TRANSACTION) ? nova_dbg(s, ##args) : 0)
 
 #endif /* _LINUX_NOVA_DEF_H */

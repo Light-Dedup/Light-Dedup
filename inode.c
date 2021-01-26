@@ -190,7 +190,7 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 	unsigned long blocknr;
 	unsigned long curr_addr;
 	int allocated;
-	unsigned long flags = 0;
+	unsigned long irq_flags = 0;
 
 	if (ino < NOVA_NORMAL_INODE_START) {
 		*pi_addr = nova_get_reserved_inode_addr(sb, ino);
@@ -238,10 +238,10 @@ int nova_get_inode_address(struct super_block *sb, u64 ino, int version,
 			curr = nova_get_block_off(sb, blocknr,
 						NOVA_BLOCK_TYPE_2M);
 			nova_memunlock_range(sb, (void *)curr_addr,
-						CACHELINE_SIZE, &flags);
+						CACHELINE_SIZE, &irq_flags);
 			*(u64 *)(curr_addr) = curr;
 			nova_memlock_range(sb, (void *)curr_addr,
-						CACHELINE_SIZE, &flags);
+						CACHELINE_SIZE, &irq_flags);
 			nova_flush_buffer((void *)curr_addr,
 						NOVA_INODE_SIZE, 1);
 		}
@@ -279,16 +279,13 @@ int nova_get_alter_inode_address(struct super_block *sb, u64 ino,
 }
 
 int nova_delete_file_tree(struct super_block *sb,
-	struct nova_inode_info_header *sih, unsigned long start_blocknr,
-	unsigned long last_blocknr, bool delete_nvmm, bool delete_dead,
+	struct nova_inode_info_header *sih, unsigned long start_pgoff,
+	unsigned long last_pgoff, bool delete_nvmm, bool delete_dead,
 	u64 epoch_id)
 {
 	struct nova_file_write_entry *entry;
 	struct nova_file_write_entry *entryc, entry_copy;
-	struct nova_file_write_entry *old_entry = NULL;
-	unsigned long pgoff = start_blocknr;
-	unsigned long old_pgoff = 0;
-	unsigned int num_free = 0;
+	unsigned long pgoff = start_pgoff;
 	int freed = 0;
 	void *ret;
 	INIT_TIMING(delete_time);
@@ -303,21 +300,11 @@ int nova_delete_file_tree(struct super_block *sb,
 		if (entry) {
 			ret = radix_tree_delete(&sih->tree, pgoff);
 			BUG_ON(!ret || ret != entry);
-			if (entry != old_entry) {
-				if (old_entry && delete_nvmm) {
-					nova_free_old_entry(sb, sih,
-							old_entry, old_pgoff,
-							num_free, delete_dead,
-							epoch_id);
-					freed += num_free;
-				}
-
-				old_entry = entry;
-				old_pgoff = pgoff;
-				num_free = 1;
-			} else {
-				num_free++;
-			}
+			nova_free_old_entry(sb, sih,
+					entry, pgoff,
+					delete_dead,
+					epoch_id);
+			++freed;
 			pgoff++;
 		} else {
 			/* We are finding a hole. Jump to the next entry. */
@@ -335,14 +322,8 @@ int nova_delete_file_tree(struct super_block *sb,
 		}
 	} while (1);
 
-	if (old_entry && delete_nvmm) {
-		nova_free_old_entry(sb, sih, old_entry, old_pgoff,
-					num_free, delete_dead, epoch_id);
-		freed += num_free;
-	}
-
 	nova_dbgv("Inode %lu: delete file tree from pgoff %lu to %lu, %d blocks freed\n",
-			sih->ino, start_blocknr, last_blocknr, freed);
+			sih->ino, start_pgoff, last_pgoff, freed);
 
 	NOVA_END_TIMING(delete_file_tree_t, delete_time);
 	return freed;

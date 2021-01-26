@@ -132,9 +132,9 @@ static void nova_init_free_list(struct super_block *sb,
 	free_list->block_end = free_list->block_start +
 					per_list_blocks - 1;
 	if (index == 0)
-		free_list->block_start += sbi->head_reserved_blocks;
+		free_list->block_start += HEAD_RESERVED_BLOCKS;
 	if (index == sbi->cpus - 1)
-		free_list->block_end -= sbi->tail_reserved_blocks;
+		free_list->block_end -= TAIL_RESERVED_BLOCKS;
 
 	nova_data_csum_init_free_list(sb, free_list);
 	nova_data_parity_init_free_list(sb, free_list);
@@ -520,6 +520,26 @@ int nova_free_data_blocks(struct super_block *sb,
 
 	return ret;
 }
+int nova_free_data_block(struct super_block *sb,
+	unsigned long blocknr)
+{
+	int ret;
+	INIT_TIMING(free_time);
+
+	nova_dbgv("Free data blocknr %lu\n", blocknr);
+	if (blocknr == 0) {
+		nova_dbg("%s: ERROR: %lu\n", __func__, blocknr);
+		return -EINVAL;
+	}
+	NOVA_START_TIMING(free_data_t, free_time);
+	ret = nova_free_blocks(sb, blocknr, 1, NOVA_BLOCK_TYPE_4K, 0);
+	if (ret) {
+		nova_err(sb, "Free data blocknr %lu failed!\n", blocknr);
+	}
+	NOVA_END_TIMING(free_data_t, free_time);
+
+	return ret;
+}
 
 int nova_free_log_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long blocknr, int num)
@@ -540,6 +560,26 @@ int nova_free_log_blocks(struct super_block *sb,
 			 "failed!\n",
 			 sih->ino, num, blocknr, blocknr + num - 1);
 		nova_print_nova_log(sb, sih);
+	}
+	NOVA_END_TIMING(free_log_t, free_time);
+
+	return ret;
+}
+int nova_free_log_block(struct super_block *sb,
+	unsigned long blocknr)
+{
+	int ret;
+	INIT_TIMING(free_time);
+
+	nova_dbgv("Free log blocknr %lu\n", blocknr);
+	if (blocknr == 0) {
+		nova_dbg("%s: ERROR: %lu\n", __func__, blocknr);
+		return -EINVAL;
+	}
+	NOVA_START_TIMING(free_log_t, free_time);
+	ret = nova_free_blocks(sb, blocknr, 1, NOVA_BLOCK_TYPE_4K, 1);
+	if (ret) {
+		nova_err(sb, "Free log blocknr %lu failed!\n", blocknr);
 	}
 	NOVA_END_TIMING(free_log_t, free_time);
 
@@ -966,7 +1006,25 @@ int nova_new_data_blocks(struct super_block *sb,
 	}
 	return allocated;
 }
+unsigned long nova_new_data_block(struct super_block *sb,
+	enum nova_alloc_init zero, int cpu)
+{
+	int allocated;
+	unsigned long blocknr;
+	INIT_TIMING(alloc_time);
 
+	NOVA_START_TIMING(new_data_blocks_t, alloc_time);
+	allocated = nova_new_blocks(sb, &blocknr, 1,
+			    NOVA_BLOCK_TYPE_4K, zero, DATA, cpu, ALLOC_FROM_HEAD);
+	NOVA_END_TIMING(new_data_blocks_t, alloc_time);
+	if (allocated < 0) {
+		nova_dbgv("FAILED: alloc data block\n");
+		return 0;
+	} else {
+		nova_dbgv("Alloc data blocknr %lu\n", blocknr);
+		return blocknr;
+	}
+}
 
 // Allocate log blocks.	 The offset for the allocated block comes back in
 // blocknr.  Return the number of blocks allocated.
@@ -992,6 +1050,25 @@ int nova_new_log_blocks(struct super_block *sb,
 			  *blocknr + allocated - 1);
 	}
 	return allocated;
+}
+unsigned long nova_new_log_block(struct super_block *sb,
+	enum nova_alloc_init zero, int cpu)
+{
+	int allocated;
+	unsigned long blocknr;
+	INIT_TIMING(alloc_time);
+
+	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
+	allocated = nova_new_blocks(sb, &blocknr, 1,
+			    NOVA_BLOCK_TYPE_4K, zero, LOG, cpu, ALLOC_FROM_HEAD);
+	NOVA_END_TIMING(new_log_blocks_t, alloc_time);
+	if (allocated < 0) {
+		nova_dbgv("FAILED: alloc log block\n");
+		return 0;
+	} else {
+		nova_dbgv("Alloc log blocknr %lu\n", blocknr);
+		return blocknr;
+	}
 }
 
 unsigned long nova_count_free_blocks(struct super_block *sb)

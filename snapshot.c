@@ -154,8 +154,7 @@ static int nova_delete_snapshot_list_entries(struct super_block *sb,
 		case SS_FILE_WRITE:
 			w_entry = (struct snapshot_file_write_entry *)addr;
 			if (w_entry->deleted == 0)
-				nova_free_data_blocks(sb, &sih, w_entry->nvmm,
-							w_entry->num_pages);
+				nova_block_decr(sb, w_entry->nvmm);	// TODO: Handle error.
 			curr_p += sizeof(struct snapshot_file_write_entry);
 			continue;
 		default:
@@ -186,8 +185,7 @@ static inline int nova_background_clean_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, u64 epoch_id)
 {
 	if (w_entry->deleted == 0 && w_entry->delete_epoch_id <= epoch_id) {
-		nova_free_data_blocks(sb, sih, w_entry->nvmm,
-					w_entry->num_pages);
+		BUG_ON(nova_block_decr(sb, w_entry->nvmm) < 0);	// TODO: Handle error.
 		w_entry->deleted = 1;
 	}
 
@@ -491,7 +489,7 @@ static int nova_old_entry_deleteable(struct super_block *sb,
 }
 
 static int nova_append_snapshot_file_write_entry(struct super_block *sb,
-	struct snapshot_info *info, u64 nvmm, u64 num_pages,
+	struct snapshot_info *info, u64 nvmm,
 	u64 delete_epoch_id)
 {
 	struct snapshot_file_write_entry entry;
@@ -504,15 +502,14 @@ static int nova_append_snapshot_file_write_entry(struct super_block *sb,
 	}
 
 	NOVA_START_TIMING(append_snapshot_file_t, append_time);
-	nova_dbgv("Append file write entry: block %llu, %llu pages, delete epoch ID %llu to Snapshot epoch ID %llu\n",
-			nvmm, num_pages, delete_epoch_id,
+	nova_dbgv("Append file write entry: block %llu, delete epoch ID %llu to Snapshot epoch ID %llu\n",
+			nvmm, delete_epoch_id,
 			info->epoch_id);
 
 	memset(&entry, 0, sizeof(struct snapshot_file_write_entry));
 	entry.type = SS_FILE_WRITE;
 	entry.deleted = 0;
 	entry.nvmm = nvmm;
-	entry.num_pages = num_pages;
 	entry.delete_epoch_id = delete_epoch_id;
 
 	ret = nova_append_snapshot_list_entry(sb, info, &entry,
@@ -524,7 +521,7 @@ static int nova_append_snapshot_file_write_entry(struct super_block *sb,
 
 /* entry given to this function is a copy in dram */
 int nova_append_data_to_snapshot(struct super_block *sb,
-	struct nova_file_write_entry *entry, u64 nvmm, u64 num_pages,
+	struct nova_file_write_entry *entry, u64 nvmm,
 	u64 delete_epoch_id)
 {
 	struct snapshot_info *info = NULL;
@@ -534,7 +531,7 @@ int nova_append_data_to_snapshot(struct super_block *sb,
 					delete_epoch_id, &info);
 	if (ret == 0)
 		nova_append_snapshot_file_write_entry(sb, info, nvmm,
-					num_pages, delete_epoch_id);
+					delete_epoch_id);
 
 	return ret;
 }
@@ -814,7 +811,7 @@ static int nova_free_nvmm_page(struct super_block *sb,
 	}
 
 	nvmm_blocknr = nova_get_blocknr(sb, nvmm_page_addr, 0);
-	nova_free_log_blocks(sb, &sih, nvmm_blocknr, 1);
+	nova_free_log_block(sb, nvmm_blocknr);
 	return 0;
 }
 

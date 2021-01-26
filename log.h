@@ -67,16 +67,16 @@ static inline void nova_set_entry_type(void *p, enum nova_entry_type type)
  *
  * Documentation/filesystems/nova.txt contains descriptions of some fields.
  */
-struct nova_file_write_entry {
+struct nova_file_write_entry {	// TODO: Compress it.
 	u8	entry_type;
 	u8	reassigned;	/* Data is not latest */
 	u8	updating;	/* Data is being written */
-	u8	padding;
-	__le32	num_pages;
-	__le64	block;          /* offset of first block in this write */
+	u8	invalid;
+	__le32 __padding0;
+	__le64	block;          /* offset of block in this write */
 	__le64	pgoff;          /* file offset at the beginning of this write */
-	__le32	invalid_pages;	/* For GC */
 	/* For both ctime and mtime */
+	__le32 __padding1;
 	__le32	mtime;
 	__le64	size;           /* File size after this write */
 	__le64	epoch_id;
@@ -84,6 +84,7 @@ struct nova_file_write_entry {
 	__le32	csumpadding;
 	__le32	csum;
 } __attribute((__packed__));
+_Static_assert(sizeof(struct nova_file_write_entry) == 64, "!!!");
 
 #define WENTRY(entry)	((struct nova_file_write_entry *) entry)
 
@@ -275,7 +276,7 @@ void nova_clear_last_page_tail(struct super_block *sb,
 unsigned int nova_free_old_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry,
-	unsigned long pgoff, unsigned int num_free,
+	unsigned long pgoff,
 	bool delete_dead, u64 epoch_id);
 int nova_free_inode_log(struct super_block *sb, struct nova_inode *pi,
 	struct nova_inode_info_header *sih);

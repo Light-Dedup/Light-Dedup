@@ -25,65 +25,42 @@
 #include "nova.h"
 #include "inode.h"
 
-int nova_get_vma_overlap_range(struct super_block *sb,
-	struct nova_inode_info_header *sih, struct vm_area_struct *vma,
-	unsigned long entry_pgoff, unsigned long entry_pages,
-	unsigned long *start_pgoff, unsigned long *num_pages)
+bool nova_get_vma_overlap_range(struct vm_area_struct *vma,
+	unsigned long entry_pgoff)
 {
-	unsigned long vma_pgoff;
-	unsigned long vma_pages;
-	unsigned long end_pgoff;
-
-	vma_pgoff = vma->vm_pgoff;
-	vma_pages = (vma->vm_end - vma->vm_start) >> sb->s_blocksize_bits;
-
-	if (vma_pgoff + vma_pages <= entry_pgoff ||
-				entry_pgoff + entry_pages <= vma_pgoff)
-		return 0;
-
-	*start_pgoff = vma_pgoff > entry_pgoff ? vma_pgoff : entry_pgoff;
-	end_pgoff = (vma_pgoff + vma_pages) > (entry_pgoff + entry_pages) ?
-			entry_pgoff + entry_pages : vma_pgoff + vma_pages;
-	*num_pages = end_pgoff - *start_pgoff;
-	return 1;
+	unsigned long vma_pages = vma->vm_end - vma->vm_start;
+	return vma->vm_pgoff <= entry_pgoff || entry_pgoff < vma->vm_pgoff + vma_pages;
 }
 
 static int nova_update_dax_mapping(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct vm_area_struct *vma,
-	struct nova_file_write_entry *entry, unsigned long start_pgoff,
-	unsigned long num_pages)
+	struct nova_file_write_entry *entry)
 {
 	struct address_space *mapping = vma->vm_file->f_mapping;
 	void **pentry;
-	unsigned long curr_pgoff;
-	unsigned long blocknr, start_blocknr;
+	unsigned long blocknr;
 	unsigned long value, new_value;
-	int i;
 	int ret = 0;
 	INIT_TIMING(update_time);
 
 	NOVA_START_TIMING(update_mapping_t, update_time);
 
-	start_blocknr = nova_get_blocknr(sb, entry->block, sih->i_blk_type);
+	blocknr = nova_get_blocknr(sb, entry->block, sih->i_blk_type);
 	xa_lock_irq(&mapping->i_pages);
-	for (i = 0; i < num_pages; i++) {
-		curr_pgoff = start_pgoff + i;
-		blocknr = start_blocknr + i;
 
-		pentry = radix_tree_lookup_slot(&mapping->i_pages,
-						curr_pgoff);
-		if (pentry) {
-			value = (unsigned long)radix_tree_deref_slot(pentry);
-			/* 9 = sector shift (3) + RADIX_DAX_SHIFT (6) */
-			new_value = (blocknr << 9) | (value & 0xff);
-			nova_dbgv("%s: pgoff %lu, entry 0x%lx, new 0x%lx\n",
-						__func__, curr_pgoff,
-						value, new_value);
-			radix_tree_replace_slot(&sih->tree, pentry,
-						(void *)new_value);
-			radix_tree_tag_set(&mapping->i_pages, curr_pgoff,
-						PAGECACHE_TAG_DIRTY);
-		}
+	pentry = radix_tree_lookup_slot(&mapping->i_pages,
+					entry->pgoff);
+	if (pentry) {
+		value = (unsigned long)radix_tree_deref_slot(pentry);
+		/* 9 = sector shift (3) + RADIX_DAX_SHIFT (6) */
+		new_value = (blocknr << 9) | (value & 0xff);
+		nova_dbgv("%s: pgoff %llu, entry 0x%lx, new 0x%lx\n",
+					__func__, entry->pgoff,
+					value, new_value);
+		radix_tree_replace_slot(&sih->tree, pentry,
+					(void *)new_value);
+		radix_tree_tag_set(&mapping->i_pages, entry->pgoff,
+					PAGECACHE_TAG_DIRTY);
 	}
 
 	xa_unlock_irq(&mapping->i_pages);
@@ -94,8 +71,7 @@ static int nova_update_dax_mapping(struct super_block *sb,
 
 static int nova_update_entry_pfn(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct vm_area_struct *vma,
-	struct nova_file_write_entry *entry, unsigned long start_pgoff,
-	unsigned long num_pages)
+	struct nova_file_write_entry *entry)
 {
 	unsigned long newflags;
 	unsigned long addr;
@@ -107,9 +83,9 @@ static int nova_update_entry_pfn(struct super_block *sb,
 
 	NOVA_START_TIMING(update_pfn_t, update_time);
 
-	addr = vma->vm_start + ((start_pgoff - vma->vm_pgoff) << PAGE_SHIFT);
-	pfn = nova_get_pfn(sb, entry->block) + start_pgoff - entry->pgoff;
-	size = num_pages << PAGE_SHIFT;
+	addr = vma->vm_start + ((entry->pgoff - vma->vm_pgoff) << PAGE_SHIFT);
+	pfn = nova_get_pfn(sb, entry->block);
+	size = PAGE_SIZE;
 
 	nova_dbgv("%s: addr 0x%lx, size 0x%lx\n", __func__,
 			addr, size);
@@ -127,27 +103,21 @@ static int nova_dax_mmap_update_mapping(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct vm_area_struct *vma,
 	struct nova_file_write_entry *entry_data)
 {
-	unsigned long start_pgoff, num_pages = 0;
 	int ret;
 
-	ret = nova_get_vma_overlap_range(sb, sih, vma, entry_data->pgoff,
-						entry_data->num_pages,
-						&start_pgoff, &num_pages);
-	if (ret == 0)
-		return ret;
+	ret = nova_get_vma_overlap_range(vma, entry_data->pgoff);
+	if (!ret)
+		return 0;
 
+	NOVA_STATS_ADD(mapping_updated_pages, 1);
 
-	NOVA_STATS_ADD(mapping_updated_pages, num_pages);
-
-	ret = nova_update_dax_mapping(sb, sih, vma, entry_data,
-						start_pgoff, num_pages);
+	ret = nova_update_dax_mapping(sb, sih, vma, entry_data);
 	if (ret) {
 		nova_err(sb, "update DAX mapping return %d\n", ret);
 		return ret;
 	}
 
-	ret = nova_update_entry_pfn(sb, sih, vma, entry_data,
-						start_pgoff, num_pages);
+	ret = nova_update_entry_pfn(sb, sih, vma, entry_data);
 	if (ret)
 		nova_err(sb, "update_pfn return %d\n", ret);
 
@@ -253,11 +223,9 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	unsigned long from_blocknr = 0;
 	unsigned long blocknr = 0;
 	unsigned long avail_blocks;
-	unsigned long copy_blocks;
 	int num_blocks = 0;
 	u64 from_blockoff, to_blockoff;
 	size_t copied;
-	int allocated = 0;
 	void *from_kmem;
 	void *to_kmem;
 	size_t bytes;
@@ -339,7 +307,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 		from_kmem = nova_get_block(sb, from_blockoff);
 
 		if (entryc->reassigned == 0)
-			avail_blocks = entryc->num_pages -
+			avail_blocks = 1 -
 					(start_blk - entryc->pgoff);
 		else
 			avail_blocks = 1;
@@ -347,17 +315,15 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 		if (avail_blocks > end_blk - start_blk)
 			avail_blocks = end_blk - start_blk;
 
-		allocated = nova_new_data_blocks(sb, sih, &blocknr, start_blk,
-					 avail_blocks, ALLOC_NO_INIT, ANY_CPU,
-					 ALLOC_FROM_HEAD);
+		blocknr = nova_new_data_block(sb, ALLOC_NO_INIT, ANY_CPU);
 
-		nova_dbgv("%s: alloc %d blocks @ %lu\n", __func__,
-						allocated, blocknr);
+		nova_dbgv("%s: alloc block @ %lu\n", __func__,
+						blocknr);
 
-		if (allocated <= 0) {
-			nova_dbg("%s alloc blocks failed!, %d\n",
-						__func__, allocated);
-			ret = allocated;
+		if (blocknr == 0) {
+			nova_dbg("%s alloc block failed!\n",
+						__func__);
+			ret = -ENOSPC;
 			goto out;
 		}
 
@@ -366,9 +332,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 		to_kmem = nova_get_block(sb, to_blockoff);
 		entry_pgoff = start_blk;
 
-		copy_blocks = allocated;
-
-		bytes = sb->s_blocksize * copy_blocks;
+		bytes = sb->s_blocksize;
 
 		/* Now copy from user buf */
 		NOVA_START_TIMING(memcpy_w_wb_t, memcpy_time);
@@ -379,7 +343,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 		NOVA_END_TIMING(memcpy_w_wb_t, memcpy_time);
 
 		if (copied == bytes) {
-			start_blk += copy_blocks;
+			start_blk += 1;
 		} else {
 			nova_dbg("%s ERROR!: bytes %lu, copied %lu\n",
 				__func__, bytes, copied);
@@ -390,7 +354,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 		entry_size = cpu_to_le64(inode->i_size);
 
 		nova_init_file_write_entry(sb, sih, &entry_data,
-					epoch_id, entry_pgoff, copy_blocks,
+					epoch_id, entry_pgoff,
 					blocknr, time, entry_size);
 
 		ret = nova_append_file_write_entry(sb, pi, inode,
@@ -429,7 +393,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 
 out:
 	if (ret < 0)
-		nova_cleanup_incomplete_write(sb, sih, blocknr, allocated,
+		nova_cleanup_incomplete_write(sb, sih, blocknr,
 						begin_tail, update.tail);
 
 	inode_unlock(inode);

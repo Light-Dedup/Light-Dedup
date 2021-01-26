@@ -21,6 +21,7 @@
 #ifndef __STATS_H
 #define __STATS_H
 
+#include "config.h"
 
 /* ======================= Timing ========================= */
 enum timing_category {
@@ -160,6 +161,19 @@ enum timing_category {
 	delete_snapshot_t,
 	append_snapshot_file_t,
 	append_snapshot_inode_t,
+
+	/* Fingerprint table */
+	fingerprint_table_title_t,
+	fp_calc_t,
+	incr_ref_t,
+	decr_ref_t,
+	alloc_and_memcpy_w_t,
+	write_new_entry_t,
+	mem_bucket_find_t,
+	split_leaf_t,
+	split_t,
+	memcmp_t,
+	table_init_t,
 
 	/* Sentinel */
 	TIMING_NUM,

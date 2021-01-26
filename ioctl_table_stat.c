@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 
-#define NOVA_PRINT_TIMING 0xBCD00010
+#define NOVA_TABLE_STATS 0xBCD00012
 
 int main(int argc, char **argv)
 {
@@ -25,10 +25,10 @@ int main(int argc, char **argv)
     }
 
     /* 初始化设备 */
-    ret = ioctl(fd, NOVA_PRINT_TIMING, NULL);
+    ret = ioctl(fd, NOVA_TABLE_STATS, NULL);
     if (ret)
     {
-        perror("nova print:");
+        perror("nova table stats");
         exit(-3);
     }
 

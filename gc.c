@@ -62,7 +62,7 @@ static bool curr_log_entry_invalid(struct super_block *sb,
 		break;
 	case FILE_WRITE:
 		entry = (struct nova_file_write_entry *) entryc;
-		if (entry->num_pages != entry->invalid_pages)
+		if (!entry->invalid)
 			ret = false;
 		*length = sizeof(struct nova_file_write_entry);
 		break;
@@ -161,22 +161,14 @@ static int nova_gc_assign_file_entry(struct super_block *sb,
 {
 	struct nova_file_write_entry *temp;
 	void **pentry;
-	unsigned long start_pgoff = old_entry->pgoff;
-	unsigned int num = old_entry->num_pages;
-	unsigned long curr_pgoff;
-	int i;
 	int ret = 0;
 
-	for (i = 0; i < num; i++) {
-		curr_pgoff = start_pgoff + i;
-
-		pentry = radix_tree_lookup_slot(&sih->tree, curr_pgoff);
-		if (pentry) {
-			temp = radix_tree_deref_slot(pentry);
-			if (temp == old_entry)
-				radix_tree_replace_slot(&sih->tree, pentry,
-							new_entry);
-		}
+	pentry = radix_tree_lookup_slot(&sih->tree, old_entry->pgoff);
+	if (pentry) {
+		temp = radix_tree_deref_slot(pentry);
+		if (temp == old_entry)
+			radix_tree_replace_slot(&sih->tree, pentry,
+						new_entry);
 	}
 
 	return ret;

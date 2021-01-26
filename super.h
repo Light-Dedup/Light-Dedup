@@ -1,5 +1,8 @@
 #ifndef __SUPER_H
 #define __SUPER_H
+
+#include "meta.h"
+
 /*
  * Structure of the NOVA super block in PMEM
  *
@@ -174,6 +177,13 @@ struct nova_sb_info {
 	/* Per-CPU free block list */
 	struct free_list *free_lists;
 	unsigned long per_list_blocks;
+	unsigned long	block_start;
+	unsigned long	block_end;
+	uint32_t nr_tablets;
+	uint64_t nr_entries;
+	unsigned long entry_table_start;
+	struct nova_meta_table meta_table;
+	struct nova_fp_strong_ctx fp_ctx;
 };
 
 static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)
@@ -181,7 +191,13 @@ static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)
 	return sb->s_fs_info;
 }
 
-
+static inline long
+nova_block_decr(struct super_block *sb, unsigned long blocknr)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_meta_table *table = &sbi->meta_table;
+	return nova_meta_table_decr(table, blocknr);
+}
 
 static inline struct nova_super_block
 *nova_get_redund_super(struct super_block *sb)

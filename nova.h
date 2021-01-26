@@ -47,49 +47,14 @@
 #include <linux/pfn_t.h>
 #include <linux/pagevec.h>
 
+#include "config.h"
 #include "nova_def.h"
 #include "stats.h"
 #include "snapshot.h"
+#include "checksum.h"
 
 #define PAGE_SHIFT_2M 21
 #define PAGE_SHIFT_1G 30
-
-
-/*
- * Debug code
- */
-#ifdef pr_fmt
-#undef pr_fmt
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-#endif
-
-/* #define nova_dbg(s, args...)		pr_debug(s, ## args) */
-#define nova_dbg(s, args ...)		pr_info(s, ## args)
-#define nova_dbg1(s, args ...)
-#define nova_err(sb, s, args ...)	nova_error_mng(sb, s, ## args)
-#define nova_warn(s, args ...)		pr_warn(s, ## args)
-#define nova_info(s, args ...)		pr_info(s, ## args)
-
-extern unsigned int nova_dbgmask;
-#define NOVA_DBGMASK_MMAPHUGE	       (0x00000001)
-#define NOVA_DBGMASK_MMAP4K	       (0x00000002)
-#define NOVA_DBGMASK_MMAPVERBOSE       (0x00000004)
-#define NOVA_DBGMASK_MMAPVVERBOSE      (0x00000008)
-#define NOVA_DBGMASK_VERBOSE	       (0x00000010)
-#define NOVA_DBGMASK_TRANSACTION       (0x00000020)
-
-#define nova_dbg_mmap4k(s, args ...)		 \
-	((nova_dbgmask & NOVA_DBGMASK_MMAP4K) ? nova_dbg(s, args) : 0)
-#define nova_dbg_mmapv(s, args ...)		 \
-	((nova_dbgmask & NOVA_DBGMASK_MMAPVERBOSE) ? nova_dbg(s, args) : 0)
-#define nova_dbg_mmapvv(s, args ...)		 \
-	((nova_dbgmask & NOVA_DBGMASK_MMAPVVERBOSE) ? nova_dbg(s, args) : 0)
-
-#define nova_dbg_verbose(s, args ...)		 \
-	((nova_dbgmask & NOVA_DBGMASK_VERBOSE) ? nova_dbg(s, ##args) : 0)
-#define nova_dbgv(s, args ...)	nova_dbg_verbose(s, ##args)
-#define nova_dbg_trans(s, args ...)		 \
-	((nova_dbgmask & NOVA_DBGMASK_TRANSACTION) ? nova_dbg(s, ##args) : 0)
 
 #define NOVA_ASSERT(x) do {\
 			       if (!(x))\
@@ -128,6 +93,7 @@ extern unsigned int nova_dbgmask;
 /* IOCTLs */
 #define	NOVA_PRINT_TIMING		0xBCD00010
 #define	NOVA_CLEAR_STATS		0xBCD00011
+#define NOVA_TABLE_STATS 	0xBCD00012
 #define	NOVA_PRINT_LOG			0xBCD00013
 #define	NOVA_PRINT_LOG_BLOCKNODE	0xBCD00014
 #define	NOVA_PRINT_LOG_PAGES		0xBCD00015
@@ -139,14 +105,6 @@ extern unsigned int nova_dbgmask;
 #define	ANY_CPU				(65536)
 #define	FREE_BATCH			(16)
 #define	DEAD_ZONE_BLOCKS		(256)
-
-extern int measure_timing;
-extern int metadata_csum;
-extern int unsafe_metadata;
-extern int wprotect;
-extern int data_csum;
-extern int data_parity;
-extern int dram_struct_csum;
 
 extern unsigned int blk_type_to_shift[NOVA_BLOCK_TYPE_MAX];
 extern unsigned int blk_type_to_size[NOVA_BLOCK_TYPE_MAX];
@@ -176,51 +134,6 @@ static inline __le32 nova_mask_flags(umode_t mode, __le32 flags)
 		: "=r" (crc) \
 		: "r" (qword), "0" (crc)); \
 	} while (0)
-
-static inline u32 nova_crc32c(u32 crc, const u8 *data, size_t len)
-{
-	u8 *ptr = (u8 *) data;
-	u64 acc = crc; /* accumulator, crc32c value in lower 32b */
-	u32 csum;
-
-	/* x86 instruction crc32 is part of SSE-4.2 */
-	if (static_cpu_has(X86_FEATURE_XMM4_2)) {
-		/* This inline assembly implementation should be equivalent
-		 * to the kernel's crc32c_intel_le_hw() function used by
-		 * crc32c(), but this performs better on test machines.
-		 */
-		while (len > 8) {
-			asm volatile(/* 64b quad words */
-				"crc32q (%1), %0"
-				: "=r" (acc)
-				: "r"  (ptr), "0" (acc)
-			);
-			ptr += 8;
-			len -= 8;
-		}
-
-		while (len > 0) {
-			asm volatile(/* trailing bytes */
-				"crc32b (%1), %0"
-				: "=r" (acc)
-				: "r"  (ptr), "0" (acc)
-			);
-			ptr++;
-			len--;
-		}
-
-		csum = (u32) acc;
-	} else {
-		/* The kernel's crc32c() function should also detect and use the
-		 * crc32 instruction of SSE-4.2. But calling in to this function
-		 * is about 3x to 5x slower than the inline assembly version on
-		 * some test machines.
-		 */
-		csum = crc32c(crc, data, len);
-	}
-
-	return csum;
-}
 
 /* uses CPU instructions to atomically write up to 8 bytes */
 static inline void nova_memcpy_atomic(void *dst, const void *src, u8 size)
@@ -345,6 +258,18 @@ nova_get_block_off(struct super_block *sb, unsigned long blocknr,
 		    unsigned short btype)
 {
 	return (u64)blocknr << PAGE_SHIFT;
+}
+
+static inline u64
+nova_get_blocknr_off(unsigned long blocknr)
+{
+	return (u64)blocknr << PAGE_SHIFT;
+}
+static inline void *
+nova_blocknr_to_addr(struct super_block *sb, unsigned long blocknr)
+{
+	return nova_get_block(sb, 
+		nova_get_blocknr_off(blocknr));
 }
 
 static inline int nova_get_cpuid(struct super_block *sb)
@@ -558,22 +483,19 @@ static inline unsigned long get_nvmm(struct super_block *sb,
 	 * or we can do memcpy_mcsafe here but have to avoid double copy and
 	 * verification of the entry.
 	 */
-	if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
-			(unsigned long) entry->num_pages <= pgoff) {
+	if (entry->pgoff != pgoff) {
 		struct nova_sb_info *sbi = NOVA_SB(sb);
 		u64 curr;
 
 		curr = nova_get_addr_off(sbi, entry);
-		nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, entry pgoff %llu, num %u\n",
-			sih->ino,
-			curr, pgoff, entry->pgoff, entry->num_pages);
+		nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, entry pgoff %llu\n",
+			sih->ino, curr, pgoff, entry->pgoff);
 		nova_print_nova_log_pages(sb, sih);
 		nova_print_nova_log(sb, sih);
 		NOVA_ASSERT(0);
 	}
 
-	return (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
-		- entry->pgoff;
+	return (unsigned long) (entry->block >> PAGE_SHIFT);
 }
 
 bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc);
@@ -969,14 +891,14 @@ int nova_update_truncated_block_csum(struct super_block *sb,
 /* dax.c */
 int nova_cleanup_incomplete_write(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long blocknr,
-	int allocated, u64 begin_tail, u64 end_tail);
+	u64 begin_tail, u64 end_tail);
 void nova_init_file_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
-	u64 epoch_id, u64 pgoff, int num_pages, u64 blocknr, u32 time,
-	u64 size);
+	u64 epoch_id, u64 pgoff, u64 blocknr, u32 time,
+	u64 file_size);
 int nova_reassign_file_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, u64 begin_tail);
-unsigned long nova_check_existing_entry(struct super_block *sb,
+void nova_check_existing_entry(struct super_block *sb,
 	struct inode *inode, unsigned long num_blocks, unsigned long start_blk,
 	struct nova_file_write_entry **ret_entry,
 	struct nova_file_write_entry *ret_entryc, int check_next, u64 epoch_id,
@@ -1056,10 +978,8 @@ extern long nova_compat_ioctl(struct file *file, unsigned int cmd,
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,
 				 void *vaddr, unsigned long size, int rw);
-int nova_get_vma_overlap_range(struct super_block *sb,
-	struct nova_inode_info_header *sih, struct vm_area_struct *vma,
-	unsigned long entry_pgoff, unsigned long entry_pages,
-	unsigned long *start_pgoff, unsigned long *num_pages);
+bool nova_get_vma_overlap_range(struct vm_area_struct *vma,
+	unsigned long entry_pgoff);
 int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	unsigned long address);
 bool nova_find_pgoff_in_vma(struct inode *inode, unsigned long pgoff);
@@ -1109,7 +1029,7 @@ int nova_restore_snapshot_entry(struct super_block *sb,
 	struct nova_snapshot_info_entry *entry, u64 curr_p, int just_init);
 int nova_mount_snapshot(struct super_block *sb);
 int nova_append_data_to_snapshot(struct super_block *sb,
-	struct nova_file_write_entry *entry, u64 nvmm, u64 num_pages,
+	struct nova_file_write_entry *entry, u64 nvmm,
 	u64 delete_epoch_id);
 int nova_append_inode_to_snapshot(struct super_block *sb,
 	struct nova_inode *pi);
@@ -1137,6 +1057,7 @@ void nova_get_timing_stats(void);
 void nova_get_IO_stats(void);
 void nova_print_timing_stats(struct super_block *sb);
 void nova_clear_stats(struct super_block *sb);
+void nova_table_stats(struct file *file);
 void nova_print_inode(struct nova_inode *pi);
 void nova_print_inode_log(struct super_block *sb, struct inode *inode);
 void nova_print_inode_log_pages(struct super_block *sb, struct inode *inode);

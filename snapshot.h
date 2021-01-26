@@ -74,7 +74,7 @@ struct snapshot_file_write_entry {
 	u8	deleted;
 	u8	padding[6];
 	u64	nvmm;
-	u64	num_pages;
+	u64 __padding;
 	u64	delete_epoch_id;
 } __attribute((__packed__));
 

@@ -42,6 +42,7 @@
 #include "journal.h"
 #include "super.h"
 #include "inode.h"
+#include "meta.h"
 
 int measure_timing;
 int metadata_csum;
@@ -112,6 +113,13 @@ static void nova_set_blocksize(struct super_block *sb, unsigned long size)
 	sb->s_blocksize = (1 << bits);
 }
 
+static unsigned long
+number_of_entry_needed(unsigned long num_blocks) {
+	unsigned long ret = num_blocks * 2;
+	if (ret & (ENTRY_PER_REGION - 1))
+		ret = (ret & ~(ENTRY_PER_REGION - 1)) + ENTRY_PER_REGION;
+	return ret;
+}
 static int nova_get_nvmm_info(struct super_block *sb,
 	struct nova_sb_info *sbi)
 {
@@ -154,13 +162,23 @@ static int nova_get_nvmm_info(struct super_block *sb,
 
 	sbi->phys_addr = pfn_t_to_pfn(__pfn_t) << PAGE_SHIFT;
 	sbi->initsize = size;
-	sbi->replica_reserved_inodes_addr = virt_addr + size -
-			(sbi->tail_reserved_blocks << PAGE_SHIFT);
-	sbi->replica_sb_addr = virt_addr + size - PAGE_SIZE;
+	sbi->num_blocks = ((unsigned long)(size) >> PAGE_SHIFT);
+	sbi->block_start = HEAD_RESERVED_BLOCKS;
 
-	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld\n",
+	sbi->replica_sb_addr = virt_addr + size - PAGE_SIZE;
+	sbi->replica_reserved_inodes_addr = (char *)sbi->replica_sb_addr - PAGE_SIZE;
+	sbi->block_end = sbi->num_blocks - 2;
+
+	sbi->entry_table_start = sbi->block_start;
+	sbi->nr_tablets = 1 << WHICH_TABLET_BIT_NUM;
+	sbi->nr_entries = number_of_entry_needed(sbi->num_blocks);
+	sbi->block_start += ((sbi->nr_entries * sizeof(struct nova_pmm_entry) - 1) >> PAGE_SHIFT) + 1;
+
+	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
+		"num_blocks %lu, block_start %lu, block_end %lu\n",
 		__func__, sbi->s_bdev->bd_disk->disk_name,
-		sbi->phys_addr, (unsigned long)sbi->virt_addr, sbi->initsize);
+		sbi->phys_addr, (unsigned long)sbi->virt_addr, sbi->initsize,
+		sbi->num_blocks, sbi->block_start, sbi->block_end);
 
 	return 0;
 }
@@ -311,16 +329,8 @@ bad_opt:
 /* Make sure we have enough space */
 static bool nova_check_size(struct super_block *sb, unsigned long size)
 {
-	unsigned long minimum_size;
-
-	/* space required for super block and root directory.*/
-	minimum_size = (HEAD_RESERVED_BLOCKS + TAIL_RESERVED_BLOCKS + 1)
-			  << sb->s_blocksize_bits;
-
-	if (size < minimum_size)
-		return false;
-
-	return true;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	return sbi->block_start < sbi->block_end;
 }
 
 static inline int nova_check_super_checksum(struct super_block *sb)
@@ -398,11 +408,11 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	struct nova_inode_update update;
 	u64 epoch_id;
 	unsigned long irq_flags = 0;
+	int ret;
 	INIT_TIMING(init_time);
 
 	NOVA_START_TIMING(new_init_t, init_time);
 	nova_info("creating an empty nova of size %lu\n", size);
-	sbi->num_blocks = ((unsigned long)(size) >> PAGE_SHIFT);
 
 	nova_dbgv("nova: Default block size set to 4K\n");
 	sbi->blocksize = blocksize = NOVA_DEF_BLOCK_SIZE_4K;
@@ -419,7 +429,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 
 	nova_memunlock_reserved(sb, super, &irq_flags);
 	/* clear out super-block and inode table */
-	memset_nt(super, 0, sbi->head_reserved_blocks * sbi->blocksize);
+	memset_nt(super, 0, sbi->block_start * sbi->blocksize);
 
 	pi = nova_get_inode_by_ino(sb, NOVA_BLOCKNODE_INO);
 	pi->nova_ino = NOVA_BLOCKNODE_INO;
@@ -484,6 +494,11 @@ static struct nova_inode *nova_init(struct super_block *sb,
 
 	PERSISTENT_MARK();
 	PERSISTENT_BARRIER();
+
+	ret = nova_meta_table_init(&sbi->meta_table, sb);
+	if (ret < 0)
+		return ERR_PTR(ret);
+
 	NOVA_END_TIMING(new_init_t, init_time);
 	nova_info("NOVA initialization finish\n");
 	return root_i;
@@ -493,8 +508,6 @@ static inline void set_default_opts(struct nova_sb_info *sbi)
 {
 	set_opt(sbi->s_mount_opt, HUGEIOREMAP);
 	set_opt(sbi->s_mount_opt, ERRORS_CONT);
-	sbi->head_reserved_blocks = HEAD_RESERVED_BLOCKS;
-	sbi->tail_reserved_blocks = TAIL_RESERVED_BLOCKS;
 	sbi->cpus = num_online_cpus();
 	nova_info("%d cpus online\n", sbi->cpus);
 	sbi->map_id = 0;
@@ -922,6 +935,7 @@ static void nova_put_super(struct super_block *sb)
 
 	nova_print_curr_epoch_id(sb);
 
+	nova_meta_table_destroy(&sbi->meta_table);
 	/* It's unmount time, so unmap the nova memory */
 //	nova_print_free_lists(sb);
 	if (sbi->virt_addr) {
@@ -938,7 +952,6 @@ static void nova_put_super(struct super_block *sb)
 	kfree(sbi->zeroed_page);
 	kfree(sbi->zero_parity);
 	nova_dbgmask = 0;
-	kfree(sbi->free_lists);
 	kfree(sbi->journal_locks);
 
 	for (i = 0; i < sbi->cpus; i++) {
