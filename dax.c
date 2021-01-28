@@ -683,8 +683,10 @@ protected:
 			entry_info.file_size = file_size;
 			entry_info.inplace = 1;
 
-			nova_inplace_update_write_entry(sb, inode, entry,
+			ret = nova_inplace_update_write_entry(sb, inode, entry,
 							&entry_info);
+			if (ret < 0)
+				goto out;
 			if (new_blocknr != old_blocknr)
 				BUG_ON(nova_free_data_block(sb, old_blocknr));
 		}
