@@ -173,8 +173,6 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long blocknr,
 	u64 begin_tail, u64 end_tail)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_meta_table *table = &sbi->meta_table;
 	void *addr;
 	struct nova_file_write_entry *entry;
 	struct nova_file_write_entry *entryc, entry_copy;
@@ -183,7 +181,7 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 	int ret;
 
 	if (blocknr > 0) {
-		ret = nova_meta_table_decr(table, blocknr);
+		ret = nova_block_decr(sb, blocknr);
 		if (ret < 0)
 			return ret;
 	}
@@ -225,7 +223,7 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 		}
 
 		blocknr = entryc->block >> PAGE_SHIFT;
-		ret = nova_meta_table_decr(table, blocknr);
+		ret = nova_block_decr(sb, blocknr);
 		if (ret < 0)
 			return ret;
 		curr_p += entry_size;
@@ -469,7 +467,41 @@ out:
 	// BUG_ON(ent_blks != 1);
 }
 
-
+/*
+ * Return:
+ * 		<0: Error code.
+ * 		=0: Do COW.
+ * 		>0: New blocknr(protected).
+ */
+static long try_inplace_file_write(struct super_block *sb,
+	unsigned long old_blocknr, char *kbuf, const char __user *buf,
+	size_t offset, size_t bytes,
+	struct inode *inode, loff_t pos)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_meta_table *table = &sbi->meta_table;
+	struct nova_write_para_rewrite wp;
+	long ret = nova_meta_table_decr1(table, kbuf, old_blocknr);
+	if (ret < 0)
+		return ret;
+	if (ret > 0)
+		return 0;	// COW
+	// Refcount == 0, we can do inplace write.
+	if (copy_from_user(kbuf + offset, buf, bytes))
+		return -EFAULT;
+	ret = nova_meta_table_rewrite_on_insert(table, kbuf, &wp, old_blocknr, offset, bytes);
+	if (ret < 0)
+		return ret;	// No need to free old blocknr or reinsert it into table.
+	if (wp.normal.base.refcount == 1) {
+		if (data_csum > 0 || data_parity > 0) {
+			ret = nova_protect_file_data(sb, inode, pos, bytes,
+						buf, wp.normal.blocknr, true);
+			if (ret)
+				return ret;
+		}
+	} // Else an existing block found. Already protected.
+	return wp.normal.blocknr;
+}
 /*
  * Do an inplace write.  This function assumes that the lock on the inode is
  * already held.
@@ -510,7 +542,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	u32 time;
 	ssize_t ret;
 	char *kbuf = NULL;
-	struct nova_write_para wp;
+	struct nova_write_para_normal wp;
 	unsigned long flags = 0;
 
 	// printk("%s\n", __func__);
@@ -582,41 +614,18 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			bytes = count;
 
 		if (entry && inplace) {
-			/* We can do inplace write. Find contiguous blocks */
 			old_blocknr = get_nvmm(sb, sih, entryc, start_blk);
 			xmem = nova_blocknr_to_addr(sb, old_blocknr);
 			memcpy(kbuf, xmem, PAGE_SIZE);
-			ret = nova_meta_table_decr_refcount(table, xmem, old_blocknr);
-			if (ret < 0) {
-				old_blocknr = 0;
+			ret = try_inplace_file_write(sb, old_blocknr, kbuf, buf,
+				offset, bytes, inode, pos);
+			if (ret < 0)
 				goto out;
-			}
-			if (copy_from_user(kbuf + offset, buf, bytes)) {
-				ret = -EFAULT;
-				goto out;
-			}
-			if (ret == 0) {	// Refcount == 0
-				if (data_csum || data_parity)
-					nova_set_write_entry_updating(sb, entry, 1);
-				wp.blocknr = old_blocknr;
-				wp.offset = offset;
-				wp.len = bytes;
-				ret = nova_meta_table_incr(table, kbuf, &wp);
-				if (ret < 0)
-					goto out;
-				old_blocknr = 0;
-				if (wp.refcount == 1) {
-					if (data_csum > 0 || data_parity > 0) {
-						ret = nova_protect_file_data(sb, inode, pos, bytes,
-									buf, wp.blocknr, true);
-						if (ret)
-							goto out;
-					}
-				} else { // Else an existing block found. Already protected.
-					new_blocknr = wp.blocknr;
-				}
+			if (ret > 0) {
+				new_blocknr = ret;
+				hole_fill = false;
 				goto protected;
-			} // Else COW.
+			} // Else fall back to COW.
 		} else {
 			if (offset || ((offset + bytes) & (PAGE_SIZE - 1)) != 0) {
 				ret = nova_handle_head_tail_blocks(sb, inode,
@@ -629,7 +638,6 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			ret = -EFAULT;
 			goto out;
 		}
-		wp.blocknr = 0;
 		ret = nova_meta_table_incr(table, kbuf, &wp);
 		if (ret < 0)
 			goto out;
@@ -640,6 +648,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			if (ret)
 				goto out;
 		}
+		hole_fill = true;
 protected:
 
 		if (pos + bytes > inode->i_size)
@@ -647,7 +656,6 @@ protected:
 		else
 			file_size = cpu_to_le64(inode->i_size);
 
-		hole_fill = (new_blocknr != 0);
 		if (hole_fill) {
 			nova_init_file_write_entry(sb, sih, &entry_data,
 						epoch_id, start_blk,
@@ -661,12 +669,15 @@ protected:
 				ret = -ENOSPC;
 				goto out;
 			}
-			old_blocknr = new_blocknr = 0;
+			new_blocknr = 0;
 		} else {
 			/* Update existing entry */
 			struct nova_log_entry_info entry_info;
 
+			if (data_csum || data_parity)
+				nova_set_write_entry_updating(sb, entry, 1);
 			entry_info.type = FILE_WRITE;
+			entry_info.block = new_blocknr << PAGE_SHIFT;
 			entry_info.epoch_id = epoch_id;
 			entry_info.trans_id = sih->trans_id;
 			entry_info.time = time;
@@ -675,6 +686,8 @@ protected:
 
 			nova_inplace_update_write_entry(sb, inode, entry,
 							&entry_info);
+			if (new_blocknr != old_blocknr)
+				BUG_ON(nova_free_data_block(sb, old_blocknr));
 		}
 
 		nova_dbgv("Write: %p, %lu\n", kbuf, bytes);
@@ -729,14 +742,6 @@ out:
 						begin_tail, update.tail);
 		if (ret2 < 0)
 			ret = ret2;
-		if (old_blocknr) {
-			wp.blocknr = 0;
-			ret2 = nova_meta_table_incr(table, nova_blocknr_to_addr(sb, old_blocknr), &wp);
-			if (ret2 < 0) {
-				BUG_ON(ret2 != -EIO);	// There should be sufficient space.
-				ret = ret2;
-			}
-		}
 	}
 
 	NOVA_END_TIMING(inplace_write_t, inplace_write_time);

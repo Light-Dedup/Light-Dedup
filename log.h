@@ -220,6 +220,7 @@ struct nova_log_entry_info {
 	struct iattr *attr;
 	struct nova_inode_update *update;
 	void *data;	/* struct dentry */
+	u64 block;
 	u64 epoch_id;
 	u64 trans_id;
 	u64 curr_p;	/* output */

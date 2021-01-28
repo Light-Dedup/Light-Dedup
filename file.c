@@ -551,7 +551,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u64 epoch_id;
 	u32 time;
 	char *kbuf = NULL;
-	struct nova_write_para wp;
+	struct nova_write_para_normal wp;
 	unsigned long flags = 0;
 
 	if (len == 0)
@@ -635,13 +635,12 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			ret = -EFAULT;
 			goto out;
 		}
-		wp.blocknr = 0;
 		ret = nova_meta_table_incr(table, kbuf, &wp);
 		if (ret < 0)
 			goto out;
 		blocknr = wp.blocknr;
 		if (data_csum > 0 || data_parity > 0) {
-			if (wp.refcount == 1) {
+			if (wp.base.refcount == 1) {
 				ret = nova_protect_file_data(sb, inode, pos, bytes,
 								buf, blocknr, false);
 				if (ret)

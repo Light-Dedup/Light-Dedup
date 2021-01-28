@@ -21,10 +21,14 @@ static inline void nova_meta_table_destroy(struct nova_meta_table *table)
 }
 
 int nova_meta_table_incr(struct nova_meta_table *table, const void* addr,
-	struct nova_write_para *wp);
+	struct nova_write_para_normal *wp);
+int nova_meta_table_rewrite_on_insert(struct nova_meta_table *table,
+	const void *addr, struct nova_write_para_rewrite *wp,
+	unsigned long blocknr, size_t offset, size_t bytes);
 long nova_meta_table_decr_refcount(struct nova_meta_table *table,
 	const void *addr, unsigned long blocknr);
 extern long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr);
+long nova_meta_table_decr1(struct nova_meta_table *table, const void *addr, unsigned long blocknr);
 
 // extern long nova_meta_table_find_weak(struct nova_meta_table *table, struct nova_meta_entry *entry, const struct nova_fp_mem *fp, const void* addr);
 

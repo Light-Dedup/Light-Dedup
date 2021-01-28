@@ -282,6 +282,7 @@ static int nova_update_write_entry(struct super_block *sb,
 	struct nova_file_write_entry *entry,
 	struct nova_log_entry_info *entry_info)
 {
+	entry->block = cpu_to_le64(entry_info->block);
 	entry->epoch_id = cpu_to_le64(entry_info->epoch_id);
 	entry->trans_id = cpu_to_le64(entry_info->trans_id);
 	entry->mtime = cpu_to_le32(entry_info->time);

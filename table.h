@@ -125,19 +125,23 @@ extern struct nova_mm_table* nova_table_alloc(struct super_block *sblock);
 extern int nova_table_free(
 	struct nova_mm_table* table);
 
-struct nova_write_para {
+struct nova_write_para_base {
 	struct nova_fp fp;
+	long refcount;
+};
+struct nova_write_para_normal {
+	// Because C does not support inheritance.
+	struct nova_write_para_base base;
 	const void *addr;
-	long delta;
 	unsigned long blocknr;
-	unsigned long refcount;
-	// If delta > 0 and blocknr != 0, then "len" bytes
-	// begin from addr[offset] should be written into blocknr.
+};
+struct nova_write_para_rewrite {
+	struct nova_write_para_normal normal;
 	unsigned long offset, len;
 };
 
-extern int nova_table_upsert(
-	struct nova_mm_table* table,
-	struct nova_write_para *wp);
-
+int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp);
+int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp);
+// refcount-- only if refcount == 1
+int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp);
 #endif
