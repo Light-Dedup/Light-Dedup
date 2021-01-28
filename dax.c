@@ -669,7 +669,6 @@ protected:
 				ret = -ENOSPC;
 				goto out;
 			}
-			new_blocknr = 0;
 		} else {
 			/* Update existing entry */
 			struct nova_log_entry_info entry_info;
@@ -689,6 +688,7 @@ protected:
 			if (new_blocknr != old_blocknr)
 				BUG_ON(nova_free_data_block(sb, old_blocknr));
 		}
+		new_blocknr = 0;
 
 		nova_dbgv("Write: %p, %lu\n", kbuf, bytes);
 		if (bytes > 0) {
