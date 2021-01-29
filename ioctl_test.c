@@ -14,25 +14,25 @@
 int main(int argc, char **argv)
 {
 
-    int fd;
-    int ret;
+	int fd;
+	int ret;
 
-    fd = open("/mnt/pmem/test1", O_RDWR | O_CREAT);
-    if (fd < 0)
-    {
-        perror("open");
-        exit(-2);
-    }
+	fd = open("/mnt/pmem/test1", O_RDWR | O_CREAT);
+	if (fd < 0)
+	{
+		perror("open");
+		exit(-2);
+	}
 
-    /* 初始化设备 */
-    ret = ioctl(fd, NOVA_PRINT_TIMING, NULL);
-    if (ret)
-    {
-        perror("nova print:");
-        exit(-3);
-    }
+	/* 初始化设备 */
+	ret = ioctl(fd, NOVA_PRINT_TIMING, NULL);
+	if (ret)
+	{
+		perror("nova print:");
+		exit(-3);
+	}
 
-    printf("ended\n");
+	printf("ended\n");
 
-    return 0;
+	return 0;
 }
