@@ -300,10 +300,11 @@ int nova_delete_file_tree(struct super_block *sb,
 		if (entry) {
 			ret = radix_tree_delete(&sih->tree, pgoff);
 			BUG_ON(!ret || ret != entry);
-			nova_free_old_entry(sb, sih,
-					entry, pgoff,
-					delete_dead,
-					epoch_id);
+			if (delete_nvmm)
+				nova_free_old_entry(sb, sih,
+						entry, pgoff,
+						delete_dead,
+						epoch_id);
 			++freed;
 			pgoff++;
 		} else {

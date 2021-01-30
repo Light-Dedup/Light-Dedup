@@ -866,7 +866,7 @@ static int nova_set_ring_array(struct super_block *sb,
 
 	if (pgoff < base)
 		return 0;
-	if (pgoff + 1 > base + MAX_PGOFF)
+	if (pgoff >= base + MAX_PGOFF)
 		return 0;
 	index = pgoff - base;
 	if (ring->nvmm_array[index]) {
@@ -879,8 +879,7 @@ static int nova_set_ring_array(struct super_block *sb,
 	}
 	index = pgoff - base;
 	ring->entry_array[index] = (u64)entry;
-	ring->nvmm_array[index] = (u64)(entryc->block >> PAGE_SHIFT)
-					+ pgoff - entryc->pgoff;
+	ring->nvmm_array[index] = (u64)(entryc->block >> PAGE_SHIFT);
 
 	return 0;
 }
@@ -965,10 +964,8 @@ static unsigned long nova_traverse_file_write_entry(struct super_block *sb,
 
 	if (!entryc->invalid) {
 		max_blocknr = entryc->pgoff;
-		if (entryc->pgoff < base + MAX_PGOFF &&
-				entryc->pgoff >= base)
-			nova_set_ring_array(sb, sih, entry, entryc,
-						ring, base, bm);
+		nova_set_ring_array(sb, sih, entry, entryc,
+					ring, base, bm);
 	}
 
 	return max_blocknr;
@@ -1373,7 +1370,7 @@ static int nova_failure_recovery_crawl(struct super_block *sb)
 		wake_up_process(threads[cpuid]);
 
 	nova_init_header(sb, &sih, 0);
-	/* Recover the root iode */
+	/* Recover the root inode */
 	ret = nova_get_reference(sb, root_addr, &fake_pi,
 			(void **)&pi, sizeof(struct nova_inode));
 	if (ret) {
@@ -1447,8 +1444,13 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode *pi =  nova_get_inode_by_ino(sb, NOVA_BLOCKNODE_INO);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
+	struct nova_meta_table *table = &sbi->meta_table;
 	int ret;
 
+	if (recover_meta->region_valid_entry_count_saved != NOVA_RECOVER_META_FLAG_COMPLETE ||
+		recover_meta->refcount_saved != NOVA_RECOVER_META_FLAG_COMPLETE)
+		return false;
 	if (pi->log_head == 0 || pi->log_tail == 0)
 		return false;
 
@@ -1473,6 +1475,14 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 			return false;
 		}
 	}
+
+	ret = nova_meta_table_restore(table, sb);
+	if (ret < 0) {
+		nova_err(sb, "Restore meta table failed, fall back to failure recovery\n");
+		return false;
+	}
+	recover_meta->region_valid_entry_count_saved = 0;
+	recover_meta->refcount_saved = 0;
 
 	return true;
 }

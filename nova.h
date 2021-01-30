@@ -229,9 +229,7 @@ static inline void memset_nt(void *dest, uint32_t dword, size_t length)
  */
 static inline void *nova_get_block(struct super_block *sb, u64 block)
 {
-	struct nova_super_block *ps = nova_get_super(sb);
-
-	return block ? ((void *)ps + block) : NULL;
+	return nova_sbi_get_block(NOVA_SB(sb), block);
 }
 
 static inline int nova_get_reference(struct super_block *sb, u64 block,
@@ -260,16 +258,10 @@ nova_get_block_off(struct super_block *sb, unsigned long blocknr,
 	return (u64)blocknr << PAGE_SHIFT;
 }
 
-static inline u64
-nova_get_blocknr_off(unsigned long blocknr)
-{
-	return (u64)blocknr << PAGE_SHIFT;
-}
 static inline void *
 nova_blocknr_to_addr(struct super_block *sb, unsigned long blocknr)
 {
-	return nova_get_block(sb, 
-		nova_get_blocknr_off(blocknr));
+	return nova_sbi_blocknr_to_addr(NOVA_SB(sb), blocknr);
 }
 
 static inline int nova_get_cpuid(struct super_block *sb)
@@ -1057,7 +1049,7 @@ void nova_get_timing_stats(void);
 void nova_get_IO_stats(void);
 void nova_print_timing_stats(struct super_block *sb);
 void nova_clear_stats(struct super_block *sb);
-void nova_table_stats(struct file *file);
+int nova_table_stats(struct file *file);
 void nova_print_inode(struct nova_inode *pi);
 void nova_print_inode_log(struct super_block *sb, struct inode *inode);
 void nova_print_inode_log_pages(struct super_block *sb, struct inode *inode);

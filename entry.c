@@ -9,28 +9,24 @@
 
 _Static_assert((1ULL << (sizeof(atomic_t) * 8)) > ENTRY_PER_REGION, "Type of counter of valid entries in a region is too small!");
 
-int nova_init_entry_allocator(struct super_block *sb, struct entry_allocator *allocator, struct nova_pmm_entry *pentries, entrynr_t entrynr) {
-	regionnr_t i, region_num;
+int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator)
+{
+	regionnr_t i;
 	int ret;
 
-	// printk("nova_init_entry_allocator: entrynr = %llu\n", entrynr);
-	BUG_ON(entrynr % ENTRY_PER_REGION != 0);
-
-	region_num = entrynr / ENTRY_PER_REGION;
-	// allocator->free = bitmap_zalloc(region_num, GFP_KERNEL);
-	allocator->valid_entry = vzalloc(region_num * sizeof(allocator->valid_entry[0]));
+	printk("nova_init_entry_allocator: nr_regions = %u\n", sbi->nr_regions);
+	allocator->valid_entry = vzalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
 	if (allocator->valid_entry == NULL) {
 		ret = -ENOMEM;
-		nova_dbg("%s: Allocate valid_entry failed. entrynr = %llu, region_num = %u\n", __func__, entrynr, region_num);
+		nova_dbg("%s: Allocate valid_entry failed.\n", __func__);
 		goto err_out0;
 	}
-	ret = kfifo_alloc(&allocator->free_regions, region_num * sizeof(regionnr_t), GFP_KERNEL);
+	ret = kfifo_alloc(&allocator->free_regions, sbi->nr_regions * sizeof(regionnr_t), GFP_KERNEL);
 	if (ret)
 		goto err_out1;
-	for (i = 1; i < region_num; ++i) {
+	for (i = 1; i < sbi->nr_regions; ++i)
 		BUG_ON(kfifo_in(&allocator->free_regions, &i, sizeof(i)) == 0);
-	}
-	allocator->pentries = pentries;
+	allocator->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
 	atomic64_set(&allocator->regionnr_index, -1);
 	// allocator->cur = pentries - 1;
 	// allocator->region_end = pentries + ENTRY_PER_REGION;
@@ -41,6 +37,64 @@ err_out1:
 	vfree(allocator->valid_entry);
 err_out0:
 	return ret;
+}
+
+int nova_recover_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator)
+{
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
+	__le16 *valid_entry_count = nova_sbi_blocknr_to_addr(sbi, sbi->region_valid_entry_count_start);
+	u16 value;
+	regionnr_t i;
+	int ret;
+
+	BUG_ON(recover_meta->region_valid_entry_count_saved != NOVA_RECOVER_META_FLAG_COMPLETE);
+	allocator->valid_entry = vmalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
+	if (allocator->valid_entry == NULL) {
+		ret = -ENOMEM;
+		nova_dbg("%s: Allocate valid_entry failed.\n", __func__);
+		goto err_out0;
+	}
+	ret = kfifo_alloc(&allocator->free_regions, sbi->nr_regions * sizeof(regionnr_t), GFP_KERNEL);
+	if (ret)
+		goto err_out1;
+	for (i = 0; i < sbi->nr_regions; ++i) {
+		value = le16_to_cpu(valid_entry_count[i]);
+		atomic_set(allocator->valid_entry + i, value);
+		if (value <= FREE_THRESHOLD)
+			BUG_ON(kfifo_in(&allocator->free_regions, &i, sizeof(i)) != sizeof(i));
+	}
+	allocator->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
+	// The first allocation will trigger a new_region request.
+	atomic64_set(&allocator->regionnr_index, ENTRY_PER_REGION - 1);
+	spin_lock_init(&allocator->lock);
+	return 0;
+err_out1:
+	vfree(allocator->valid_entry);
+err_out0:
+	return ret;
+}
+
+static void nova_free_entry_allocator(struct entry_allocator *allocator)
+{
+	vfree(allocator->valid_entry);
+	kfifo_free(&allocator->free_regions);
+}
+
+void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
+	__le16 *valid_entry_count = nova_sbi_blocknr_to_addr(sbi, sbi->region_valid_entry_count_start);
+	regionnr_t i;
+	unsigned long irq_flags = 0;
+
+	nova_memunlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
+	for (i = 0; i < sbi->nr_regions; ++i)
+		valid_entry_count[i] = cpu_to_le16(atomic_read(allocator->valid_entry + i));
+	nova_memlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
+	nova_flush_buffer(valid_entry_count, sbi->nr_regions * sizeof(valid_entry_count[0]), true);
+	nova_unlock_write(sb, &recover_meta->region_valid_entry_count_saved, NOVA_RECOVER_META_FLAG_COMPLETE, true);
+	nova_free_entry_allocator(allocator);
 }
 
 static entrynr_t
@@ -112,4 +166,21 @@ void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 		BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
 		spin_unlock(&allocator->lock);
 	}
+}
+
+int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocator *allocator)
+{
+	size_t i;
+	unsigned long *count = vzalloc((ENTRY_PER_REGION + 1) * sizeof(unsigned long));
+	if (count == NULL)
+		return -ENOMEM;
+	for (i = 0; i < sbi->nr_regions; ++i)
+		++count[atomic_read(allocator->valid_entry + i)];
+	printk("Valid entry count of the regions:");
+	for (i = 0; i < ENTRY_PER_REGION + 1; ++i)
+		if (count[i])
+			printk(KERN_CONT " (%d)%lu", (int)i, count[i]);
+	printk(KERN_CONT "\n");
+	vfree(count);
+	return 0;
 }

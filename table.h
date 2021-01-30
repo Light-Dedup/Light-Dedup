@@ -36,6 +36,11 @@ struct nova_mm_entry_p {
 	uint32_t refcount: 32;
 };
 _Static_assert(sizeof(struct nova_mm_entry_p) == 8, "size of mm_entry_p is not 8!");
+struct nova_entry_refcount_record {
+	__le32 entrynr;
+	__le32 refcount;
+};
+
 struct nova_bucket {
 	struct {
 		uint16_t mask: 4;	// The number of bits the bucket used. At most 9
@@ -118,12 +123,7 @@ static inline bool nova_fp_strong_equal(
 	return left->value == right->value;
 }
 
-// extern int nova_pmm_table_restore(struct nova_pmm_table* table, struct super_block *sblock);
-
-extern struct nova_mm_table* nova_table_alloc(struct super_block *sblock);
-
-extern int nova_table_free(
-	struct nova_mm_table* table);
+extern int nova_table_save(struct nova_mm_table* table);
 
 struct nova_write_para_base {
 	struct nova_fp fp;
@@ -144,4 +144,8 @@ int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp);
 // refcount-- only if refcount == 1
 int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp);
+
+struct nova_mm_table *nova_table_init(struct super_block *sb);
+struct nova_mm_table *nova_table_recover(struct super_block *sb);
+
 #endif

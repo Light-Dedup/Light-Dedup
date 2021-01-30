@@ -14,6 +14,11 @@
 
 #define NOVA_LEAF_NOT_FOUND (-1)
 
+struct nova_write_para_entry {
+	struct nova_write_para_base base;
+	entrynr_t entrynr;
+};
+
 static int nova_table_leaf_find(
 	const struct nova_pmm_entry *pentries,
 	const struct nova_bucket *bucket,
@@ -351,6 +356,26 @@ static int64_t bucket_upsert_decr1(
 	return 0;
 }
 
+static int64_t bucket_upsert_entry(
+	struct nova_mm_table *table,
+	struct nova_bucket *bucket,
+	struct nova_write_para_base *__wp)
+{
+	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
+	unsigned long i;
+	struct nova_mm_entry_p *entry_p;
+
+	i = find_free_slot_in_bucket(bucket, wp->base.fp.indicator);
+	if (i == NOVA_TABLE_LEAF_SIZE)
+		return NOVA_FULL;
+	entry_p = bucket->entry_p + i;
+	entry_p->entrynr = wp->entrynr;
+	entry_p->refcount = wp->base.refcount;
+	bucket->tags[i] = (uint8_t)((wp->base.fp.tag % 0xff) + 1); // non zero
+	++bucket->size;
+	return 0;
+}
+
 typedef int64_t (*bucket_upsert_func)(struct nova_mm_table *, struct nova_bucket *, struct nova_write_para_base *);
 
 // Free old_pbucket, make old_bucket a new inner node.
@@ -682,22 +707,54 @@ int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
 }
+static int nova_table_upsert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
+{
+	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_entry);
+}
 
+static void save_bucket(struct nova_mm_table *table,
+	struct nova_bucket *bucket, atomic64_t *saved)
+{
+	struct super_block *sb = table->sblock;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
+		sbi, sbi->entry_refcount_record_start);
+	unsigned long j;
+	size_t head, top;
+	struct nova_mm_entry_p *entry_p;
+	unsigned long irq_flags = 0;
+
+	// printk("%s: bucket->size = %hu\n", __func__, bucket->size);
+	top = head = atomic64_add_return(bucket->size, saved) - bucket->size;
+	nova_memunlock_range(sb, rec + head, bucket->size * sizeof(struct nova_entry_refcount_record), &irq_flags);
+	for (j = 0; j < NOVA_TABLE_LEAF_SIZE; ++j) {
+		if (bucket->tags[j]) {
+			entry_p = bucket->entry_p + j;
+			rec[top].entrynr = cpu_to_le32(entry_p->entrynr);
+			rec[top].refcount = cpu_to_le32(entry_p->refcount);
+			++top;
+		}
+	}
+	nova_memlock_range(sb, rec + head, bucket->size * sizeof(struct nova_entry_refcount_record), &irq_flags);
+	BUG_ON(top != head + bucket->size);
+	kmem_cache_free(table->bucket_cache, bucket);
+}
 static void __nova_table_rescursive_free(
 	struct nova_mm_table* table,
 	struct nova_inner* inner,
+	atomic64_t *saved,
 	int depth/* for debug */)
 {
 	int i, j, n;
 	unsigned long next;
 	struct nova_bucket *bucket;
 
-	// printk("__nova_table_rescursive_free: table = %pK, inner = %pK, depth = %d, inner->inners = %pK\n", table, inner, depth, inner->inners);
+	// printk("__nova_table_rescursive_free: table = %pK, inner = %pK, depth = %d\n", table, inner, depth);
 	n = (1 << inner->bits);
 	for (i = 0; i < n; i++) {
 		next = inner->node_p[i];
 		if (nova_is_inner_node(next)) {
-			__nova_table_rescursive_free(table, nova_node_p_to_inner(next), depth+1);
+			__nova_table_rescursive_free(table, nova_node_p_to_inner(next), saved, depth+1);
 			continue;
 		}
 		// next is a bucket
@@ -709,37 +766,51 @@ static void __nova_table_rescursive_free(
 			BUG_ON(inner->node_p[j] == 0 || nova_is_inner_node(inner->node_p[j]));
 			inner->node_p[j] = 0;
 		}
-		kmem_cache_free(table->bucket_cache, bucket);
+		save_bucket(table, bucket, saved);
 	}
 	// printk("Going to free inners %pK", inner->inners);
 	kmem_cache_free(table->inner_cache[(inner->bits - 1) / 3], inner);
 	// printk("return");
 }
 
-int nova_table_free(struct nova_mm_table* table)
+int nova_table_save(struct nova_mm_table* table)
 {
+	struct super_block *sb = table->sblock;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
+	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
+		sbi, sbi->entry_refcount_record_start);
 	unsigned long next;
 	int i;
+	atomic64_t __saved;
+	uint64_t saved;
+
 	if (table == NULL)
 		return 0;
+	atomic64_set(&__saved, 0);
 	for (i = 0; i < table->nr_tablets; i++) {
 		next = table->tablets[i].node_p;
 		if (nova_is_leaf_node(next)) {
-			kmem_cache_free(table->bucket_cache, nova_node_p_to_bucket(next));
+			save_bucket(table, nova_node_p_to_bucket(next), &__saved);
 		} else {
-			__nova_table_rescursive_free(table, nova_node_p_to_inner(next), 0);
+			__nova_table_rescursive_free(table, nova_node_p_to_inner(next), &__saved, 0);
 		}
 	}
+	saved = atomic64_read(&__saved);
+	nova_flush_buffer(rec, saved * sizeof(rec[0]), false);
+	nova_unlock_write(sb, &recover_meta->refcount_record_num, cpu_to_le64(saved), true);
+	nova_unlock_write(sb, &recover_meta->refcount_saved, NOVA_RECOVER_META_FLAG_COMPLETE, true);
+	nova_info("Refcount of %llu entries saved.", saved);
 	kmem_cache_destroy(table->bucket_cache);
-	for (i = 0; i < 3; ++i) {
+	for (i = 0; i < 3; ++i)
 		kmem_cache_destroy(table->inner_cache[i]);
-	}
+	nova_save_entry_allocator(sb, &table->entry_allocator);
 	vfree(table);
 	return 0;
 }
 
-struct nova_mm_table* nova_table_alloc(
-	struct super_block *sb) 
+static struct nova_mm_table *
+nova_table_alloc(struct super_block *sb) 
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *psb = (struct nova_super_block *)sbi->virt_addr;
@@ -768,9 +839,6 @@ struct nova_mm_table* nova_table_alloc(
 	table->sblock = sb;
 	table->nr_tablets = nr_tablets;
 	table->pentries = nova_blocknr_to_addr(sb, sbi->entry_table_start);
-	retval = nova_init_entry_allocator(sb, &table->entry_allocator, table->pentries, sbi->nr_entries);
-	if (retval)
-		goto err_out;
 
 	for (; i_inner_cache < 3; ++i_inner_cache) {
 		inner_cache_name[NOVA_INNER_CACHE_BASE_NAME_LEN - 1] = i_inner_cache + '0';
@@ -822,6 +890,53 @@ err_out:
 	NOVA_END_TIMING(table_init_t, table_init_time);
 	return ERR_PTR(retval);
 }
+struct nova_mm_table *nova_table_init(struct super_block *sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	int ret;
+	struct nova_mm_table *table = nova_table_alloc(sb);
+	if (IS_ERR(table))
+		return table;
+	ret = nova_init_entry_allocator(sbi, &table->entry_allocator);
+	if (ret) {
+		nova_table_save(table);
+		return ERR_PTR(ret);
+	}
+	return table;
+}
+struct nova_mm_table *nova_table_recover(struct super_block *sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
+	entrynr_t i, n = le64_to_cpu(recover_meta->refcount_record_num);
+	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
+		sbi, sbi->entry_refcount_record_start);
+	struct nova_mm_table *table;
+	struct nova_pmm_entry *pentries;
+	struct nova_write_para_entry wp;
+	int ret;
+
+	table = nova_table_alloc(sb);
+	if (IS_ERR(table))
+		return table;
+	pentries = table->pentries;
+	ret = nova_recover_entry_allocator(sbi, &table->entry_allocator);
+	if (ret)
+		goto err_out;
+	for (i = 0; i < n; ++i) {
+		wp.entrynr = le32_to_cpu(rec[i].entrynr);
+		wp.base.refcount = le32_to_cpu(rec[i].entrynr);
+		wp.base.fp = pentries[i].fp;
+		ret = nova_table_upsert_entry(table, &wp);
+		if (ret < 0)
+			goto err_out;
+	}
+	return table;
+err_out:
+	nova_table_save(table);
+	return ERR_PTR(ret);
+}
+
 
 static uint64_t node_height(unsigned long node_p) {
 	uint64_t height, mx = 0;
@@ -888,19 +1003,19 @@ static void __nova_table_recursive_stat(unsigned long node_p, uint64_t bits, str
 static inline void print_stat(struct nova_stat_info *stat) {
 	int i;
 	printk("(inner) cnt = %lld\nbits_cnt:", stat->inner.cnt);
-	for (i = 0; i <= NOVA_TABLE_INNER_BITS; ++i) {
-		printk(KERN_CONT " (%d)%lld", i, stat->inner.bits_cnt[i]);
-	}
+	for (i = 0; i <= NOVA_TABLE_INNER_BITS; ++i)
+		if (stat->inner.bits_cnt[i])
+			printk(KERN_CONT " (%d)%lld", i, stat->inner.bits_cnt[i]);
 	printk(KERN_CONT "\n");
 	printk("merged_cnt:");
-	for (i = 0; i <= MERGED_CNT_MAX; ++i) {
-		printk(KERN_CONT " (%d)%lld", i, stat->inner.merged_cnt[i]);
-	}
+	for (i = 0; i <= MERGED_CNT_MAX; ++i)
+		if (stat->inner.merged_cnt[i])
+			printk(KERN_CONT " (%d)%lld", i, stat->inner.merged_cnt[i]);
 	printk(KERN_CONT "\n");
 	printk("(bucket) cnt = %lld\nentry_cnt:", stat->bucket.cnt);
-	for (i = 0; i <= NOVA_TABLE_LEAF_SIZE; ++i) {
-		printk(KERN_CONT " (%d)%lld", i, stat->bucket.entry_cnt[i]);
-	}
+	for (i = 0; i <= NOVA_TABLE_LEAF_SIZE; ++i)
+		if (stat->bucket.entry_cnt[i])
+			printk(KERN_CONT " (%d)%lld", i, stat->bucket.entry_cnt[i]);
 	printk(KERN_CONT "\n");
 	// printk("mask_cnt:");
 	// for (i = 0; i <= NOVA_TABLE_INNER_BITS; ++i) {
@@ -914,7 +1029,7 @@ static inline void print_stat(struct nova_stat_info *stat) {
 	}
 	printk(KERN_CONT "\n");
 }
-static void __nova_table_stats(struct nova_mm_table *table)
+static int __nova_table_stats(struct nova_mm_table *table)
 {
 	uint64_t height = nova_table_height(table);
 	struct nova_stat_info *stats;
@@ -923,7 +1038,7 @@ static void __nova_table_stats(struct nova_mm_table *table)
 	stats = vzalloc(height * sizeof(struct nova_stat_info));
 	if (stats == NULL) {
 		printk("OOM in __nova_table_stats\n");
-		return;
+		return -ENOMEM;
 	}
 	for (i = 0; i < table->nr_tablets; ++i) {
 		__nova_table_recursive_stat(table->tablets[i].node_p, 0, stats, 0);
@@ -933,12 +1048,17 @@ static void __nova_table_stats(struct nova_mm_table *table)
 		print_stat(stats + i);
 	}
 	vfree(stats);
+	return 0;
 }
-void nova_table_stats(struct file *file)
+int nova_table_stats(struct file *file)
 {
 	struct inode *inode = file_inode(file);
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_meta_table *table = &sbi->meta_table;
-	__nova_table_stats(table->metas);
+	struct nova_meta_table *meta_table = &sbi->meta_table;
+	struct nova_mm_table *table = meta_table->metas;
+	int ret = __nova_table_stats(table);
+	if (ret < 0)
+		return ret;
+	return __nova_entry_allocator_stats(sbi, &table->entry_allocator);
 }

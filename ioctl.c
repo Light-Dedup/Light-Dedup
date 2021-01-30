@@ -145,8 +145,7 @@ setversion_out:
 		return 0;
 	}
 	case NOVA_TABLE_STATS: {
-		nova_table_stats(filp);
-		return 0;
+		return nova_table_stats(filp);
 	}
 	case NOVA_PRINT_LOG: {
 		nova_print_inode_log(sb, inode);

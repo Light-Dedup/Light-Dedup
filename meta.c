@@ -2,25 +2,40 @@
 #include "meta.h"
 #include "config.h"
 
-int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sblock)
+static int meta_table_alloc(struct nova_meta_table *table, struct super_block *sb)
 {
-	int retval;
-	table->kbuf_cache = kmem_cache_create_usercopy("nova_kbuf_cache", PAGE_SIZE, 8, TABLE_KMEM_CACHE_FLAGS, 0, PAGE_SIZE, NULL);
-	if (table->kbuf_cache == NULL) {
-		retval = -ENOMEM;
-		goto err_out;
-	}
-	table->metas = nova_table_alloc(sblock);
-	if (IS_ERR(table->metas)) {
-		retval = PTR_ERR(table->metas);
-		goto err_out;
-	}
-	table->sblock = sblock;
+	table->sblock = sb;
+	table->kbuf_cache = kmem_cache_create_usercopy(
+		"nova_kbuf_cache", PAGE_SIZE, 8, TABLE_KMEM_CACHE_FLAGS, 0, PAGE_SIZE, NULL);
+	if (table->kbuf_cache == NULL)
+		return -ENOMEM;
 	return 0;
-err_out:
-	if (table->kbuf_cache)
+}
+int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sb)
+{
+	int ret;
+	ret = meta_table_alloc(table, sb);
+	if (ret < 0)
+		return ret;
+	table->metas = nova_table_init(sb);
+	if (IS_ERR(table->metas)) {
 		kmem_cache_destroy(table->kbuf_cache);
-	return retval;
+		return PTR_ERR(table->metas);
+	}
+	return 0;
+}
+int nova_meta_table_restore(struct nova_meta_table *table, struct super_block *sb)
+{
+	int ret;
+	ret = meta_table_alloc(table, sb);
+	if (ret < 0)
+		return ret;
+	table->metas = nova_table_recover(sb);
+	if (IS_ERR(table->metas)) {
+		kmem_cache_destroy(table->kbuf_cache);
+		return PTR_ERR(table->metas);
+	}
+	return 0;
 }
 
 static void init_normal_wp_incr(struct nova_sb_info *sbi,

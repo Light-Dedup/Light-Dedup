@@ -62,6 +62,7 @@ struct nova_super_block {
 
 #define SUPER_BLOCK_START       0 // Superblock
 #define	RESERVE_INODE_START	1 // Reserved inodes
+#define RECOVER_META_START 15
 #define	INODE_TABLE0_START	16 // inode table
 #define	INODE_TABLE1_START	32 // replica inode table
 #define	JOURNAL_START		48 // journal pointer table
@@ -89,6 +90,17 @@ struct nova_super_block {
 /* Normal inode starts at 32 */
 #define NOVA_NORMAL_INODE_START      (32)
 
+#define NOVA_RECOVER_META_FLAG_COMPLETE (0x3f)
+struct nova_recover_meta {
+	// u8 free_entrynr_saved;
+	u8 region_valid_entry_count_saved;
+	u8 refcount_saved;
+	u8 __padding[6];
+	// __le64 free_entrynr_list_head;
+	// __le64 free_entrynr_list_tail;
+	__le64 refcount_record_num;
+};
+_Static_assert(sizeof(struct nova_recover_meta) <= PAGE_SIZE, "struct nova_recover_meta too large!");
 
 
 /*
@@ -179,9 +191,14 @@ struct nova_sb_info {
 	unsigned long per_list_blocks;
 	unsigned long	block_start;
 	unsigned long	block_end;
+
 	uint32_t nr_tablets;
-	uint64_t nr_entries;
+	regionnr_t nr_regions;
+	entrynr_t nr_entries;
 	unsigned long entry_table_start;
+	unsigned long region_valid_entry_count_start;
+	unsigned long entry_refcount_record_start;
+
 	struct nova_meta_table meta_table;
 	struct nova_fp_strong_ctx fp_ctx;
 };
@@ -208,14 +225,37 @@ static inline struct nova_super_block
 }
 
 
+static inline struct nova_super_block *nova_sbi_get_super(struct nova_sb_info *sbi)
+{
+	return (struct nova_super_block *)sbi->virt_addr;
+}
 /* If this is part of a read-modify-write of the super block,
  * nova_memunlock_super() before calling!
  */
 static inline struct nova_super_block *nova_get_super(struct super_block *sb)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+	return nova_sbi_get_super(NOVA_SB(sb));
+}
 
-	return (struct nova_super_block *)sbi->virt_addr;
+static inline u64
+nova_get_blocknr_off(unsigned long blocknr)
+{
+	return (u64)blocknr << PAGE_SHIFT;
+}
+static inline void *nova_sbi_get_block(struct nova_sb_info *sbi, u64 block)
+{
+	struct nova_super_block *ps = nova_sbi_get_super(sbi);
+	return block ? ((void *)ps + block) : NULL;
+}
+static inline void *
+nova_sbi_blocknr_to_addr(struct nova_sb_info *sbi, unsigned long blocknr)
+{
+	return nova_sbi_get_block(sbi, nova_get_blocknr_off(blocknr));
+}
+static inline struct nova_recover_meta *
+nova_get_recover_meta(struct nova_sb_info *sbi)
+{
+	return nova_sbi_blocknr_to_addr(sbi, RECOVER_META_START);
 }
 
 extern struct super_block *nova_read_super(struct super_block *sb, void *data,

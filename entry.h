@@ -9,6 +9,8 @@
 
 #define NOVA_LEAF_ENTRY_MAGIC (0x3f3f)
 
+struct nova_sb_info;
+
 typedef uint64_t entrynr_t;
 typedef uint32_t regionnr_t;
 
@@ -46,8 +48,12 @@ struct entry_allocator {
     spinlock_t lock;	// For free_regions
 };
 
-int nova_init_entry_allocator(struct super_block *sb, struct entry_allocator *allocator, struct nova_pmm_entry *pentries, entrynr_t entrynr);
+int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator);
+int nova_recover_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator);
+void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator);
 entrynr_t nova_alloc_entry(struct entry_allocator *allocator);
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr);
+
+int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocator *allocator);
 
 #endif // __NOVA_ENTRY_H

@@ -113,12 +113,14 @@ static void nova_set_blocksize(struct super_block *sb, unsigned long size)
 	sb->s_blocksize = (1 << bits);
 }
 
-static unsigned long
-number_of_entry_needed(unsigned long num_blocks) {
+static regionnr_t
+number_of_region_needed(unsigned long num_blocks)
+{
 	unsigned long ret = num_blocks * 2;
 	if (ret & (ENTRY_PER_REGION - 1))
-		ret = (ret & ~(ENTRY_PER_REGION - 1)) + ENTRY_PER_REGION;
-	return ret;
+		return ret / ENTRY_PER_REGION + 1;
+	else
+		return ret / ENTRY_PER_REGION;
 }
 static int nova_get_nvmm_info(struct super_block *sb,
 	struct nova_sb_info *sbi)
@@ -171,8 +173,16 @@ static int nova_get_nvmm_info(struct super_block *sb,
 
 	sbi->entry_table_start = sbi->block_start;
 	sbi->nr_tablets = 1 << WHICH_TABLET_BIT_NUM;
-	sbi->nr_entries = number_of_entry_needed(sbi->num_blocks);
+	sbi->nr_regions = number_of_region_needed(sbi->num_blocks);
+	sbi->nr_entries = (entrynr_t)sbi->nr_regions * ENTRY_PER_REGION;
 	sbi->block_start += ((sbi->nr_entries * sizeof(struct nova_pmm_entry) - 1) >> PAGE_SHIFT) + 1;
+
+	sbi->region_valid_entry_count_start = sbi->block_start;
+	sbi->block_start += ((sbi->nr_regions * sizeof(__le16) - 1) >> PAGE_SHIFT) + 1;
+
+	sbi->entry_refcount_record_start = sbi->block_start;
+	// The number of valid entries is at most sbi->num_blocks.
+	sbi->block_start += ((sbi->num_blocks * sizeof(struct nova_entry_refcount_record) - 1) >> PAGE_SHIFT) + 1;
 
 	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
 		"num_blocks %lu, block_start %lu, block_end %lu\n",
@@ -935,7 +945,7 @@ static void nova_put_super(struct super_block *sb)
 
 	nova_print_curr_epoch_id(sb);
 
-	nova_meta_table_destroy(&sbi->meta_table);
+	nova_meta_table_save(&sbi->meta_table);
 	/* It's unmount time, so unmap the nova memory */
 //	nova_print_free_lists(sb);
 	if (sbi->virt_addr) {
