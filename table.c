@@ -4,6 +4,7 @@
 #include "table.h"
 #include "nova.h"
 #include "faststr.h"
+#include "arithmetic.h"
 
 #define NOVA_FULL  (1)
 // #define NOVA_INSERT_ENTRY (2)
@@ -784,22 +785,25 @@ struct table_free_para {
 	atomic64_t *saved;
 	size_t tablet_start, tablet_end;
 };
-static void __table_free_func(void *__para)
+static void __table_free_func(struct nova_mm_table *table,
+	size_t tablet_start, size_t tablet_end, atomic64_t *saved)
 {
-	struct table_free_para *para = (struct table_free_para *)__para;
 	unsigned long next;
 	size_t i;
-	for (i = para->tablet_start; i < para->tablet_end; ++i) {
-		next = para->table->tablets[i].node_p;
+	for (i = tablet_start; i < tablet_end; ++i) {
+		next = table->tablets[i].node_p;
 		if (nova_is_leaf_node(next))
-			free_bucket(para->table, nova_node_p_to_bucket(next), para->saved);
+			free_bucket(table, nova_node_p_to_bucket(next), saved);
 		else
-			__nova_table_rescursive_free(para->table, nova_node_p_to_inner(next), para->saved, 0);
+			__nova_table_rescursive_free(table, nova_node_p_to_inner(next), saved, 0);
 	}
 }
-static int table_free_func(void *para)
+static int table_free_func(void *__para)
 {
-	__table_free_func(para);
+	struct table_free_para *para = (struct table_free_para *)__para;
+	__table_free_func(para->table, para->tablet_start, para->tablet_end,
+		para->saved);
+	// printk("%s waiting for kthread_stop\n", __func__);
 	/* Wait for kthread_stop */
 	set_current_state(TASK_INTERRUPTIBLE);
 	while (!kthread_should_stop()) {
@@ -824,7 +828,7 @@ static int table_free_multithread(struct nova_mm_table *table, atomic64_t *saved
 	// 	thread_num = 8;
 	tablet_per_thread = (table->nr_tablets - 1) / thread_num + 1;
 	thread_num = (table->nr_tablets - 1) / tablet_per_thread + 1;
-	printk("Free fingerprint table using %lu threads\n", (unsigned long)thread_num);
+	nova_info("Free fingerprint table using %lu threads\n", (unsigned long)thread_num);
 	para = kmalloc(thread_num * sizeof(struct table_free_para), GFP_KERNEL);
 	if (para == NULL) {
 		ret = -ENOMEM;
@@ -841,7 +845,7 @@ static int table_free_multithread(struct nova_mm_table *table, atomic64_t *saved
 		para[i].saved = saved;
 		para[i].tablet_start = base;
 		base += tablet_per_thread;
-		para[i].tablet_end = (i == thread_num - 1 ? table->nr_tablets : base);
+		para[i].tablet_end = base < table->nr_tablets ? base : table->nr_tablets;
 		tasks[i] = kthread_run(table_free_func, para + i,
 			"nova_table_free_%lu", (unsigned long)i);
 		if (IS_ERR(tasks[i])) {
@@ -859,19 +863,10 @@ out:
 		kfree(tasks);
 	return ret;
 }
-static void table_free_single_thread(struct nova_mm_table *table, atomic64_t *saved)
-{
-	struct table_free_para para;
-	para.table = table;
-	para.saved = saved;
-	para.tablet_start = 0;
-	para.tablet_end = table->nr_tablets;
-	__table_free_func((void *)&para);
-}
 static void table_free(struct nova_mm_table *table, atomic64_t *saved)
 {
 	if (table_free_multithread(table, saved) < 0)
-		table_free_single_thread(table, saved);
+		__table_free_func(table, 0, table->nr_tablets, saved);
 }
 
 static void __nova_table_free(struct nova_mm_table *table, atomic64_t *saved)
@@ -1007,38 +1002,119 @@ struct nova_mm_table *nova_table_init(struct super_block *sb)
 	}
 	return table;
 }
+
+struct table_recover_para {
+	struct nova_mm_table *table;
+	entrynr_t entry_start, entry_end;
+};
+static int __table_recover_func(struct nova_mm_table *table,
+	entrynr_t entry_start, entrynr_t entry_end)
+{
+	struct super_block *sb = table->sblock;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
+		sbi, sbi->entry_refcount_record_start);
+	struct nova_pmm_entry *pentries = table->pentries;
+	struct nova_write_para_entry wp;
+	entrynr_t i;
+	int ret = 0;
+	// printk("entry_start = %lu, entry_end = %lu\n", (unsigned long)entry_start, (unsigned long)entry_end);
+	for (i = entry_start; i < entry_end; ++i) {
+		wp.entrynr = le32_to_cpu(rec[i].entrynr);
+		wp.base.refcount = le32_to_cpu(rec[i].entrynr);
+		wp.base.fp = pentries[i].fp;
+		ret = nova_table_upsert_entry(table, &wp);
+		if (ret < 0)
+			break;
+	}
+	return ret;
+}
+static int table_recover_func(void *__para) {
+	struct table_recover_para *para = (struct table_recover_para *)__para;
+	int ret;
+	// printk("%s\n", __func__);
+	ret = __table_recover_func(para->table, para->entry_start, para->entry_end);
+	// printk("%s waiting for kthread_stop\n", __func__);
+	/* Wait for kthread_stop */
+	set_current_state(TASK_INTERRUPTIBLE);
+	while (!kthread_should_stop()) {
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
+	return ret;
+}
+static int table_recover(struct nova_mm_table *table)
+{
+	struct super_block *sb = table->sblock;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
+	entrynr_t n = le64_to_cpu(recover_meta->refcount_record_num);
+	unsigned long entry_per_thread_bit = max_ul(20, ceil_log_2(n / sbi->cpus));
+	unsigned long entry_per_thread = 1UL << entry_per_thread_bit;
+	unsigned long i, thread_num = ((n - 1) >> entry_per_thread_bit) + 1;
+	unsigned long base;
+	struct table_recover_para *para = NULL;
+	struct task_struct **tasks = NULL;
+	int ret = 0;
+
+	nova_info("%lu refcount record found.\n", (unsigned long)n);
+	if (n == 0)
+		return 0;
+	nova_info("Recover fingerprint table using %lu thread(s)\n", thread_num);
+	para = kmalloc(thread_num * sizeof(struct table_recover_para), GFP_KERNEL);
+	if (para == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	tasks = kzalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
+	if (tasks == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	base = 0;
+	for (i = 0; i < thread_num; ++i) {
+		para[i].table = table;
+		para[i].entry_start = base;
+		base += entry_per_thread;
+		para[i].entry_end = base < n ? base : n;
+		tasks[i] = kthread_run(table_recover_func, para + i,
+			"nova_table_recover_%lu", i);
+		if (IS_ERR(tasks[i])) {
+			ret = PTR_ERR(tasks[i]);
+			tasks[i] = NULL;
+			break;
+		}
+	}
+	for (i = 0; i < thread_num && tasks[i]; ++i) {
+		// BUG??? Without the printk, the kthread would be stopped without running!
+		printk("Stopping %lu\n", i);
+		kthread_stop(tasks[i]);
+	}
+out:
+	if (para)
+		kfree(para);
+	if (tasks)
+		kfree(tasks);
+	return ret;
+}
 struct nova_mm_table *nova_table_recover(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
-	entrynr_t i, n = le64_to_cpu(recover_meta->refcount_record_num);
-	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
-		sbi, sbi->entry_refcount_record_start);
 	struct nova_mm_table *table;
-	struct nova_pmm_entry *pentries;
-	struct nova_write_para_entry wp;
 	int ret;
 	INIT_TIMING(normal_recover_fp_table_time);
 
 	table = nova_table_alloc(sb);
 	if (IS_ERR(table))
 		return table;
-	pentries = table->pentries;
 	ret = nova_recover_entry_allocator(sbi, &table->entry_allocator);
 	if (ret)
 		goto err_out;
 	NOVA_START_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
-	for (i = 0; i < n; ++i) {
-		wp.entrynr = le32_to_cpu(rec[i].entrynr);
-		wp.base.refcount = le32_to_cpu(rec[i].entrynr);
-		wp.base.fp = pentries[i].fp;
-		ret = nova_table_upsert_entry(table, &wp);
-		if (ret < 0) {
-			NOVA_END_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
-			goto err_out;
-		}
-	}
+	ret = table_recover(table);
 	NOVA_END_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
+	if (ret < 0)
+		goto err_out;
 	return table;
 err_out:
 	__nova_table_free(table, NULL);
