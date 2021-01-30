@@ -174,6 +174,10 @@ enum timing_category {
 	split_t,
 	memcmp_t,
 	table_init_t,
+	save_refcount_t,
+	save_entry_allocator_t,
+	normal_recover_fp_table_t,
+	normal_recover_entry_allocator_t,
 
 	/* Sentinel */
 	TIMING_NUM,

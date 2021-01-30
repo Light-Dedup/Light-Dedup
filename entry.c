@@ -46,6 +46,7 @@ int nova_recover_entry_allocator(struct nova_sb_info *sbi, struct entry_allocato
 	u16 value;
 	regionnr_t i;
 	int ret;
+	INIT_TIMING(normal_recover_entry_allocator_time);
 
 	BUG_ON(recover_meta->region_valid_entry_count_saved != NOVA_RECOVER_META_FLAG_COMPLETE);
 	allocator->valid_entry = vmalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
@@ -57,12 +58,14 @@ int nova_recover_entry_allocator(struct nova_sb_info *sbi, struct entry_allocato
 	ret = kfifo_alloc(&allocator->free_regions, sbi->nr_regions * sizeof(regionnr_t), GFP_KERNEL);
 	if (ret)
 		goto err_out1;
+	NOVA_START_TIMING(normal_recover_entry_allocator_t, normal_recover_entry_allocator_time);
 	for (i = 0; i < sbi->nr_regions; ++i) {
 		value = le16_to_cpu(valid_entry_count[i]);
 		atomic_set(allocator->valid_entry + i, value);
 		if (value <= FREE_THRESHOLD)
 			BUG_ON(kfifo_in(&allocator->free_regions, &i, sizeof(i)) != sizeof(i));
 	}
+	NOVA_END_TIMING(normal_recover_entry_allocator_t, normal_recover_entry_allocator_time);
 	allocator->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
 	// The first allocation will trigger a new_region request.
 	atomic64_set(&allocator->regionnr_index, ENTRY_PER_REGION - 1);
@@ -87,13 +90,17 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 	__le16 *valid_entry_count = nova_sbi_blocknr_to_addr(sbi, sbi->region_valid_entry_count_start);
 	regionnr_t i;
 	unsigned long irq_flags = 0;
+	INIT_TIMING(save_entry_allocator_time);
 
+	NOVA_START_TIMING(save_entry_allocator_t, save_entry_allocator_time);
 	nova_memunlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
 	for (i = 0; i < sbi->nr_regions; ++i)
 		valid_entry_count[i] = cpu_to_le16(atomic_read(allocator->valid_entry + i));
 	nova_memlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
 	nova_flush_buffer(valid_entry_count, sbi->nr_regions * sizeof(valid_entry_count[0]), true);
 	nova_unlock_write(sb, &recover_meta->region_valid_entry_count_saved, NOVA_RECOVER_META_FLAG_COMPLETE, true);
+	NOVA_END_TIMING(save_entry_allocator_t, save_entry_allocator_time);
+
 	nova_free_entry_allocator(allocator);
 }
 

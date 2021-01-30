@@ -170,6 +170,10 @@ const char *Timingstring[TIMING_NUM] = {
 	"split",
 	"memcmp",
 	"table_init",
+	"save_refcount",
+	"save_entry_allocator",
+	"normal_recover_fp_table",
+	"normal_recover_entry_allocator",
 };
 
 u64 Timingstats[TIMING_NUM];
