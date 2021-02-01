@@ -709,7 +709,7 @@ struct task_ring {
 	u64 addr1[512];		/* Second inode address */
 	int num;
 	int inodes_used_count;
-	u64 *entry_array;
+	struct nova_file_write_entry **entry_array;
 };
 
 static struct task_ring *task_rings;
@@ -751,17 +751,14 @@ static void nova_traverse_dir_inode_log(struct super_block *sb,
 }
 
 static unsigned int nova_check_old_entry(struct super_block *sb,
-	struct nova_inode_info_header *sih, u64 entry_addr,
+	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
 	unsigned long pgoff,
 	u64 epoch_id, struct task_ring *ring, unsigned long base,
 	struct scan_bitmap *bm)
 {
-	struct nova_file_write_entry *entry;
 	struct nova_file_write_entry *entryc, entry_copy;
 	unsigned long old_nvmm;
 	int ret;
-
-	entry = (struct nova_file_write_entry *)entry_addr;
 
 	if (!entry)
 		return 0;
@@ -802,10 +799,10 @@ static int nova_set_ring_array(struct super_block *sb,
 	if (pgoff >= base + MAX_PGOFF)
 		return 0;
 	index = pgoff - base;
-	if (ring->entry_array[index] != 0)
+	if (ring->entry_array[index])
 		nova_check_old_entry(sb, sih, ring->entry_array[index], pgoff,
 				epoch_id, ring, base, bm);
-	ring->entry_array[index] = (u64)entry;
+	ring->entry_array[index] = entry;
 
 	return 0;
 }
@@ -822,10 +819,10 @@ static int nova_set_file_bm(struct super_block *sb,
 		last_blocknr -= base;
 
 	for (pgoff = 0; pgoff <= last_blocknr; pgoff++) {
-		nvmm = get_nvmm(sb, sih, (struct nova_file_write_entry *)ring->entry_array[pgoff], pgoff + base);
+		nvmm = get_nvmm(sb, sih, ring->entry_array[pgoff], pgoff + base);
 		if (nvmm) {
 			set_bm(nvmm, bm);
-			ring->entry_array[pgoff] = 0;
+			ring->entry_array[pgoff] = NULL;
 		}
 	}
 
@@ -872,7 +869,7 @@ static void nova_ring_setattr_entry(struct super_block *sb,
 			nova_check_old_entry(sb, sih, ring->entry_array[index],
 					pgoff, epoch_id, ring, base, bm);
 		}
-		ring->entry_array[index] = 0;
+		ring->entry_array[index] = NULL;
 	}
 out:
 	sih->i_size = entry->size;
@@ -1072,7 +1069,7 @@ static int allocate_resources(struct super_block *sb, int cpus)
 	for (i = 0; i < cpus; i++) {
 		ring = &task_rings[i];
 
-		ring->entry_array = vzalloc(sizeof(u64) * MAX_PGOFF);
+		ring->entry_array = vzalloc(sizeof(struct nova_file_write_entry *) * MAX_PGOFF);
 		if (!ring->entry_array)
 			goto fail;
 	}
