@@ -1061,6 +1061,8 @@ static int table_recover(struct nova_mm_table *table)
 	if (n == 0)
 		return 0;
 	nova_info("Recover fingerprint table using %lu thread(s)\n", thread_num);
+	if (thread_num == 1)
+		return __table_recover_func(table, 0, n);
 	para = kmalloc(thread_num * sizeof(struct table_recover_para), GFP_KERNEL);
 	if (para == NULL) {
 		ret = -ENOMEM;
