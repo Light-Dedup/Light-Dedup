@@ -63,28 +63,9 @@ void nova_init_header(struct super_block *sb,
 	sih->i_blk_type = NOVA_DEFAULT_BLOCK_TYPE;
 }
 
-static inline void set_scan_bm(unsigned long bit,
-	struct single_scan_bm *scan_bm)
+inline void set_bm(unsigned long bit, struct scan_bitmap *bm)
 {
-	set_bit(bit, scan_bm->bitmap);
-}
-
-inline void set_bm(unsigned long bit, struct scan_bitmap *bm,
-	enum bm_type type)
-{
-	switch (type) {
-	case BM_4K:
-		set_scan_bm(bit, &bm->scan_bm_4K);
-		break;
-	case BM_2M:
-		set_scan_bm(bit, &bm->scan_bm_2M);
-		break;
-	case BM_1G:
-		set_scan_bm(bit, &bm->scan_bm_1G);
-		break;
-	default:
-		break;
-	}
+	set_bit(bit, bm->bitmap);
 }
 
 static inline int get_block_cpuid(struct nova_sb_info *sbi,
@@ -624,27 +605,6 @@ static int __nova_build_blocknode_map(struct super_block *sb,
 	return 0;
 }
 
-static void nova_update_4K_map(struct super_block *sb,
-	struct scan_bitmap *bm,	unsigned long *bitmap,
-	unsigned long bsize, unsigned long scale)
-{
-	unsigned long next = 0;
-	unsigned long low = 0;
-	int i;
-
-	while (1) {
-		next = find_next_bit(bitmap, bsize, next);
-		if (next == bsize)
-			break;
-		low = next;
-		next = find_next_zero_bit(bitmap, bsize, next);
-		for (i = (low << scale); i < (next << scale); i++)
-			set_bm(i, bm, BM_4K);
-		if (next == bsize)
-			break;
-	}
-}
-
 struct scan_bitmap *global_bm[MAX_CPUS];
 
 static int nova_build_blocknode_map(struct super_block *sb,
@@ -662,48 +622,36 @@ static int nova_build_blocknode_map(struct super_block *sb,
 	if (!final_bm)
 		return -ENOMEM;
 
-	final_bm->scan_bm_4K.bitmap_size =
+	final_bm->bitmap_size =
 				(initsize >> (PAGE_SHIFT + 0x3));
 
 	/* Alloc memory to hold the block alloc bitmap */
-	final_bm->scan_bm_4K.bitmap = kzalloc(final_bm->scan_bm_4K.bitmap_size,
+	final_bm->bitmap = kzalloc(final_bm->bitmap_size,
 							GFP_KERNEL);
 
-	if (!final_bm->scan_bm_4K.bitmap) {
+	if (!final_bm->bitmap) {
 		kfree(final_bm);
 		return -ENOMEM;
 	}
 
-	/*
-	 * We are using free lists. Set 2M and 1G blocks in 4K map,
-	 * and use 4K map to rebuild block map.
-	 */
-	for (i = 0; i < sbi->cpus; i++) {
-		bm = global_bm[i];
-		nova_update_4K_map(sb, bm, bm->scan_bm_2M.bitmap,
-			bm->scan_bm_2M.bitmap_size * 8, PAGE_SHIFT_2M - 12);
-		nova_update_4K_map(sb, bm, bm->scan_bm_1G.bitmap,
-			bm->scan_bm_1G.bitmap_size * 8, PAGE_SHIFT_1G - 12);
-	}
-
 	/* Merge per-CPU bms to the final single bm */
-	num = final_bm->scan_bm_4K.bitmap_size / sizeof(unsigned long);
-	if (final_bm->scan_bm_4K.bitmap_size % sizeof(unsigned long))
+	num = final_bm->bitmap_size / sizeof(unsigned long);
+	if (final_bm->bitmap_size % sizeof(unsigned long))
 		num++;
 
 	for (i = 0; i < sbi->cpus; i++) {
 		bm = global_bm[i];
-		src = (unsigned long *)bm->scan_bm_4K.bitmap;
-		dst = (unsigned long *)final_bm->scan_bm_4K.bitmap;
+		src = (unsigned long *)bm->bitmap;
+		dst = (unsigned long *)final_bm->bitmap;
 
 		for (j = 0; j < num; j++)
 			dst[j] |= src[j];
 	}
 
-	ret = __nova_build_blocknode_map(sb, final_bm->scan_bm_4K.bitmap,
-			final_bm->scan_bm_4K.bitmap_size * 8, PAGE_SHIFT - 12);
+	ret = __nova_build_blocknode_map(sb, final_bm->bitmap,
+			final_bm->bitmap_size * 8, PAGE_SHIFT - 12);
 
-	kfree(final_bm->scan_bm_4K.bitmap);
+	kfree(final_bm->bitmap);
 	kfree(final_bm);
 
 	return ret;
@@ -718,9 +666,7 @@ static void free_bm(struct super_block *sb)
 	for (i = 0; i < sbi->cpus; i++) {
 		bm = global_bm[i];
 		if (bm) {
-			kfree(bm->scan_bm_4K.bitmap);
-			kfree(bm->scan_bm_2M.bitmap);
-			kfree(bm->scan_bm_1G.bitmap);
+			kfree(bm->bitmap);
 			kfree(bm);
 		}
 	}
@@ -739,23 +685,13 @@ static int alloc_bm(struct super_block *sb, unsigned long initsize)
 
 		global_bm[i] = bm;
 
-		bm->scan_bm_4K.bitmap_size =
+		bm->bitmap_size =
 				(initsize >> (PAGE_SHIFT + 0x3));
-		bm->scan_bm_2M.bitmap_size =
-				(initsize >> (PAGE_SHIFT_2M + 0x3));
-		bm->scan_bm_1G.bitmap_size =
-				(initsize >> (PAGE_SHIFT_1G + 0x3));
 
 		/* Alloc memory to hold the block alloc bitmap */
-		bm->scan_bm_4K.bitmap = kzalloc(bm->scan_bm_4K.bitmap_size,
-							GFP_KERNEL);
-		bm->scan_bm_2M.bitmap = kzalloc(bm->scan_bm_2M.bitmap_size,
-							GFP_KERNEL);
-		bm->scan_bm_1G.bitmap = kzalloc(bm->scan_bm_1G.bitmap_size,
-							GFP_KERNEL);
+		bm->bitmap = kzalloc(bm->bitmap_size, GFP_KERNEL);
 
-		if (!bm->scan_bm_4K.bitmap || !bm->scan_bm_2M.bitmap ||
-				!bm->scan_bm_1G.bitmap)
+		if (!bm->bitmap)
 			return -ENOMEM;
 	}
 
@@ -792,13 +728,13 @@ static int nova_traverse_inode_log(struct super_block *sb,
 		return 0;
 
 	BUG_ON(curr_p & (PAGE_SIZE - 1));
-	set_bm(curr_p >> PAGE_SHIFT, bm, BM_4K);
+	set_bm(curr_p >> PAGE_SHIFT, bm);
 
 	next = next_log_page(sb, curr_p);
 	while (next > 0) {
 		curr_p = next;
 		BUG_ON(curr_p & (PAGE_SIZE - 1));
-		set_bm(curr_p >> PAGE_SHIFT, bm, BM_4K);
+		set_bm(curr_p >> PAGE_SHIFT, bm);
 		next = next_log_page(sb, curr_p);
 	}
 
@@ -849,7 +785,7 @@ static unsigned int nova_check_old_entry(struct super_block *sb,
 	index = pgoff - base;
 	nvmm = ring->nvmm_array[index];
 	if (nvmm)
-		set_bm(nvmm, bm, BM_4K);
+		set_bm(nvmm, bm);
 
 	return ret;
 }
@@ -898,7 +834,7 @@ static int nova_set_file_bm(struct super_block *sb,
 	for (pgoff = 0; pgoff <= last_blocknr; pgoff++) {
 		nvmm = ring->nvmm_array[pgoff];
 		if (nvmm) {
-			set_bm(nvmm, bm, BM_4K);
+			set_bm(nvmm, bm);
 			ring->nvmm_array[pgoff] = 0;
 			ring->entry_array[pgoff] = 0;
 		}
@@ -1003,7 +939,7 @@ again:
 
 	if (base == 0) {
 		BUG_ON(curr_p & (PAGE_SIZE - 1));
-		set_bm(curr_p >> PAGE_SHIFT, bm, BM_4K);
+		set_bm(curr_p >> PAGE_SHIFT, bm);
 	}
 
 	while (curr_p != pi->log_tail) {
@@ -1011,7 +947,7 @@ again:
 			curr_p = next_log_page(sb, curr_p);
 			if (base == 0) {
 				BUG_ON(curr_p & (PAGE_SIZE - 1));
-				set_bm(curr_p >> PAGE_SHIFT, bm, BM_4K);
+				set_bm(curr_p >> PAGE_SHIFT, bm);
 			}
 		}
 
@@ -1064,7 +1000,7 @@ again:
 		while (next > 0) {
 			curr_p = next;
 			BUG_ON(curr_p & (PAGE_SIZE - 1));
-			set_bm(curr_p >> PAGE_SHIFT, bm, BM_4K);
+			set_bm(curr_p >> PAGE_SHIFT, bm);
 			next = next_log_page(sb, curr_p);
 		}
 	}
@@ -1252,12 +1188,12 @@ static int failure_thread_func(void *data)
 		 */
 		for (i = 0; i < 512; i++)
 			set_bm((curr >> PAGE_SHIFT) + i,
-					global_bm[cpuid], BM_4K);
+					global_bm[cpuid]);
 
 		if (metadata_csum) {
 			for (i = 0; i < 512; i++)
 				set_bm((curr1 >> PAGE_SHIFT) + i,
-					global_bm[cpuid], BM_4K);
+					global_bm[cpuid]);
 		}
 
 		for (i = 0; i < num_inodes_per_page; i++) {
@@ -1407,7 +1343,7 @@ int nova_failure_recovery(struct super_block *sb)
 	for (i = 0; i < sbi->cpus; i++) {
 		pair = nova_get_journal_pointers(sb, i);
 
-		set_bm(pair->journal_head >> PAGE_SHIFT, global_bm[i], BM_4K);
+		set_bm(pair->journal_head >> PAGE_SHIFT, global_bm[i]);
 	}
 
 	i = NOVA_SNAPSHOT_INO % sbi->cpus;
