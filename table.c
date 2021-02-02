@@ -781,6 +781,7 @@ static void __nova_table_rescursive_free(
 }
 
 struct table_free_para {
+	struct completion entered;
 	struct nova_mm_table *table;
 	atomic64_t *saved;
 	size_t tablet_start, tablet_end;
@@ -801,6 +802,7 @@ static void __table_free_func(struct nova_mm_table *table,
 static int table_free_func(void *__para)
 {
 	struct table_free_para *para = (struct table_free_para *)__para;
+	complete(&para->entered);
 	__table_free_func(para->table, para->tablet_start, para->tablet_end,
 		para->saved);
 	// printk("%s waiting for kthread_stop\n", __func__);
@@ -816,11 +818,11 @@ static int table_free_multithread(struct nova_mm_table *table, atomic64_t *saved
 {
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	size_t thread_num;
-	size_t tablet_per_thread;
+	unsigned long thread_num;
+	unsigned long tablet_per_thread;
 	struct table_free_para *para = NULL;
 	struct task_struct **tasks = NULL;
-	size_t i, base;
+	unsigned long i, base;
 	int ret = 0;
 
 	thread_num = sbi->cpus < table->nr_tablets ? sbi->cpus : table->nr_tablets;
@@ -828,7 +830,7 @@ static int table_free_multithread(struct nova_mm_table *table, atomic64_t *saved
 	// 	thread_num = 8;
 	tablet_per_thread = (table->nr_tablets - 1) / thread_num + 1;
 	thread_num = (table->nr_tablets - 1) / tablet_per_thread + 1;
-	nova_info("Free fingerprint table using %lu threads\n", (unsigned long)thread_num);
+	nova_info("Free fingerprint table using %lu threads\n", thread_num);
 	para = kmalloc(thread_num * sizeof(struct table_free_para), GFP_KERNEL);
 	if (para == NULL) {
 		ret = -ENOMEM;
@@ -841,20 +843,30 @@ static int table_free_multithread(struct nova_mm_table *table, atomic64_t *saved
 	}
 	base = 0;
 	for (i = 0; i < thread_num; ++i) {
+		init_completion(&para[i].entered);
 		para[i].table = table;
 		para[i].saved = saved;
 		para[i].tablet_start = base;
 		base += tablet_per_thread;
 		para[i].tablet_end = base < table->nr_tablets ? base : table->nr_tablets;
-		tasks[i] = kthread_run(table_free_func, para + i,
-			"nova_table_free_%lu", (unsigned long)i);
+		tasks[i] = kthread_create(table_free_func, para + i,
+			"nova_table_free_%lu", i);
 		if (IS_ERR(tasks[i])) {
 			ret = PTR_ERR(tasks[i]);
 			tasks[i] = NULL;
+			nova_err(sb, "kthread_create %lu return %d\n", i, ret);
 			break;
 		}
 	}
-	for (i = 0; i < thread_num && tasks[i]; ++i)
+	if (i == thread_num) {
+		for (i = 0; i < thread_num; ++i)
+			wake_up_process(tasks[i]);
+		for (i = 0; i < thread_num; ++i)
+			wait_for_completion(&para[i].entered);
+	} else {
+		thread_num = i;
+	}
+	for (i = 0; i < thread_num; ++i)
 		kthread_stop(tasks[i]);
 out:
 	if (para)
@@ -1004,6 +1016,7 @@ struct nova_mm_table *nova_table_init(struct super_block *sb)
 }
 
 struct table_recover_para {
+	struct completion entered;
 	struct nova_mm_table *table;
 	entrynr_t entry_start, entry_end;
 };
@@ -1033,6 +1046,7 @@ static int table_recover_func(void *__para) {
 	struct table_recover_para *para = (struct table_recover_para *)__para;
 	int ret;
 	// printk("%s\n", __func__);
+	complete(&para->entered);
 	ret = __table_recover_func(para->table, para->entry_start, para->entry_end);
 	// printk("%s waiting for kthread_stop\n", __func__);
 	/* Wait for kthread_stop */
@@ -1055,7 +1069,7 @@ static int table_recover(struct nova_mm_table *table)
 	unsigned long base;
 	struct table_recover_para *para = NULL;
 	struct task_struct **tasks = NULL;
-	int ret = 0;
+	int ret = 0, ret2;
 
 	nova_info("%lu refcount record found.\n", (unsigned long)n);
 	if (n == 0)
@@ -1075,22 +1089,40 @@ static int table_recover(struct nova_mm_table *table)
 	}
 	base = 0;
 	for (i = 0; i < thread_num; ++i) {
+		init_completion(&para[i].entered);
 		para[i].table = table;
 		para[i].entry_start = base;
 		base += entry_per_thread;
 		para[i].entry_end = base < n ? base : n;
-		tasks[i] = kthread_run(table_recover_func, para + i,
+		tasks[i] = kthread_create(table_recover_func, para + i,
 			"nova_table_recover_%lu", i);
 		if (IS_ERR(tasks[i])) {
 			ret = PTR_ERR(tasks[i]);
 			tasks[i] = NULL;
+			nova_err(sb, "kthread_create %lu return %d\n", i, ret);
 			break;
 		}
 	}
-	for (i = 0; i < thread_num && tasks[i]; ++i) {
-		// BUG??? Without the printk, the kthread would be stopped without running!
-		printk("Stopping %lu\n", i);
-		kthread_stop(tasks[i]);
+	if (i == thread_num) {
+		for (i = 0; i < thread_num; ++i)
+			wake_up_process(tasks[i]);
+		for (i = 0; i < thread_num; ++i) {
+			wait_for_completion(&para[i].entered);
+			ret2 = kthread_stop(tasks[i]);
+			if (ret2 < 0) {
+				nova_err(sb, "kthread_stop %lu return %d\n", i, ret2);
+				ret = ret2;
+			}
+		}
+	} else {
+		thread_num = i;
+		for (i = 0; i < thread_num; ++i) {
+			ret2 = kthread_stop(tasks[i]);
+			if (ret2 < 0 && ret2 != -EINTR) {
+				nova_err(sb, "kthread_stop %lu return %d\n", i, ret2);
+				ret = ret2;
+			}
+		}
 	}
 out:
 	if (para)
