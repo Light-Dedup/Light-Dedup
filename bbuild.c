@@ -703,8 +703,6 @@ static int alloc_bm(struct super_block *sb, unsigned long initsize)
 
 /************************** NOVA recovery ****************************/
 
-#define MAX_PGOFF	262144
-
 struct task_ring {
 	u64 addr0[512];
 	u64 addr1[512];		/* Second inode address */
@@ -789,18 +787,12 @@ static unsigned int nova_check_old_entry(struct super_block *sb,
 static int nova_set_ring_array(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
 	struct nova_file_write_entry *entryc, struct task_ring *ring,
-	unsigned long base, struct scan_bitmap *bm)
+	struct scan_bitmap *bm)
 {
 	unsigned long pgoff = entryc->pgoff;
-	unsigned long index;
 	u64 epoch_id = entryc->epoch_id;
 
-	if (pgoff < base)
-		return 0;
-	if (pgoff >= base + MAX_PGOFF)
-		return 0;
-	index = pgoff - base;
-	entry = xa_untag_pointer(xa_store(&ring->entry_array, index, xa_tag_pointer(entry, 0), GFP_KERNEL));
+	entry = xa_untag_pointer(xa_store(&ring->entry_array, pgoff, xa_tag_pointer(entry, 0), GFP_KERNEL));
 	if (entry)
 		nova_check_old_entry(sb, sih, entry, pgoff, epoch_id, bm);
 
@@ -809,20 +801,15 @@ static int nova_set_ring_array(struct super_block *sb,
 
 static int nova_set_file_bm(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct task_ring *ring,
-	struct scan_bitmap *bm, unsigned long base, unsigned long last_blocknr)
+	struct scan_bitmap *bm, unsigned long last_blocknr)
 {
 	struct nova_file_write_entry *entry;
 	unsigned long nvmm, pgoff;
 
-	if (last_blocknr >= base + MAX_PGOFF)
-		last_blocknr = MAX_PGOFF - 1;
-	else
-		last_blocknr -= base;
-
 	for (pgoff = 0; pgoff <= last_blocknr; pgoff++) {
 		entry = xa_untag_pointer(xa_erase(&ring->entry_array, pgoff));
 		if (entry) {
-			nvmm = get_nvmm(sb, sih, entry, pgoff + base);
+			nvmm = get_nvmm(sb, sih, entry, pgoff);
 			set_bm(nvmm, bm);
 		}
 	}
@@ -834,11 +821,10 @@ static int nova_set_file_bm(struct super_block *sb,
 static void nova_ring_setattr_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_setattr_logentry *entry, struct task_ring *ring,
-	unsigned long base, unsigned int data_bits, struct scan_bitmap *bm)
+	unsigned int data_bits, struct scan_bitmap *bm)
 {
 	unsigned long first_blocknr, last_blocknr;
 	unsigned long pgoff;
-	unsigned long index;
 	loff_t start, end;
 	u64 epoch_id = entry->epoch_id;
 	struct nova_file_write_entry *old_entry;
@@ -859,15 +845,8 @@ static void nova_ring_setattr_entry(struct super_block *sb,
 	if (first_blocknr > last_blocknr)
 		goto out;
 
-	if (first_blocknr < base)
-		first_blocknr = base;
-
-	if (last_blocknr > base + MAX_PGOFF - 1)
-		last_blocknr = base + MAX_PGOFF - 1;
-
 	for (pgoff = first_blocknr; pgoff <= last_blocknr; pgoff++) {
-		index = pgoff - base;
-		old_entry = xa_untag_pointer(xa_erase(&ring->entry_array, index));
+		old_entry = xa_untag_pointer(xa_erase(&ring->entry_array, pgoff));
 		if (old_entry)
 			nova_check_old_entry(sb, sih, old_entry,
 					pgoff, epoch_id, bm);
@@ -879,7 +858,7 @@ out:
 static unsigned long nova_traverse_file_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
 	struct nova_file_write_entry *entryc, struct task_ring *ring,
-	unsigned long base, struct scan_bitmap *bm)
+	struct scan_bitmap *bm)
 {
 	unsigned long max_blocknr = 0;
 	sih->i_size = entryc->size;
@@ -887,7 +866,7 @@ static unsigned long nova_traverse_file_write_entry(struct super_block *sb,
 	if (!entryc->invalid) {
 		max_blocknr = entryc->pgoff;
 		nova_set_ring_array(sb, sih, entry, entryc,
-					ring, base, bm);
+					ring, bm);
 	}
 
 	return max_blocknr;
@@ -898,7 +877,6 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 	struct task_ring *ring, struct scan_bitmap *bm)
 {
 	char entry_copy[NOVA_MAX_ENTRY_LEN];
-	unsigned long base = 0;
 	unsigned long last_blocknr = 0, curr_last;
 	u64 ino = pi->nova_ino;
 	void *entry, *entryc;
@@ -916,25 +894,20 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 
 	entryc = (metadata_csum == 0) ? NULL : entry_copy;
 
-again:
 	curr_p = pi->log_head;
 	nova_dbg_verbose("Log head 0x%llx, tail 0x%llx\n",
 				curr_p, pi->log_tail);
 	if (curr_p == 0 && pi->log_tail == 0)
 		return 0;
 
-	if (base == 0) {
-		BUG_ON(curr_p & (PAGE_SIZE - 1));
-		set_bm(curr_p >> PAGE_SHIFT, bm);
-	}
+	BUG_ON(curr_p & (PAGE_SIZE - 1));
+	set_bm(curr_p >> PAGE_SHIFT, bm);
 
 	while (curr_p != pi->log_tail) {
 		if (goto_next_page(sb, curr_p)) {
 			curr_p = next_log_page(sb, curr_p);
-			if (base == 0) {
-				BUG_ON(curr_p & (PAGE_SIZE - 1));
-				set_bm(curr_p >> PAGE_SHIFT, bm);
-			}
+			BUG_ON(curr_p & (PAGE_SIZE - 1));
+			set_bm(curr_p >> PAGE_SHIFT, bm);
 		}
 
 		if (curr_p == 0) {
@@ -953,7 +926,7 @@ again:
 		switch (type) {
 		case SET_ATTR:
 			nova_ring_setattr_entry(sb, sih, SENTRY(entryc),
-						ring, base, data_bits,
+						ring, data_bits,
 						bm);
 			curr_p += sizeof(struct nova_setattr_logentry);
 			break;
@@ -962,7 +935,7 @@ again:
 			break;
 		case FILE_WRITE:
 			curr_last = nova_traverse_file_write_entry(sb, sih, WENTRY(entry),
-						WENTRY(entryc), ring, base, bm);
+						WENTRY(entryc), ring, bm);
 			curr_p += sizeof(struct nova_file_write_entry);
 			if (last_blocknr < curr_last)
 				last_blocknr = curr_last;
@@ -979,23 +952,17 @@ again:
 
 	}
 
-	if (base == 0) {
-		/* Keep traversing until log ends */
-		curr_p &= PAGE_MASK;
+	/* Keep traversing until log ends */
+	curr_p &= PAGE_MASK;
+	next = next_log_page(sb, curr_p);
+	while (next > 0) {
+		curr_p = next;
+		BUG_ON(curr_p & (PAGE_SIZE - 1));
+		set_bm(curr_p >> PAGE_SHIFT, bm);
 		next = next_log_page(sb, curr_p);
-		while (next > 0) {
-			curr_p = next;
-			BUG_ON(curr_p & (PAGE_SIZE - 1));
-			set_bm(curr_p >> PAGE_SHIFT, bm);
-			next = next_log_page(sb, curr_p);
-		}
 	}
 
-	nova_set_file_bm(sb, sih, ring, bm, base, last_blocknr);
-	if (last_blocknr >= base + MAX_PGOFF) {
-		base += MAX_PGOFF;
-		goto again;
-	}
+	nova_set_file_bm(sb, sih, ring, bm, last_blocknr);
 
 	return 0;
 }
