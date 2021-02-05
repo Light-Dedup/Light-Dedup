@@ -37,6 +37,11 @@
 
 // #define static _Static_assert(1, "2333");
 
+struct scan_bitmap {
+	unsigned long bitmap_size;
+	unsigned long *bitmap;
+};
+
 void nova_init_header(struct super_block *sb,
 	struct nova_inode_info_header *sih, u16 i_mode)
 {
@@ -608,10 +613,12 @@ static int __nova_build_blocknode_map(struct super_block *sb,
 	return 0;
 }
 
-struct scan_bitmap *global_bm[MAX_CPUS];
+struct failure_recovery_info {
+	struct scan_bitmap *global_bm;
+};
 
 static int nova_build_blocknode_map(struct super_block *sb,
-	unsigned long initsize)
+	struct failure_recovery_info *info, unsigned long initsize)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct scan_bitmap *bm;
@@ -643,7 +650,7 @@ static int nova_build_blocknode_map(struct super_block *sb,
 		num++;
 
 	for (i = 0; i < sbi->cpus; i++) {
-		bm = global_bm[i];
+		bm = info->global_bm + i;
 		src = (unsigned long *)bm->bitmap;
 		dst = (unsigned long *)final_bm->bitmap;
 
@@ -660,33 +667,25 @@ static int nova_build_blocknode_map(struct super_block *sb,
 	return ret;
 }
 
-static void free_bm(struct super_block *sb)
+static void free_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct scan_bitmap *bm;
 	int i;
-
-	for (i = 0; i < sbi->cpus; i++) {
-		bm = global_bm[i];
-		if (bm) {
-			kfree(bm->bitmap);
-			kfree(bm);
-		}
-	}
+	for (i = 0; i < sbi->cpus; i++)
+		kfree(info->global_bm[i].bitmap);
+	kfree(info->global_bm);
 }
 
-static int alloc_bm(struct super_block *sb, unsigned long initsize)
+static int alloc_failure_recovery_info(struct nova_sb_info *sbi,
+	unsigned long initsize, struct failure_recovery_info *info)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct scan_bitmap *bm;
-	int i;
+	int i, j;
 
+	info->global_bm = kmalloc(sbi->cpus * sizeof(struct scan_bitmap), GFP_KERNEL);
+	if (info->global_bm == NULL)
+		return -ENOMEM;
 	for (i = 0; i < sbi->cpus; i++) {
-		bm = kzalloc(sizeof(struct scan_bitmap), GFP_KERNEL);
-		if (!bm)
-			return -ENOMEM;
-
-		global_bm[i] = bm;
+		bm = info->global_bm + i;
 
 		bm->bitmap_size =
 				(initsize >> (PAGE_SHIFT + 0x3));
@@ -695,10 +694,14 @@ static int alloc_bm(struct super_block *sb, unsigned long initsize)
 		bm->bitmap = kzalloc(bm->bitmap_size, GFP_KERNEL);
 
 		if (!bm->bitmap)
-			return -ENOMEM;
+			break;
 	}
-
-	return 0;
+	if (i == sbi->cpus)
+		return 0;
+	for (j = 0; j < i; ++j)
+		kfree(info->global_bm[j].bitmap);
+	kfree(info->global_bm);
+	return -ENOMEM;
 }
 
 /************************** NOVA recovery ****************************/
@@ -1024,7 +1027,12 @@ static void free_resources(struct super_block *sb)
 
 static int failure_thread_func(void *data);
 
-static int allocate_resources(struct super_block *sb, int cpus)
+struct failure_recovery_thread_para {
+	struct super_block *sb;
+	struct failure_recovery_info info;
+};
+static int allocate_resources(struct super_block *sb, int cpus,
+	struct failure_recovery_thread_para *para)
 {
 	struct task_ring *ring;
 	int i;
@@ -1050,7 +1058,7 @@ static int allocate_resources(struct super_block *sb, int cpus)
 
 	for (i = 0; i < cpus; i++) {
 		threads[i] = kthread_create(failure_thread_func,
-						sb, "recovery thread");
+						para, "recovery thread");
 		kthread_bind(threads[i], i);
 	}
 
@@ -1095,9 +1103,11 @@ static inline int nova_failure_update_inodetree(struct super_block *sb,
 	return 0;
 }
 
-static int failure_thread_func(void *data)
+static int failure_thread_func(void *__data)
 {
-	struct super_block *sb = data;
+	struct failure_recovery_thread_para *para = (struct failure_recovery_thread_para *)__data;
+	struct super_block *sb = para->sb;
+	struct failure_recovery_info info = para->info;	// Copy to local stack.
 	struct nova_inode_info_header sih;
 	struct task_ring *ring;
 	struct nova_inode *pi, fake_pi;
@@ -1131,12 +1141,12 @@ static int failure_thread_func(void *data)
 		 */
 		for (i = 0; i < 512; i++)
 			set_bm((curr >> PAGE_SHIFT) + i,
-					global_bm[cpuid]);
+					info.global_bm + cpuid);
 
 		if (metadata_csum) {
 			for (i = 0; i < 512; i++)
 				set_bm((curr1 >> PAGE_SHIFT) + i,
-					global_bm[cpuid]);
+					info.global_bm + cpuid);
 		}
 
 		for (i = 0; i < num_inodes_per_page; i++) {
@@ -1162,7 +1172,7 @@ static int failure_thread_func(void *data)
 				}
 
 				nova_recover_inode_pages(sb, &sih, ring,
-						&fake_pi, global_bm[cpuid]);
+						&fake_pi, info.global_bm + cpuid);
 				nova_failure_update_inodetree(sb, pi,
 						&ino_low, &ino_high);
 				if (sih.i_size > max_size)
@@ -1187,7 +1197,8 @@ static int failure_thread_func(void *data)
 	return ret;
 }
 
-static int nova_failure_recovery_crawl(struct super_block *sb)
+static int nova_failure_recovery_crawl(struct super_block *sb,
+	struct failure_recovery_info *info)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode_info_header sih;
@@ -1258,25 +1269,35 @@ static int nova_failure_recovery_crawl(struct super_block *sb)
 	}
 
 	nova_recover_inode_pages(sb, &sih, &task_rings[0],
-					&fake_pi, global_bm[0]);
+					&fake_pi, info->global_bm + 0);
 
 	return ret;
 }
 
-int nova_failure_recovery(struct super_block *sb)
+static int nova_failure_recovery(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_super_block *super = sbi->nova_sb;
+	unsigned long initsize = le64_to_cpu(super->s_size);
 	struct task_ring *ring;
 	struct nova_inode *pi;
 	struct journal_ptr_pair *pair;
-	int ret;
+	struct failure_recovery_thread_para para;
+	struct failure_recovery_info *info = &para.info;
+	int ret = 0;
 	int i;
 
+	para.sb = sb;
+	ret = alloc_failure_recovery_info(sbi, initsize, info);
+	if (ret < 0)
+		return ret;
 	sbi->s_inodes_used_count = 0;
 
 	/* Initialize inuse inode list */
-	if (nova_init_inode_inuse_list(sb) < 0)
-		return -EINVAL;
+	if (nova_init_inode_inuse_list(sb) < 0) {
+		ret = -EINVAL;
+		goto out;
+	}
 
 	/* Handle special inodes */
 	pi = nova_get_inode_by_ino(sb, NOVA_BLOCKNODE_INO);
@@ -1286,21 +1307,21 @@ int nova_failure_recovery(struct super_block *sb)
 	for (i = 0; i < sbi->cpus; i++) {
 		pair = nova_get_journal_pointers(sb, i);
 
-		set_bm(pair->journal_head >> PAGE_SHIFT, global_bm[i]);
+		set_bm(pair->journal_head >> PAGE_SHIFT, info->global_bm + i);
 	}
 
 	i = NOVA_SNAPSHOT_INO % sbi->cpus;
 	pi = nova_get_inode_by_ino(sb, NOVA_SNAPSHOT_INO);
 	/* Set snapshot info log pages */
-	nova_traverse_dir_inode_log(sb, pi, global_bm[i]);
+	nova_traverse_dir_inode_log(sb, pi, info->global_bm + i);
 
 	PERSISTENT_BARRIER();
 
-	ret = allocate_resources(sb, sbi->cpus);
+	ret = allocate_resources(sb, sbi->cpus, &para);
 	if (ret)
-		return ret;
+		goto out;
 
-	ret = nova_failure_recovery_crawl(sb);
+	ret = nova_failure_recovery_crawl(sb, info);
 
 	wait_to_finish(sbi->cpus);
 
@@ -1310,9 +1331,16 @@ int nova_failure_recovery(struct super_block *sb)
 	}
 
 	free_resources(sb);
+	if (ret < 0)
+		goto out;
+	ret = nova_build_blocknode_map(sb, info, initsize);
+	if (ret < 0)
+		goto out;
 
 	nova_dbg("Failure recovery total recovered %lu\n",
 			sbi->s_inodes_used_count - NOVA_NORMAL_INODE_START);
+out:
+	free_failure_recovery_info(sbi, info);
 	return ret;
 }
 
@@ -1376,7 +1404,6 @@ int nova_recovery(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *super = sbi->nova_sb;
-	unsigned long initsize = le64_to_cpu(super->s_size);
 	bool value = false;
 	int ret = 0;
 	INIT_TIMING(start);
@@ -1398,10 +1425,6 @@ int nova_recovery(struct super_block *sb)
 		nova_dbg("NOVA: Normal shutdown\n");
 	} else {
 		nova_dbg("NOVA: Failure recovery\n");
-		ret = alloc_bm(sb, initsize);
-		if (ret)
-			goto out;
-
 		if (sbi->mount_snapshot == 0) {
 			/* Initialize the snapshot infos */
 			ret = nova_restore_snapshot_table(sb, 1);
@@ -1416,8 +1439,6 @@ int nova_recovery(struct super_block *sb)
 		ret = nova_failure_recovery(sb);
 		if (ret)
 			goto out;
-
-		ret = nova_build_blocknode_map(sb, initsize);
 	}
 
 out:
@@ -1428,9 +1449,6 @@ out:
 			(end.tv_sec - start.tv_sec) * 1000000000 +
 			(end.tv_nsec - start.tv_nsec);
 	}
-
-	if (!value)
-		free_bm(sb);
 
 	sbi->s_epoch_id = le64_to_cpu(super->s_epoch_id);
 	return ret;

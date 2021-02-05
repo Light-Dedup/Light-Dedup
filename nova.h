@@ -377,10 +377,6 @@ static inline bool nova_range_node_checksum_ok(struct nova_range_node *node)
 }
 
 
-struct scan_bitmap {
-	unsigned long bitmap_size;
-	unsigned long *bitmap;
-};
 
 
 
@@ -839,7 +835,6 @@ static inline void *nova_get_parity_addr(struct super_block *sb,
 
 
 /* bbuild.c */
-inline void set_bm(unsigned long bit, struct scan_bitmap *bm);
 void nova_save_blocknode_mappings_to_log(struct super_block *sb);
 void nova_save_inode_list_to_log(struct super_block *sb);
 void nova_init_header(struct super_block *sb,
