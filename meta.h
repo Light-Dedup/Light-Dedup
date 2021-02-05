@@ -6,21 +6,16 @@
 #include "table.h"
 
 struct nova_meta_table {
-    struct nova_mm_table      *metas;
+    struct nova_mm_table      metas;
+	struct entry_allocator entry_allocator;
     struct super_block   		*sblock;
 	struct kmem_cache *kbuf_cache;
 };
 
 int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sblock);
-
-static inline void nova_meta_table_save(struct nova_meta_table *table)
-{
-	kmem_cache_destroy(table->kbuf_cache);
-	nova_table_save(table->metas);
-	table->sblock = NULL;
-}
-
 int nova_meta_table_restore(struct nova_meta_table *table, struct super_block *sb);
+void nova_meta_table_save(struct nova_meta_table *table);
+
 int nova_meta_table_incr(struct nova_meta_table *table, const void* addr,
 	struct nova_write_para_normal *wp);
 int nova_meta_table_rewrite_on_insert(struct nova_meta_table *table,

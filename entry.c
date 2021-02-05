@@ -39,7 +39,7 @@ err_out0:
 	return ret;
 }
 
-int nova_recover_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator)
+int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	__le16 *valid_entry_count = nova_sbi_blocknr_to_addr(sbi, sbi->region_valid_entry_count_start);
@@ -77,7 +77,7 @@ err_out0:
 	return ret;
 }
 
-static void nova_free_entry_allocator(struct entry_allocator *allocator)
+void nova_free_entry_allocator(struct entry_allocator *allocator)
 {
 	vfree(allocator->valid_entry);
 	kfifo_free(&allocator->free_regions);

@@ -110,10 +110,10 @@ struct nova_mm_tablet {
 struct nova_mm_table {
 	struct super_block    *sblock;
 	struct kmem_cache *inner_cache[3], *bucket_cache;
-	struct entry_allocator entry_allocator;
+	struct entry_allocator *entry_allocator;
 	struct nova_pmm_entry *pentries;
 	uint64_t               nr_tablets;
-	struct nova_mm_tablet  tablets[0];
+	struct nova_mm_tablet  *tablets;
 };
 
 static inline bool nova_fp_strong_equal(
@@ -122,8 +122,6 @@ static inline bool nova_fp_strong_equal(
 {
 	return left->value == right->value;
 }
-
-extern int nova_table_save(struct nova_mm_table* table);
 
 struct nova_write_para_base {
 	struct nova_fp fp;
@@ -145,7 +143,10 @@ int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_par
 // refcount-- only if refcount == 1
 int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp);
 
-struct nova_mm_table *nova_table_init(struct super_block *sb);
-struct nova_mm_table *nova_table_recover(struct super_block *sb);
+int nova_table_init(struct super_block *sb, struct nova_mm_table *table);
+int nova_table_recover(struct nova_mm_table *table);
+
+void nova_table_free(struct nova_mm_table *table);
+void nova_table_save(struct nova_mm_table* table);
 
 #endif

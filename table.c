@@ -75,7 +75,7 @@ static int nova_table_leaf_delete(
 	entrynr_t entrynr = bucket->entry_p[entry_index].entrynr;
 	struct nova_pmm_entry *pentry = table->pentries + entrynr;
 
-	nova_free_entry(&table->entry_allocator, entrynr);
+	nova_free_entry(table->entry_allocator, entrynr);
 	bucket->tags[entry_index] = 0;
 	BUG_ON(bucket->size == 0);
 	--bucket->size;
@@ -174,7 +174,7 @@ static int nova_table_leaf_insert(
 
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	entry_p = bucket->entry_p + i;
-	entry_p->entrynr = nova_alloc_entry(&table->entry_allocator);
+	entry_p->entrynr = nova_alloc_entry(table->entry_allocator);
 	entry_p->refcount = wp->base.refcount;
 	pentry = table->pentries + entry_p->entrynr;
 	info.blocknr = wp->blocknr;
@@ -713,7 +713,7 @@ static int nova_table_upsert_entry(struct nova_mm_table *table, struct nova_writ
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_entry);
 }
 
-static void save_bucket(struct nova_mm_table *table,
+static void __save_bucket(struct nova_mm_table *table,
 	struct nova_bucket *bucket, atomic64_t *saved)
 {
 	struct super_block *sb = table->sblock;
@@ -739,14 +739,14 @@ static void save_bucket(struct nova_mm_table *table,
 	nova_memlock_range(sb, rec + head, bucket->size * sizeof(struct nova_entry_refcount_record), &irq_flags);
 	BUG_ON(top != head + bucket->size);
 }
-static void free_bucket(struct nova_mm_table *table,
+static void save_bucket(struct nova_mm_table *table,
 	struct nova_bucket *bucket, atomic64_t *saved)
 {
 	if (saved)
-		save_bucket(table, bucket, saved);
+		__save_bucket(table, bucket, saved);
 	kmem_cache_free(table->bucket_cache, bucket);
 }
-static void __nova_table_rescursive_free(
+static void __nova_table_rescursive_save(
 	struct nova_mm_table* table,
 	struct nova_inner* inner,
 	atomic64_t *saved,
@@ -761,7 +761,7 @@ static void __nova_table_rescursive_free(
 	for (i = 0; i < n; i++) {
 		next = inner->node_p[i];
 		if (nova_is_inner_node(next)) {
-			__nova_table_rescursive_free(table, nova_node_p_to_inner(next), saved, depth+1);
+			__nova_table_rescursive_save(table, nova_node_p_to_inner(next), saved, depth+1);
 			continue;
 		}
 		// next is a bucket
@@ -773,7 +773,7 @@ static void __nova_table_rescursive_free(
 			BUG_ON(inner->node_p[j] == 0 || nova_is_inner_node(inner->node_p[j]));
 			inner->node_p[j] = 0;
 		}
-		free_bucket(table, bucket, saved);
+		save_bucket(table, bucket, saved);
 	}
 	// printk("Going to free inners %pK", inner->inners);
 	kmem_cache_free(table->inner_cache[(inner->bits - 1) / 3], inner);
@@ -786,7 +786,7 @@ struct table_free_para {
 	atomic64_t *saved;
 	size_t tablet_start, tablet_end;
 };
-static void __table_free_func(struct nova_mm_table *table,
+static void __table_save_func(struct nova_mm_table *table,
 	size_t tablet_start, size_t tablet_end, atomic64_t *saved)
 {
 	unsigned long next;
@@ -794,16 +794,16 @@ static void __table_free_func(struct nova_mm_table *table,
 	for (i = tablet_start; i < tablet_end; ++i) {
 		next = table->tablets[i].node_p;
 		if (nova_is_leaf_node(next))
-			free_bucket(table, nova_node_p_to_bucket(next), saved);
+			save_bucket(table, nova_node_p_to_bucket(next), saved);
 		else
-			__nova_table_rescursive_free(table, nova_node_p_to_inner(next), saved, 0);
+			__nova_table_rescursive_save(table, nova_node_p_to_inner(next), saved, 0);
 	}
 }
-static int table_free_func(void *__para)
+static int table_save_func(void *__para)
 {
 	struct table_free_para *para = (struct table_free_para *)__para;
 	complete(&para->entered);
-	__table_free_func(para->table, para->tablet_start, para->tablet_end,
+	__table_save_func(para->table, para->tablet_start, para->tablet_end,
 		para->saved);
 	// printk("%s waiting for kthread_stop\n", __func__);
 	/* Wait for kthread_stop */
@@ -814,7 +814,7 @@ static int table_free_func(void *__para)
 	}
 	return 0;
 }
-static int table_free_multithread(struct nova_mm_table *table, atomic64_t *saved)
+static int table_save_multithread(struct nova_mm_table *table, atomic64_t *saved)
 {
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -849,7 +849,7 @@ static int table_free_multithread(struct nova_mm_table *table, atomic64_t *saved
 		para[i].tablet_start = base;
 		base += tablet_per_thread;
 		para[i].tablet_end = base < table->nr_tablets ? base : table->nr_tablets;
-		tasks[i] = kthread_create(table_free_func, para + i,
+		tasks[i] = kthread_create(table_save_func, para + i,
 			"nova_table_free_%lu", i);
 		if (IS_ERR(tasks[i])) {
 			ret = PTR_ERR(tasks[i]);
@@ -875,28 +875,28 @@ out:
 		kfree(tasks);
 	return ret;
 }
-static void table_free(struct nova_mm_table *table, atomic64_t *saved)
+static void table_save(struct nova_mm_table *table, atomic64_t *saved)
 {
-	if (table_free_multithread(table, saved) < 0)
-		__table_free_func(table, 0, table->nr_tablets, saved);
+	if (table_save_multithread(table, saved) < 0)
+		__table_save_func(table, 0, table->nr_tablets, saved);
 }
 
-static void __nova_table_free(struct nova_mm_table *table, atomic64_t *saved)
+static void __nova_table_save(struct nova_mm_table *table, atomic64_t *saved)
 {
-	struct super_block *sb = table->sblock;
 	size_t i;
 
-	if (table == NULL)
-		return;
-	table_free(table, saved);
+	table_save(table, saved);
 	kmem_cache_destroy(table->bucket_cache);
 	for (i = 0; i < 3; ++i)
 		kmem_cache_destroy(table->inner_cache[i]);
-	nova_save_entry_allocator(sb, &table->entry_allocator);
-	vfree(table);
+	vfree(table->tablets);
 }
 
-int nova_table_save(struct nova_mm_table* table)
+void nova_table_free(struct nova_mm_table *table)
+{
+	__nova_table_save(table, NULL);
+}
+void nova_table_save(struct nova_mm_table* table)
 {
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -909,25 +909,22 @@ int nova_table_save(struct nova_mm_table* table)
 
 	atomic64_set(&__saved, 0);
 	NOVA_START_TIMING(save_refcount_t, save_refcount_time);
-	__nova_table_free(table, &__saved);
+	__nova_table_save(table, &__saved);
 	saved = atomic64_read(&__saved);
 	nova_flush_buffer(rec, saved * sizeof(rec[0]), false);
 	nova_unlock_write(sb, &recover_meta->refcount_record_num, cpu_to_le64(saved), true);
 	nova_unlock_write(sb, &recover_meta->refcount_saved, NOVA_RECOVER_META_FLAG_COMPLETE, true);
 	NOVA_END_TIMING(save_refcount_t, save_refcount_time);
 	nova_info("Refcount of %llu entries saved.", saved);
-	return 0;
 }
 
-static struct nova_mm_table *
-nova_table_alloc(struct super_block *sb) 
+int nova_table_init(struct super_block *sb, struct nova_mm_table *table) 
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *psb = (struct nova_super_block *)sbi->virt_addr;
 	unsigned long nr_tablets = sbi->nr_tablets;
 	int retval;
 	unsigned long i = 0, i_inner_cache = 0, j;
-	struct nova_mm_table *table;
 #define NOVA_INNER_CACHE_BASE_NAME_LEN sizeof("nova_inner_cache")
 	char inner_cache_name[NOVA_INNER_CACHE_BASE_NAME_LEN + 1] = "nova_inner_cache";	// The last two bytes are zero.
 	struct nova_bucket *bucket;
@@ -936,19 +933,18 @@ nova_table_alloc(struct super_block *sb)
 	NOVA_START_TIMING(table_init_t, table_init_time);
 	printk("psb = %p, nr_tablets = %lu\n", psb, nr_tablets);
 
-	table = vzalloc(sizeof(struct nova_mm_table) +
-		sizeof(struct nova_mm_tablet) * nr_tablets);
-	if (table == NULL) {
-		printk("OOM!!!!!!\n");
+	table->tablets = vzalloc(sizeof(struct nova_mm_tablet) * nr_tablets);
+	if (table->tablets == NULL) {
 		retval = -ENOMEM;
 		goto err_out;
 	}
-	printk("Static DRAM usage: %ld bytes\n", sizeof(struct nova_mm_table) +
+	printk("Static DRAM usage: %ld bytes\n",
 		sizeof(struct nova_mm_tablet) * nr_tablets);
 
 	table->sblock = sb;
 	table->nr_tablets = nr_tablets;
 	table->pentries = nova_blocknr_to_addr(sb, sbi->entry_table_start);
+	table->entry_allocator = &sbi->meta_table.entry_allocator;
 
 	for (; i_inner_cache < 3; ++i_inner_cache) {
 		inner_cache_name[NOVA_INNER_CACHE_BASE_NAME_LEN - 1] = i_inner_cache + '0';
@@ -980,7 +976,7 @@ nova_table_alloc(struct super_block *sb)
 	}
 
 	NOVA_END_TIMING(table_init_t, table_init_time);
-	return table;
+	return 0;
 
 err_out:
 #ifdef FORBID_ERROR
@@ -996,23 +992,9 @@ err_out:
 		kmem_cache_destroy(table->inner_cache[j]);
 	}
 
-	vfree(table);
+	vfree(table->tablets);
 	NOVA_END_TIMING(table_init_t, table_init_time);
-	return ERR_PTR(retval);
-}
-struct nova_mm_table *nova_table_init(struct super_block *sb)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	int ret;
-	struct nova_mm_table *table = nova_table_alloc(sb);
-	if (IS_ERR(table))
-		return table;
-	ret = nova_init_entry_allocator(sbi, &table->entry_allocator);
-	if (ret) {
-		__nova_table_free(table, NULL);
-		return ERR_PTR(ret);
-	}
-	return table;
+	return retval;
 }
 
 struct table_recover_para {
@@ -1057,7 +1039,7 @@ static int table_recover_func(void *__para) {
 	}
 	return ret;
 }
-static int table_recover(struct nova_mm_table *table)
+int nova_table_recover(struct nova_mm_table *table)
 {
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -1130,29 +1112,6 @@ out:
 	if (tasks)
 		kfree(tasks);
 	return ret;
-}
-struct nova_mm_table *nova_table_recover(struct super_block *sb)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_mm_table *table;
-	int ret;
-	INIT_TIMING(normal_recover_fp_table_time);
-
-	table = nova_table_alloc(sb);
-	if (IS_ERR(table))
-		return table;
-	ret = nova_recover_entry_allocator(sbi, &table->entry_allocator);
-	if (ret)
-		goto err_out;
-	NOVA_START_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
-	ret = table_recover(table);
-	NOVA_END_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
-	if (ret < 0)
-		goto err_out;
-	return table;
-err_out:
-	__nova_table_free(table, NULL);
-	return ERR_PTR(ret);
 }
 
 
@@ -1274,9 +1233,9 @@ int nova_table_stats(struct file *file)
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_meta_table *meta_table = &sbi->meta_table;
-	struct nova_mm_table *table = meta_table->metas;
+	struct nova_mm_table *table = &meta_table->metas;
 	int ret = __nova_table_stats(table);
 	if (ret < 0)
 		return ret;
-	return __nova_entry_allocator_stats(sbi, &table->entry_allocator);
+	return __nova_entry_allocator_stats(sbi, table->entry_allocator);
 }

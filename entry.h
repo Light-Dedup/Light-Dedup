@@ -49,7 +49,8 @@ struct entry_allocator {
 };
 
 int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator);
-int nova_recover_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator);
+int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocator *allocator);
+void nova_free_entry_allocator(struct entry_allocator *allocator);
 void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator);
 entrynr_t nova_alloc_entry(struct entry_allocator *allocator);
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr);
