@@ -143,6 +143,12 @@ int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_par
 // refcount-- only if refcount == 1
 int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp);
 
+int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
+	struct nova_write_para_normal *wp);
+int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
+	const void *addr, struct nova_write_para_rewrite *wp,
+	unsigned long blocknr, size_t offset, size_t bytes);
+
 int nova_table_init(struct super_block *sb, struct nova_mm_table *table);
 int nova_table_recover(struct nova_mm_table *table);
 

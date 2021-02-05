@@ -635,7 +635,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			ret = -EFAULT;
 			goto out;
 		}
-		ret = nova_meta_table_incr(table, kbuf, &wp);
+		ret = nova_fp_table_incr(&table->metas, kbuf, &wp);
 		if (ret < 0)
 			goto out;
 		blocknr = wp.blocknr;
