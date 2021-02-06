@@ -794,8 +794,14 @@ setup_sb:
 	/* If the FS was not formatted on this mount, scan the meta-data after
 	 * truncate list has been processed
 	 */
-	if ((sbi->s_mount_opt & NOVA_MOUNT_FORMAT) == 0)
-		nova_recovery(sb);
+	if ((sbi->s_mount_opt & NOVA_MOUNT_FORMAT) == 0) {
+		retval = nova_recovery(sb);
+		if (retval < 0) {
+			nova_err(sb, "%s: nova recovery failed with return code %d\n",
+				__func__, retval);
+			goto out;
+		}
+	}
 
 	root_i = nova_iget(sb, NOVA_ROOT_INO);
 	if (IS_ERR(root_i)) {
@@ -844,6 +850,8 @@ out:
 	sbi->inode_maps = NULL;
 
 	nova_sysfs_exit(sb);
+
+	// TODO: Free meta_table here.
 
 	kfree(sbi->nova_sb);
 	kfree(sbi);

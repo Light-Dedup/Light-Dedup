@@ -355,7 +355,7 @@ static int64_t bucket_upsert_decr1(
 	return 0;
 }
 
-static int64_t bucket_upsert_entry(
+static int64_t bucket_insert_entry(
 	struct nova_mm_table *table,
 	struct nova_bucket *bucket,
 	struct nova_write_para_base *__wp)
@@ -372,6 +372,25 @@ static int64_t bucket_upsert_entry(
 	entry_p->refcount = wp->base.refcount;
 	bucket->tags[i] = (uint8_t)((wp->base.fp.tag % 0xff) + 1); // non zero
 	++bucket->size;
+	return 0;
+}
+
+static int64_t bucket_upsert_entry(
+	struct nova_mm_table *table,
+	struct nova_bucket *bucket,
+	struct nova_write_para_base *__wp)
+{
+	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
+	unsigned long i;
+	struct nova_mm_entry_p *entry_p;
+
+	i = nova_table_leaf_find(table->pentries, bucket, &wp->base.fp);
+	if (i == NOVA_LEAF_NOT_FOUND)
+		return bucket_insert_entry(table, bucket, __wp);
+	entry_p = bucket->entry_p + i;
+	// There should not be two entries which have the same fingerprint.
+	BUG_ON(entry_p->entrynr != wp->entrynr);
+	entry_p->refcount += wp->base.refcount;
 	return 0;
 }
 
@@ -706,6 +725,10 @@ int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
 }
+static int nova_table_insert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
+{
+	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_insert_entry);
+}
 static int nova_table_upsert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_entry);
@@ -749,6 +772,17 @@ int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 	ret = nova_table_upsert_rewrite(table, wp);
 	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
 	return ret;
+}
+
+int nova_fp_table_upsert_entry(struct nova_mm_table *table,
+	entrynr_t entrynr)
+{
+	struct nova_pmm_entry *pentries = table->pentries;
+	struct nova_write_para_entry wp;
+	wp.base.fp = pentries[entrynr].fp;
+	wp.base.refcount = 1;
+	wp.entrynr = entrynr;
+	return nova_table_upsert_entry(table, &wp);
 }
 
 static void __save_bucket(struct nova_mm_table *table,
@@ -1049,13 +1083,14 @@ static int __table_recover_func(struct nova_mm_table *table,
 		wp.entrynr = le32_to_cpu(rec[i].entrynr);
 		wp.base.refcount = le32_to_cpu(rec[i].entrynr);
 		wp.base.fp = pentries[i].fp;
-		ret = nova_table_upsert_entry(table, &wp);
+		ret = nova_table_insert_entry(table, &wp);
 		if (ret < 0)
 			break;
 	}
 	return ret;
 }
-static int table_recover_func(void *__para) {
+static int table_recover_func(void *__para)
+{
 	struct table_recover_para *para = (struct table_recover_para *)__para;
 	int ret;
 	// printk("%s\n", __func__);
@@ -1090,7 +1125,7 @@ int nova_table_recover(struct nova_mm_table *table)
 	nova_info("Recover fingerprint table using %lu thread(s)\n", thread_num);
 	if (thread_num == 1)
 		return __table_recover_func(table, 0, n);
-	para = kmalloc(thread_num * sizeof(struct table_recover_para), GFP_KERNEL);
+	para = kmalloc(thread_num * sizeof(para[0]), GFP_KERNEL);
 	if (para == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -1108,7 +1143,7 @@ int nova_table_recover(struct nova_mm_table *table)
 		base += entry_per_thread;
 		para[i].entry_end = base < n ? base : n;
 		tasks[i] = kthread_create(table_recover_func, para + i,
-			"nova_table_recover_%lu", i);
+			"%s_%lu", __func__, i);
 		if (IS_ERR(tasks[i])) {
 			ret = PTR_ERR(tasks[i]);
 			nova_err(sb, "%lu: kthread_create %lu return %d\n",

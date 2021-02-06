@@ -14,6 +14,8 @@ struct nova_meta_table {
 	struct entry_allocator entry_allocator;
 };
 
+int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb);
+void nova_meta_table_free(struct nova_meta_table *table);
 int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sblock);
 int nova_meta_table_restore(struct nova_meta_table *table, struct super_block *sb);
 void nova_meta_table_save(struct nova_meta_table *table);

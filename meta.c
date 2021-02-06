@@ -2,7 +2,7 @@
 #include "meta.h"
 #include "config.h"
 
-static int meta_table_alloc(struct nova_meta_table *table, struct super_block *sb)
+int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int ret;
@@ -19,7 +19,7 @@ static int meta_table_alloc(struct nova_meta_table *table, struct super_block *s
 	}
 	return 0;
 }
-static void meta_table_free(struct nova_meta_table *table)
+void nova_meta_table_free(struct nova_meta_table *table)
 {
 	kmem_cache_destroy(table->kbuf_cache);
 	nova_table_free(&table->metas);
@@ -28,12 +28,12 @@ int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int ret;
-	ret = meta_table_alloc(table, sb);
+	ret = nova_meta_table_alloc(table, sb);
 	if (ret < 0)
 		return ret;
 	ret = nova_init_entry_allocator(sbi, &table->entry_allocator);
 	if (ret < 0) {
-		meta_table_free(table);
+		nova_meta_table_free(table);
 		return ret;
 	}
 	return 0;
@@ -44,7 +44,7 @@ int nova_meta_table_restore(struct nova_meta_table *table, struct super_block *s
 	int ret;
 	INIT_TIMING(normal_recover_fp_table_time);
 
-	ret = meta_table_alloc(table, sb);
+	ret = nova_meta_table_alloc(table, sb);
 	if (ret < 0)
 		goto err_out0;
 	NOVA_START_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
@@ -57,7 +57,7 @@ int nova_meta_table_restore(struct nova_meta_table *table, struct super_block *s
 		goto err_out1;
 	return 0;
 err_out1:
-	meta_table_free(table);
+	nova_meta_table_free(table);
 err_out0:
 	return ret;
 }

@@ -1,5 +1,6 @@
 #include "entry.h"
 #include "nova.h"
+#include "multithread.h"
 
 #define INDEX_BIT 32
 #define INDEX_MASK ((1ULL << INDEX_BIT) - 1)
@@ -93,6 +94,174 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 	NOVA_END_TIMING(save_entry_allocator_t, save_entry_allocator_time);
 
 	nova_free_entry_allocator(allocator);
+}
+
+#define REGION_PER_SCAN (2 * 1024 * 1024 / REGION_SIZE)
+#define ENTRY_PER_SCAN (REGION_PER_SCAN * ENTRY_PER_REGION)
+struct scan_para {
+	struct completion entered;
+	struct nova_sb_info *sbi;
+	struct xatable *xat;
+	atomic64_t *cur_scan_region;
+	uint64_t scan_region_end;
+};
+static inline int handle_entry(struct nova_pmm_entry *pentries, atomic_t *valid_entry,
+	struct xatable *xat, entrynr_t entrynr)
+{
+	struct nova_mm_entry_info info = entry_info_pmm_to_mm(pentries[entrynr].info);
+	if (info.flag != NOVA_LEAF_ENTRY_MAGIC)
+		return 0;
+	atomic_add_return(1, valid_entry + entrynr / ENTRY_PER_REGION);
+	return xa_err(xatable_store(xat, info.blocknr, xa_mk_value(entrynr), GFP_KERNEL));
+}
+static int scan_region(struct nova_pmm_entry *pentries, atomic_t *valid_entry,
+	struct xatable *xat, uint64_t scan_regionnr)
+{
+	entrynr_t entrynr;
+	entrynr_t entry_start = scan_regionnr * ENTRY_PER_SCAN;
+	entrynr_t entry_end = entry_start + ENTRY_PER_SCAN;
+	int ret;
+
+	for (entrynr = entry_start; entrynr < entry_end; ++entrynr) {
+		ret = handle_entry(pentries, valid_entry, xat, entrynr);
+		if (ret < 0)
+			return ret;
+	}
+	return 0;
+}
+static int __scan_worker(struct scan_para *para)
+{
+	struct nova_sb_info *sbi = para->sbi;
+	struct xatable *xat = para->xat;
+	struct nova_meta_table *meta_table = &sbi->meta_table;
+	struct entry_allocator *entry_allocator = &meta_table->entry_allocator;
+	struct nova_pmm_entry *pentries = meta_table->pentries;
+	atomic_t *valid_entry = entry_allocator->valid_entry;
+	atomic64_t *cur_scan_region = para->cur_scan_region;
+	uint64_t scan_region_end = para->scan_region_end;
+	uint64_t scan_regionnr;
+	int ret;
+
+	while (1) {
+		scan_regionnr = atomic64_add_return(1, cur_scan_region);
+		if (scan_regionnr >= scan_region_end)
+			break;
+		ret = scan_region(pentries, valid_entry, xat, scan_regionnr);
+		if (ret < 0)
+			return ret;
+	}
+	return 0;
+}
+static int scan_worker(void *__para) {
+	struct scan_para *para = (struct scan_para *)__para;
+	int ret;
+	complete(&para->entered);
+	ret = __scan_worker(para);
+	/* Wait for kthread_stop */
+	set_current_state(TASK_INTERRUPTIBLE);
+	while (!kthread_should_stop()) {
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
+	return ret;
+}
+static int handle_tail_entry(struct nova_sb_info *sbi, struct xatable *xat,
+	uint64_t scan_region_end)
+{
+	struct nova_meta_table *meta_table = &sbi->meta_table;
+	struct entry_allocator *allocator = &meta_table->entry_allocator;
+	entrynr_t entrynr_start = scan_region_end * ENTRY_PER_SCAN;
+	struct nova_pmm_entry *pentries = meta_table->pentries;
+	atomic_t *valid_entry = allocator->valid_entry;
+	entrynr_t entrynr;
+	int ret;
+	for (entrynr = entrynr_start; entrynr < sbi->nr_entries; ++entrynr) {
+		ret = handle_entry(pentries, valid_entry, xat, entrynr);
+		if (ret < 0)
+			return ret;
+	}
+	return 0;
+}
+static void rebuild_free_regions(struct nova_sb_info *sbi,
+	struct entry_allocator *allocator)
+{
+	atomic_t *valid_entry = allocator->valid_entry;
+	struct kfifo *free_regions = &allocator->free_regions;
+	regionnr_t i;
+	for (i = 0; i < sbi->nr_regions; ++i)
+		if (atomic_read(valid_entry + i) <= FREE_THRESHOLD)
+			BUG_ON(kfifo_in(free_regions, &i, sizeof(i)) != sizeof(i));
+}
+static int scan_entry_table(struct super_block *sb,
+	struct entry_allocator *allocator, struct xatable *xat,
+	uint64_t scan_region_end)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	unsigned long thread_num = sbi->cpus;
+	struct scan_para *para = NULL;
+	struct task_struct **tasks = NULL;
+	unsigned long i;
+	atomic64_t cur_scan_region;
+	int ret = 0, ret2;
+
+	para = kmalloc(thread_num * sizeof(struct scan_para), GFP_KERNEL);
+	if (para == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	tasks = kmalloc(thread_num * sizeof(struct task_struct), GFP_KERNEL);
+	if (tasks == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	atomic64_set(&cur_scan_region, -1);
+	for (i = 0; i < thread_num; ++i) {
+		init_completion(&para[i].entered);
+		para[i].sbi = sbi;
+		para[i].xat = xat;
+		para[i].cur_scan_region = &cur_scan_region;
+		para[i].scan_region_end = scan_region_end;
+		tasks[i] = kthread_create(scan_worker, para + i,
+			"scan_worker_%lu", i);
+		if (IS_ERR(tasks[i])) {
+			ret = PTR_ERR(tasks[i]);
+			tasks[i] = NULL;
+			nova_err(sb, "kthread_create %lu return %d\n", i, ret);
+			break;
+		}
+	}
+	ret2 = run_and_stop_kthreads(sb, tasks, para, thread_num, i);
+	if (ret2 < 0)
+		ret = ret2;
+out:
+	if (para)
+		kfree(para);
+	if (tasks)
+		kfree(tasks);
+	return ret;
+}
+int nova_scan_entry_table(struct super_block *sb,
+	struct entry_allocator *allocator, struct xatable *xat)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	uint64_t scan_region_end = sbi->nr_regions / REGION_PER_SCAN;
+	int ret;
+	printk("%s: nr_regions = %u, scan_region_end = %llu, nr_entries = %llu\n",
+		__func__, sbi->nr_regions, scan_region_end, sbi->nr_entries);
+	ret = entry_allocator_alloc(sbi, allocator, true);
+	if (ret < 0)
+		return ret;
+	ret = scan_entry_table(sb, allocator, xat, scan_region_end);
+	if (ret < 0)
+		goto err_out;
+	ret = handle_tail_entry(sbi, xat, scan_region_end);
+	if (ret < 0)
+		goto err_out;
+	rebuild_free_regions(sbi, allocator);
+	return 0;
+err_out:
+	nova_free_entry_allocator(allocator);
+	return ret;
 }
 
 static entrynr_t

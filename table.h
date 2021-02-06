@@ -148,6 +148,8 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 	const void *addr, struct nova_write_para_rewrite *wp,
 	unsigned long blocknr, size_t offset, size_t bytes);
+int nova_fp_table_upsert_entry(struct nova_mm_table *table,
+	entrynr_t entrynr);
 
 int nova_table_init(struct super_block *sb, struct nova_mm_table *table);
 int nova_table_recover(struct nova_mm_table *table);
