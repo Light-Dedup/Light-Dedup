@@ -6,10 +6,12 @@
 #include "table.h"
 
 struct nova_meta_table {
+    struct super_block   		*sblock;
+	struct nova_pmm_entry *pentries;
+	struct kmem_cache *kbuf_cache;
+
     struct nova_mm_table      metas;
 	struct entry_allocator entry_allocator;
-    struct super_block   		*sblock;
-	struct kmem_cache *kbuf_cache;
 };
 
 int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sblock);

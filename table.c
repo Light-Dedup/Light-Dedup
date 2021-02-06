@@ -74,13 +74,10 @@ static int nova_table_leaf_delete(
 	int entry_index)
 {
 	entrynr_t entrynr = bucket->entry_p[entry_index].entrynr;
-	struct nova_pmm_entry *pentry = table->pentries + entrynr;
-
 	nova_free_entry(table->entry_allocator, entrynr);
 	bucket->tags[entry_index] = 0;
 	BUG_ON(bucket->size == 0);
 	--bucket->size;
-	nova_unlock_write(table->sblock, &pentry->info, 0, true);
 	return 0;
 
 	// retval = nova_table_free_blocks(table->sblock, inner->inner.blocknr, 1);

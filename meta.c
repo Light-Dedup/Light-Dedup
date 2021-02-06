@@ -4,8 +4,10 @@
 
 static int meta_table_alloc(struct nova_meta_table *table, struct super_block *sb)
 {
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int ret;
 	table->sblock = sb;
+	table->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
 	table->kbuf_cache = kmem_cache_create_usercopy(
 		"nova_kbuf_cache", PAGE_SIZE, 8, TABLE_KMEM_CACHE_FLAGS, 0, PAGE_SIZE, NULL);
 	if (table->kbuf_cache == NULL)

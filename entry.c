@@ -26,7 +26,6 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 		vfree(allocator->valid_entry);
 		return -ENOMEM;
 	}
-	allocator->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
 	spin_lock_init(&allocator->lock);
 	return 0;
 }
@@ -139,6 +138,9 @@ handle_overflow(struct entry_allocator *allocator, uint64_t index) {
 }
 
 entrynr_t nova_alloc_entry(struct entry_allocator *allocator) {
+	struct nova_meta_table *meta_table =
+		container_of(allocator, struct nova_meta_table, entry_allocator);
+	struct nova_pmm_entry *pentries = meta_table->pentries;
 	uint64_t regionnr_index, index;
 	entrynr_t entrynr;
 
@@ -150,7 +152,7 @@ entrynr_t nova_alloc_entry(struct entry_allocator *allocator) {
 		} else {
 			entrynr = (regionnr_index >> INDEX_BIT) * ENTRY_PER_REGION + index;
 		}
-	} while (entry_info_pmm_to_mm(allocator->pentries[entrynr].info).flag == NOVA_LEAF_ENTRY_MAGIC);
+	} while (entry_info_pmm_to_mm(pentries[entrynr].info).flag == NOVA_LEAF_ENTRY_MAGIC);
 	atomic_add_return(1, allocator->valid_entry + (entrynr / ENTRY_PER_REGION));
 
 	return entrynr;
@@ -159,12 +161,17 @@ entrynr_t nova_alloc_entry(struct entry_allocator *allocator) {
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 	// if (test_and_set_bit(allocator->free, regionnr))
 	//     return;
+	struct nova_meta_table *meta_table =
+		container_of(allocator, struct nova_meta_table, entry_allocator);
+	struct super_block *sb = meta_table->sblock;
+	struct nova_pmm_entry *pentry = meta_table->pentries + entrynr;
 	regionnr_t regionnr = entrynr / ENTRY_PER_REGION;
 	if (atomic_sub_return(1, allocator->valid_entry + regionnr) == FREE_THRESHOLD) {
 		spin_lock(&allocator->lock);
 		BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
 		spin_unlock(&allocator->lock);
 	}
+	nova_unlock_write(sb, &pentry->info, 0, true);
 }
 
 int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocator *allocator)

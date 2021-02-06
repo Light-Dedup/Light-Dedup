@@ -40,7 +40,6 @@ entry_info_pmm_to_mm(__le64 info) {
 
 // typedef uint32_t region_entry_index_t;
 struct entry_allocator {
-	struct nova_pmm_entry *pentries;
 	atomic_t *valid_entry;
 	/* Hopefuly the 4B index won't overflow. */
 	atomic64_t regionnr_index;	// The lower 4B is index, upper 4B is regionnr.
