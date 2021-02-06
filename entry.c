@@ -9,34 +9,38 @@
 
 _Static_assert((1ULL << (sizeof(atomic_t) * 8)) > ENTRY_PER_REGION, "Type of counter of valid entries in a region is too small!");
 
+static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocator *allocator,
+	bool zero_valid_entry)
+{
+	int ret;
+	if (zero_valid_entry)
+		allocator->valid_entry = vzalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
+	else
+		allocator->valid_entry = vmalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
+	if (allocator->valid_entry == NULL) {
+		nova_dbg("%s: Allocate valid_entry failed.\n", __func__);
+		return -ENOMEM;
+	}
+	ret = kfifo_alloc(&allocator->free_regions, sbi->nr_regions * sizeof(regionnr_t), GFP_KERNEL);
+	if (ret) {
+		vfree(allocator->valid_entry);
+		return -ENOMEM;
+	}
+	allocator->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
+	spin_lock_init(&allocator->lock);
+	return 0;
+}
+
 int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
 	regionnr_t i;
-	int ret;
-
-	printk("nova_init_entry_allocator: nr_regions = %u\n", sbi->nr_regions);
-	allocator->valid_entry = vzalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
-	if (allocator->valid_entry == NULL) {
-		ret = -ENOMEM;
-		nova_dbg("%s: Allocate valid_entry failed.\n", __func__);
-		goto err_out0;
-	}
-	ret = kfifo_alloc(&allocator->free_regions, sbi->nr_regions * sizeof(regionnr_t), GFP_KERNEL);
-	if (ret)
-		goto err_out1;
+	int ret = entry_allocator_alloc(sbi, allocator, true);
+	if (ret < 0)
+		return ret;
 	for (i = 1; i < sbi->nr_regions; ++i)
 		BUG_ON(kfifo_in(&allocator->free_regions, &i, sizeof(i)) == 0);
-	allocator->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
 	atomic64_set(&allocator->regionnr_index, -1);
-	// allocator->cur = pentries - 1;
-	// allocator->region_end = pentries + ENTRY_PER_REGION;
-	spin_lock_init(&allocator->lock);
-
 	return 0;
-err_out1:
-	vfree(allocator->valid_entry);
-err_out0:
-	return ret;
 }
 
 int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocator *allocator)
@@ -49,15 +53,9 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 	INIT_TIMING(normal_recover_entry_allocator_time);
 
 	BUG_ON(recover_meta->region_valid_entry_count_saved != NOVA_RECOVER_META_FLAG_COMPLETE);
-	allocator->valid_entry = vmalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
-	if (allocator->valid_entry == NULL) {
-		ret = -ENOMEM;
-		nova_dbg("%s: Allocate valid_entry failed.\n", __func__);
-		goto err_out0;
-	}
-	ret = kfifo_alloc(&allocator->free_regions, sbi->nr_regions * sizeof(regionnr_t), GFP_KERNEL);
-	if (ret)
-		goto err_out1;
+	ret = entry_allocator_alloc(sbi, allocator, false);
+	if (ret < 0)
+		return ret;
 	NOVA_START_TIMING(normal_recover_entry_allocator_t, normal_recover_entry_allocator_time);
 	for (i = 0; i < sbi->nr_regions; ++i) {
 		value = le16_to_cpu(valid_entry_count[i]);
@@ -66,15 +64,9 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 			BUG_ON(kfifo_in(&allocator->free_regions, &i, sizeof(i)) != sizeof(i));
 	}
 	NOVA_END_TIMING(normal_recover_entry_allocator_t, normal_recover_entry_allocator_time);
-	allocator->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
 	// The first allocation will trigger a new_region request.
 	atomic64_set(&allocator->regionnr_index, ENTRY_PER_REGION - 1);
-	spin_lock_init(&allocator->lock);
 	return 0;
-err_out1:
-	vfree(allocator->valid_entry);
-err_out0:
-	return ret;
 }
 
 void nova_free_entry_allocator(struct entry_allocator *allocator)
