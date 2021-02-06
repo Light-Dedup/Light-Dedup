@@ -5,6 +5,7 @@
 #include "nova.h"
 #include "faststr.h"
 #include "arithmetic.h"
+#include "multithread.h"
 
 #define NOVA_FULL  (1)
 // #define NOVA_INSERT_ENTRY (2)
@@ -863,7 +864,7 @@ static int table_save_multithread(struct nova_mm_table *table, atomic64_t *saved
 	struct table_free_para *para = NULL;
 	struct task_struct **tasks = NULL;
 	unsigned long i, base;
-	int ret = 0;
+	int ret = 0, ret2;
 
 	thread_num = sbi->cpus < table->nr_tablets ? sbi->cpus : table->nr_tablets;
 	// if (thread_num > 8)
@@ -876,7 +877,7 @@ static int table_save_multithread(struct nova_mm_table *table, atomic64_t *saved
 		ret = -ENOMEM;
 		goto out;
 	}
-	tasks = kzalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
+	tasks = kmalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
 	if (tasks == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -893,21 +894,14 @@ static int table_save_multithread(struct nova_mm_table *table, atomic64_t *saved
 			"nova_table_free_%lu", i);
 		if (IS_ERR(tasks[i])) {
 			ret = PTR_ERR(tasks[i]);
-			tasks[i] = NULL;
-			nova_err(sb, "kthread_create %lu return %d\n", i, ret);
+			nova_err(sb, "%lu: kthread_create %lu return %d\n",
+				__func__, i, ret);
 			break;
 		}
 	}
-	if (i == thread_num) {
-		for (i = 0; i < thread_num; ++i)
-			wake_up_process(tasks[i]);
-		for (i = 0; i < thread_num; ++i)
-			wait_for_completion(&para[i].entered);
-	} else {
-		thread_num = i;
-	}
-	for (i = 0; i < thread_num; ++i)
-		kthread_stop(tasks[i]);
+	ret2 = run_and_stop_kthreads(sb, tasks, para, thread_num, i);
+	if (ret2 < 0)
+		ret = ret2;
 out:
 	if (para)
 		kfree(para);
@@ -1104,7 +1098,7 @@ int nova_table_recover(struct nova_mm_table *table)
 		ret = -ENOMEM;
 		goto out;
 	}
-	tasks = kzalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
+	tasks = kmalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
 	if (tasks == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -1120,32 +1114,14 @@ int nova_table_recover(struct nova_mm_table *table)
 			"nova_table_recover_%lu", i);
 		if (IS_ERR(tasks[i])) {
 			ret = PTR_ERR(tasks[i]);
-			tasks[i] = NULL;
-			nova_err(sb, "kthread_create %lu return %d\n", i, ret);
+			nova_err(sb, "%lu: kthread_create %lu return %d\n",
+				__func__, i, ret);
 			break;
 		}
 	}
-	if (i == thread_num) {
-		for (i = 0; i < thread_num; ++i)
-			wake_up_process(tasks[i]);
-		for (i = 0; i < thread_num; ++i) {
-			wait_for_completion(&para[i].entered);
-			ret2 = kthread_stop(tasks[i]);
-			if (ret2 < 0) {
-				nova_err(sb, "kthread_stop %lu return %d\n", i, ret2);
-				ret = ret2;
-			}
-		}
-	} else {
-		thread_num = i;
-		for (i = 0; i < thread_num; ++i) {
-			ret2 = kthread_stop(tasks[i]);
-			if (ret2 < 0 && ret2 != -EINTR) {
-				nova_err(sb, "kthread_stop %lu return %d\n", i, ret2);
-				ret = ret2;
-			}
-		}
-	}
+	ret2 = run_and_stop_kthreads(sb, tasks, para, thread_num, i);
+	if (ret2 < 0)
+		ret = ret2;
 out:
 	if (para)
 		kfree(para);

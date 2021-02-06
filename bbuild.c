@@ -34,6 +34,7 @@
 #include "super.h"
 #include "inode.h"
 #include "log.h"
+#include "multithread.h"
 
 // #define static _Static_assert(1, "2333");
 
@@ -715,9 +716,6 @@ struct task_ring {
 };
 
 static struct task_ring *task_rings;
-static struct task_struct **threads;
-wait_queue_head_t finish_wq;
-int *finished;
 
 static int nova_traverse_inode_log(struct super_block *sb,
 	struct nova_inode *pi, struct scan_bitmap *bm, u64 head)
@@ -1021,18 +1019,16 @@ static void free_resources(struct super_block *sb)
 	}
 
 	kfree(task_rings);
-	kfree(threads);
-	kfree(finished);
 }
 
 static int failure_thread_func(void *data);
 
 struct failure_recovery_thread_para {
+	struct completion entered;
 	struct super_block *sb;
-	struct failure_recovery_info info;
+	struct failure_recovery_info *info;
 };
-static int allocate_resources(struct super_block *sb, int cpus,
-	struct failure_recovery_thread_para *para)
+static int allocate_resources(struct super_block *sb, int cpus)
 {
 	struct task_ring *ring;
 	int i;
@@ -1046,39 +1042,11 @@ static int allocate_resources(struct super_block *sb, int cpus,
 		xa_init(&ring->entry_array);
 	}
 
-	threads = kcalloc(cpus, sizeof(struct task_struct *), GFP_KERNEL);
-	if (!threads)
-		goto fail;
-
-	finished = kcalloc(cpus, sizeof(int), GFP_KERNEL);
-	if (!finished)
-		goto fail;
-
-	init_waitqueue_head(&finish_wq);
-
-	for (i = 0; i < cpus; i++) {
-		threads[i] = kthread_create(failure_thread_func,
-						para, "recovery thread");
-		kthread_bind(threads[i], i);
-	}
-
 	return 0;
 
 fail:
 	free_resources(sb);
 	return -ENOMEM;
-}
-
-static void wait_to_finish(int cpus)
-{
-	int i;
-
-	for (i = 0; i < cpus; i++) {
-		while (finished[i] == 0) {
-			wait_event_interruptible_timeout(finish_wq, false,
-							msecs_to_jiffies(1));
-		}
-	}
 }
 
 /*********************** Failure recovery *************************/
@@ -1103,11 +1071,9 @@ static inline int nova_failure_update_inodetree(struct super_block *sb,
 	return 0;
 }
 
-static int failure_thread_func(void *__data)
+static int __failure_thread_func(struct super_block *sb,
+	struct failure_recovery_info *info)
 {
-	struct failure_recovery_thread_para *para = (struct failure_recovery_thread_para *)__data;
-	struct super_block *sb = para->sb;
-	struct failure_recovery_info info = para->info;	// Copy to local stack.
 	struct nova_inode_info_header sih;
 	struct task_ring *ring;
 	struct nova_inode *pi, fake_pi;
@@ -1141,12 +1107,12 @@ static int failure_thread_func(void *__data)
 		 */
 		for (i = 0; i < 512; i++)
 			set_bm((curr >> PAGE_SHIFT) + i,
-					info.global_bm + cpuid);
+					info->global_bm + cpuid);
 
 		if (metadata_csum) {
 			for (i = 0; i < 512; i++)
 				set_bm((curr1 >> PAGE_SHIFT) + i,
-					info.global_bm + cpuid);
+					info->global_bm + cpuid);
 		}
 
 		for (i = 0; i < num_inodes_per_page; i++) {
@@ -1172,7 +1138,7 @@ static int failure_thread_func(void *__data)
 				}
 
 				nova_recover_inode_pages(sb, &sih, ring,
-						&fake_pi, info.global_bm + cpuid);
+						&fake_pi, info->global_bm + cpuid);
 				nova_failure_update_inodetree(sb, pi,
 						&ino_low, &ino_high);
 				if (sih.i_size > max_size)
@@ -1190,10 +1156,67 @@ static int failure_thread_func(void *__data)
 		nova_delete_file_tree(sb, &sih, 0, last_blocknr,
 						false, false, 0);
 	}
+	return ret;
+}
+static int failure_thread_func(void *__data)
+{
+	struct failure_recovery_thread_para *para =
+		(struct failure_recovery_thread_para *)__data;
+	int ret;
+	complete(&para->entered);
+	ret = __failure_thread_func(para->sb, para->info);
+	/* Wait for kthread_stop */
+	set_current_state(TASK_INTERRUPTIBLE);
+	while (!kthread_should_stop()) {
+		schedule();
+		set_current_state(TASK_INTERRUPTIBLE);
+	}
+	return ret;
+}
 
-	finished[cpuid] = 1;
-	wake_up_interruptible(&finish_wq);
-	do_exit(ret);
+static int failure_recovery_multithread(
+	struct super_block *sb,
+	struct failure_recovery_info *info)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct failure_recovery_thread_para *para = NULL;
+	struct task_struct **tasks;
+	unsigned long thread_num = sbi->cpus;
+	unsigned long i;
+	int ret = 0, ret2;
+
+	para = kmalloc(thread_num * sizeof(para[0]), GFP_KERNEL);
+	if (para == NULL) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	tasks = kmalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
+	if (!tasks) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	for (i = 0; i < thread_num; ++i) {
+		init_completion(&para[i].entered);
+		para[i].sb = sb;
+		para[i].info = info;
+		tasks[i] = kthread_create(failure_thread_func,
+						para + i, "recovery_thread_%lu", i);
+		if (IS_ERR(tasks[i])) {
+			ret = PTR_ERR(tasks[i]);
+			nova_err(sb, "%lu: kthread_create %lu return %d\n",
+				__func__, i, ret);
+			break;
+		}
+		kthread_bind(tasks[i], i);
+	}
+	ret2 = run_and_stop_kthreads(sb, tasks, para, thread_num, i);
+	if (ret2 < 0)
+		ret = ret2;
+out:
+	if (para)
+		kfree(para);
+	if (tasks)
+		kfree(tasks);
 	return ret;
 }
 
@@ -1256,8 +1279,9 @@ static int nova_failure_recovery_crawl(struct super_block *sb,
 		}
 	}
 
-	for (cpuid = 0; cpuid < sbi->cpus; cpuid++)
-		wake_up_process(threads[cpuid]);
+	ret = failure_recovery_multithread(sb, info);
+	if (ret < 0)
+		return ret;
 
 	nova_init_header(sb, &sih, 0);
 	/* Recover the root inode */
@@ -1282,13 +1306,11 @@ static int nova_failure_recovery(struct super_block *sb)
 	struct task_ring *ring;
 	struct nova_inode *pi;
 	struct journal_ptr_pair *pair;
-	struct failure_recovery_thread_para para;
-	struct failure_recovery_info *info = &para.info;
+	struct failure_recovery_info info;
 	int ret = 0;
 	int i;
 
-	para.sb = sb;
-	ret = alloc_failure_recovery_info(sbi, initsize, info);
+	ret = alloc_failure_recovery_info(sbi, initsize, &info);
 	if (ret < 0)
 		return ret;
 	sbi->s_inodes_used_count = 0;
@@ -1307,23 +1329,21 @@ static int nova_failure_recovery(struct super_block *sb)
 	for (i = 0; i < sbi->cpus; i++) {
 		pair = nova_get_journal_pointers(sb, i);
 
-		set_bm(pair->journal_head >> PAGE_SHIFT, info->global_bm + i);
+		set_bm(pair->journal_head >> PAGE_SHIFT, info.global_bm + i);
 	}
 
 	i = NOVA_SNAPSHOT_INO % sbi->cpus;
 	pi = nova_get_inode_by_ino(sb, NOVA_SNAPSHOT_INO);
 	/* Set snapshot info log pages */
-	nova_traverse_dir_inode_log(sb, pi, info->global_bm + i);
+	nova_traverse_dir_inode_log(sb, pi, info.global_bm + i);
 
 	PERSISTENT_BARRIER();
 
-	ret = allocate_resources(sb, sbi->cpus, &para);
+	ret = allocate_resources(sb, sbi->cpus);
 	if (ret)
 		goto out;
 
-	ret = nova_failure_recovery_crawl(sb, info);
-
-	wait_to_finish(sbi->cpus);
+	ret = nova_failure_recovery_crawl(sb, &info);
 
 	for (i = 0; i < sbi->cpus; i++) {
 		ring = &task_rings[i];
@@ -1333,14 +1353,14 @@ static int nova_failure_recovery(struct super_block *sb)
 	free_resources(sb);
 	if (ret < 0)
 		goto out;
-	ret = nova_build_blocknode_map(sb, info, initsize);
+	ret = nova_build_blocknode_map(sb, &info, initsize);
 	if (ret < 0)
 		goto out;
 
 	nova_dbg("Failure recovery total recovered %lu\n",
 			sbi->s_inodes_used_count - NOVA_NORMAL_INODE_START);
 out:
-	free_failure_recovery_info(sbi, info);
+	free_failure_recovery_info(sbi, &info);
 	return ret;
 }
 
