@@ -209,7 +209,7 @@ static int scan_entry_table(struct super_block *sb,
 		ret = -ENOMEM;
 		goto out;
 	}
-	tasks = kmalloc(thread_num * sizeof(struct task_struct), GFP_KERNEL);
+	tasks = kmalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
 	if (tasks == NULL) {
 		ret = -ENOMEM;
 		goto out;
