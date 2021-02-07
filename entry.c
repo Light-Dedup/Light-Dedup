@@ -1,6 +1,7 @@
 #include "entry.h"
 #include "nova.h"
 #include "multithread.h"
+#include "arithmetic.h"
 
 #define INDEX_BIT 32
 #define INDEX_MASK ((1ULL << INDEX_BIT) - 1)
@@ -197,13 +198,16 @@ static int scan_entry_table(struct super_block *sb,
 	uint64_t scan_region_end)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	unsigned long thread_num = sbi->cpus;
+	unsigned long thread_num = min_ul(scan_region_end, sbi->cpus);
 	struct scan_para *para = NULL;
 	struct task_struct **tasks = NULL;
 	unsigned long i;
 	atomic64_t cur_scan_region;
 	int ret = 0, ret2;
 
+	nova_info("Scan fingerprint entry table using %lu thread(s)\n", thread_num);
+	if (thread_num == 0)
+		return 0;
 	para = kmalloc(thread_num * sizeof(struct scan_para), GFP_KERNEL);
 	if (para == NULL) {
 		ret = -ENOMEM;
@@ -261,6 +265,7 @@ int nova_scan_entry_table(struct super_block *sb,
 	return 0;
 err_out:
 	nova_free_entry_allocator(allocator);
+	nova_err(sb, "%s return with error code %d\n", __func__, ret);
 	return ret;
 }
 
