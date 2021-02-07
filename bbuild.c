@@ -1415,7 +1415,7 @@ static int failure_recovery_multithread(
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct failure_recovery_thread_para *para = NULL;
-	struct task_struct **tasks;
+	struct task_struct **tasks = NULL;
 	unsigned long thread_num = sbi->cpus;
 	unsigned long i;
 	int ret = 0, ret2;
