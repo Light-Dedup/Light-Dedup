@@ -746,8 +746,7 @@ static int nova_build_blocknode_map(struct super_block *sb,
 				(initsize >> (PAGE_SHIFT + 0x3));
 
 	/* Alloc memory to hold the block alloc bitmap */
-	final_bm->bitmap = kzalloc(final_bm->bitmap_size,
-							GFP_KERNEL);
+	final_bm->bitmap = vzalloc(final_bm->bitmap_size);
 
 	if (!final_bm->bitmap) {
 		kfree(final_bm);
@@ -774,7 +773,7 @@ static int nova_build_blocknode_map(struct super_block *sb,
 		goto out;
 	ret = invalidate_unused_fp_entry(sb, &info->map_blocknr_entrynr, final_bm);
 out:
-	kfree(final_bm->bitmap);
+	vfree(final_bm->bitmap);
 	kfree(final_bm);
 
 	return ret;
@@ -785,7 +784,7 @@ static void free_failure_recovery_info(struct nova_sb_info *sbi, struct failure_
 	int i;
 	xatable_destroy(&info->map_blocknr_entrynr);
 	for (i = 0; i < sbi->cpus; i++)
-		kfree(info->global_bm[i].bitmap);
+		vfree(info->global_bm[i].bitmap);
 	kfree(info->global_bm);
 }
 static void free_all_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
@@ -816,14 +815,14 @@ alloc_bm(struct nova_sb_info *sbi)
 				(initsize >> (PAGE_SHIFT + 0x3));
 
 		/* Alloc memory to hold the block alloc bitmap */
-		bm->bitmap = kzalloc(bm->bitmap_size, GFP_KERNEL);
+		bm->bitmap = vzalloc(bm->bitmap_size);
 
 		if (!bm->bitmap)
 			break;
 	}
 	if (i != sbi->cpus) {
 		for (j = 0; j < i; ++j)
-		kfree(global_bm[j].bitmap);
+			vfree(global_bm[j].bitmap);
 		kfree(global_bm);
 		return ERR_PTR(-ENOMEM);
 	}
