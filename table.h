@@ -5,18 +5,7 @@
 #include "nova_def.h"
 #include "entry.h"
 
-#define NOVA_TABLE_NODE_LEAF_TYPE (0)
-#define NOVA_TABLE_NODE_INNER_TYPE (1)
-
-struct nova_mm_entry {
-	uint64_t                blocknr;
-	int64_t                 refcount;
-	struct nova_fp   fp;
-	uint32_t                __reserved;
-	uint32_t                flags;
-};
 _Static_assert(sizeof(unsigned long) == sizeof(uint64_t), "You should make all blocknr 64 bit");
-_Static_assert(sizeof(struct nova_mm_entry) == CACHELINE_SIZE / 2, "nova_pmm_leaf not aligned!");
 
 // 4096 / 8 = 512 = 2^9
 #define NOVA_TABLE_INNER_BITS (9)
