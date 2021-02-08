@@ -942,8 +942,10 @@ out:
 }
 static void table_save(struct nova_mm_table *table, atomic64_t *saved)
 {
-	if (table_save_multithread(table, saved) < 0)
+	if (table_save_multithread(table, saved) < 0) {
+		nova_warn("%s: Fail to save the fingerprint table with multithread. Fall back to single thread.", __func__);
 		__table_save_func(table, 0, table->nr_tablets, saved);
+	}
 }
 
 static void __nova_table_save(struct nova_mm_table *table, atomic64_t *saved)
