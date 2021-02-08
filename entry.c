@@ -44,11 +44,22 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 	return 0;
 }
 
+static void rebuild_free_regions(struct nova_sb_info *sbi,
+	struct entry_allocator *allocator)
+{
+	atomic_t *valid_entry = allocator->valid_entry;
+	struct kfifo *free_regions = &allocator->free_regions;
+	regionnr_t i;
+	for (i = 0; i < sbi->nr_regions; ++i)
+		if (atomic_read(valid_entry + i) <= FREE_THRESHOLD)
+			BUG_ON(kfifo_in(free_regions, &i, sizeof(i)) != sizeof(i));
+	// The first allocation will trigger a new_region request.
+	atomic64_set(&allocator->regionnr_index, ENTRY_PER_REGION - 1);
+}
 int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	__le16 *valid_entry_count = nova_sbi_blocknr_to_addr(sbi, sbi->region_valid_entry_count_start);
-	u16 value;
 	regionnr_t i;
 	int ret;
 	INIT_TIMING(normal_recover_entry_allocator_time);
@@ -58,15 +69,10 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 	if (ret < 0)
 		return ret;
 	NOVA_START_TIMING(normal_recover_entry_allocator_t, normal_recover_entry_allocator_time);
-	for (i = 0; i < sbi->nr_regions; ++i) {
-		value = le16_to_cpu(valid_entry_count[i]);
-		atomic_set(allocator->valid_entry + i, value);
-		if (value <= FREE_THRESHOLD)
-			BUG_ON(kfifo_in(&allocator->free_regions, &i, sizeof(i)) != sizeof(i));
-	}
+	for (i = 0; i < sbi->nr_regions; ++i)
+		atomic_set(allocator->valid_entry + i, le16_to_cpu(valid_entry_count[i]));
+	rebuild_free_regions(sbi, allocator);
 	NOVA_END_TIMING(normal_recover_entry_allocator_t, normal_recover_entry_allocator_time);
-	// The first allocation will trigger a new_region request.
-	atomic64_set(&allocator->regionnr_index, ENTRY_PER_REGION - 1);
 	return 0;
 }
 
@@ -182,16 +188,6 @@ static int handle_tail_entry(struct nova_sb_info *sbi, struct xatable *xat,
 			return ret;
 	}
 	return 0;
-}
-static void rebuild_free_regions(struct nova_sb_info *sbi,
-	struct entry_allocator *allocator)
-{
-	atomic_t *valid_entry = allocator->valid_entry;
-	struct kfifo *free_regions = &allocator->free_regions;
-	regionnr_t i;
-	for (i = 0; i < sbi->nr_regions; ++i)
-		if (atomic_read(valid_entry + i) <= FREE_THRESHOLD)
-			BUG_ON(kfifo_in(free_regions, &i, sizeof(i)) != sizeof(i));
 }
 static int scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
