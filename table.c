@@ -1081,8 +1081,8 @@ static int __table_recover_func(struct nova_mm_table *table,
 	// printk("entry_start = %lu, entry_end = %lu\n", (unsigned long)entry_start, (unsigned long)entry_end);
 	for (i = entry_start; i < entry_end; ++i) {
 		wp.entrynr = le32_to_cpu(rec[i].entrynr);
-		wp.base.refcount = le32_to_cpu(rec[i].entrynr);
-		wp.base.fp = pentries[i].fp;
+		wp.base.refcount = le32_to_cpu(rec[i].refcount);
+		wp.base.fp = pentries[wp.entrynr].fp;
 		ret = nova_table_insert_entry(table, &wp);
 		if (ret < 0)
 			break;
