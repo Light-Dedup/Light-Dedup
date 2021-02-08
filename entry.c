@@ -250,7 +250,7 @@ int nova_scan_entry_table(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	uint64_t scan_region_end = sbi->nr_regions / REGION_PER_SCAN;
 	int ret;
-	printk("%s: nr_regions = %u, scan_region_end = %llu, nr_entries = %llu\n",
+	printk("%s: nr_regions = %lu, scan_region_end = %llu, nr_entries = %llu\n",
 		__func__, sbi->nr_regions, scan_region_end, sbi->nr_entries);
 	ret = entry_allocator_alloc(sbi, allocator, true);
 	if (ret < 0)

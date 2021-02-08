@@ -193,7 +193,8 @@ struct nova_sb_info {
 	unsigned long	block_end;
 
 	uint32_t nr_tablets;
-	regionnr_t nr_regions;
+	// Use unsigned long instead of regionnr_t to prevent overflow.
+	unsigned long nr_regions;
 	entrynr_t nr_entries;
 	unsigned long entry_table_start;
 	unsigned long region_valid_entry_count_start;
