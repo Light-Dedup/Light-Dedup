@@ -836,6 +836,7 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 	struct entry_allocator *allocator = &table->entry_allocator;
 	struct xatable *xat = &info->map_blocknr_entrynr;
 	int ret;
+	INIT_TIMING(scan_fp_entry_table_time);
 
 	ret = xatable_init(xat, ceil_log_2(sbi->cpus) + 1);
 	if (ret < 0)
@@ -843,7 +844,9 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 	ret = nova_meta_table_alloc(table, sb);
 	if (ret < 0)
 		goto err_out1;
+	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	ret = nova_scan_entry_table(sb, allocator, xat);
+	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	if (ret < 0)
 		goto err_out2;
 	info->global_bm = alloc_bm(sbi);
@@ -1539,6 +1542,7 @@ static int nova_failure_recovery(struct super_block *sb)
 	struct failure_recovery_info info;
 	int ret = 0;
 	int i;
+	INIT_TIMING(scan_inode_log_time);
 
 	ret = alloc_failure_recovery_info(sb, &info);
 	if (ret < 0)
@@ -1577,7 +1581,9 @@ static int nova_failure_recovery(struct super_block *sb)
 	if (ret)
 		goto err_out1;
 
+	NOVA_START_TIMING(scan_inode_log_t, scan_inode_log_time);
 	ret = nova_failure_recovery_crawl(sb, &info);
+	NOVA_END_TIMING(scan_inode_log_t, scan_inode_log_time);
 
 	for (i = 0; i < sbi->cpus; i++) {
 		ring = &task_rings[i];

@@ -32,6 +32,7 @@ enum timing_category {
 	ioremap_t,
 	new_init_t,
 	recovery_t,
+	scan_inode_log_t,
 
 	/* Namei operations */
 	namei_title_t,
@@ -178,6 +179,7 @@ enum timing_category {
 	save_entry_allocator_t,
 	normal_recover_fp_table_t,
 	normal_recover_entry_allocator_t,
+	scan_fp_entry_table_t,
 
 	/* Sentinel */
 	TIMING_NUM,
