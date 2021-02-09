@@ -793,13 +793,14 @@ static void __save_bucket(struct nova_mm_table *table,
 	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
 		sbi, sbi->entry_refcount_record_start);
 	unsigned long j;
-	size_t head, top;
+	size_t head, top, len;
 	struct nova_mm_entry_p *entry_p;
 	unsigned long irq_flags = 0;
 
 	// printk("%s: bucket->size = %hu\n", __func__, bucket->size);
 	top = head = atomic64_add_return(bucket->size, saved) - bucket->size;
-	nova_memunlock_range(sb, rec + head, bucket->size * sizeof(struct nova_entry_refcount_record), &irq_flags);
+	len = bucket->size * sizeof(struct nova_entry_refcount_record);
+	nova_memunlock_range(sb, rec + head, len, &irq_flags);
 	for (j = 0; j < NOVA_TABLE_LEAF_SIZE; ++j) {
 		if (bucket->tags[j]) {
 			entry_p = bucket->entry_p + j;
@@ -808,7 +809,8 @@ static void __save_bucket(struct nova_mm_table *table,
 			++top;
 		}
 	}
-	nova_memlock_range(sb, rec + head, bucket->size * sizeof(struct nova_entry_refcount_record), &irq_flags);
+	nova_memlock_range(sb, rec + head, len, &irq_flags);
+	nova_flush_buffer(rec + head, len, false);
 	BUG_ON(top != head + bucket->size);
 }
 static void save_bucket(struct nova_mm_table *table,
@@ -870,6 +872,7 @@ static void __table_save_func(struct nova_mm_table *table,
 		else
 			__nova_table_rescursive_save(table, nova_node_p_to_inner(next), saved, 0);
 	}
+	PERSISTENT_BARRIER();
 }
 static int table_save_func(void *__para)
 {
@@ -968,8 +971,6 @@ void nova_table_save(struct nova_mm_table* table)
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
-	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
-		sbi, sbi->entry_refcount_record_start);
 	atomic64_t __saved;
 	uint64_t saved;
 	INIT_TIMING(save_refcount_time);
@@ -978,7 +979,6 @@ void nova_table_save(struct nova_mm_table* table)
 	NOVA_START_TIMING(save_refcount_t, save_refcount_time);
 	__nova_table_save(table, &__saved);
 	saved = atomic64_read(&__saved);
-	nova_flush_buffer(rec, saved * sizeof(rec[0]), false);
 	nova_unlock_write(sb, &recover_meta->refcount_record_num, cpu_to_le64(saved), true);
 	nova_unlock_write(sb, &recover_meta->refcount_saved, NOVA_RECOVER_META_FLAG_COMPLETE, true);
 	NOVA_END_TIMING(save_refcount_t, save_refcount_time);
