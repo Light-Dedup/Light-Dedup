@@ -132,9 +132,9 @@ static void nova_init_free_list(struct super_block *sb,
 	free_list->block_end = free_list->block_start +
 					per_list_blocks - 1;
 	if (index == 0)
-		free_list->block_start += HEAD_RESERVED_BLOCKS;
+		free_list->block_start = sbi->block_start;
 	if (index == sbi->cpus - 1)
-		free_list->block_end -= TAIL_RESERVED_BLOCKS;
+		free_list->block_end = sbi->block_end - 1;
 
 	nova_data_csum_init_free_list(sb, free_list);
 	nova_data_parity_init_free_list(sb, free_list);

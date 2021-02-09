@@ -67,9 +67,6 @@ struct nova_super_block {
 #define	INODE_TABLE1_START	32 // replica inode table
 #define	JOURNAL_START		48 // journal pointer table
 
-/* For replica super block and replica reserved inodes */
-#define	TAIL_RESERVED_BLOCKS	2
-
 /* ======================= Reserved inodes ========================= */
 
 /* We have space for 31 reserved inodes */
@@ -142,8 +139,6 @@ struct nova_sb_info {
 	atomic_t	next_generation;
 	/* inode tracking */
 	unsigned long	s_inodes_used_count;
-	unsigned long	head_reserved_blocks;
-	unsigned long	tail_reserved_blocks;
 
 	struct mutex	s_lock;	/* protects the SB's buffer-head */
 
