@@ -782,10 +782,10 @@ int nova_fp_table_upsert_entry(struct nova_mm_table *table,
 	INIT_TIMING(upsert_fp_entry_time);
 	int ret;
 
+	NOVA_START_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
 	wp.base.fp = pentries[entrynr].fp;
 	wp.base.refcount = 1;
 	wp.entrynr = entrynr;
-	NOVA_START_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
 	ret = nova_table_upsert_entry(table, &wp);
 	NOVA_END_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
 	return ret;
