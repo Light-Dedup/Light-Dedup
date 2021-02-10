@@ -182,6 +182,11 @@ enum timing_category {
 	scan_fp_entry_table_t,
 	upsert_fp_entry_t,
 
+	/* xatable */
+	xatable_title_t,
+	xatable_store_t,
+	xatable_load_t,
+
 	/* Sentinel */
 	TIMING_NUM,
 };

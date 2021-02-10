@@ -1,6 +1,8 @@
 #include "xatable.h"
 #include <linux/slab.h>
 
+#include "stats.h"
+
 int xatable_init(struct xatable *xat, unsigned long num_bit)
 {
 	unsigned long i, num = 1UL << num_bit;
@@ -25,13 +27,25 @@ void xatable_destroy(struct xatable *xat)
 void *xatable_store(struct xatable *xat, unsigned long index, void *entry, gfp_t gfp)
 {
 	unsigned long which = index & ((1UL << xat->num_bit) - 1);
+	INIT_TIMING(xatable_store_time);
+	void *ret;
+
+	NOVA_START_TIMING(xatable_store_t, xatable_store_time);
 	index >>= xat->num_bit;
-	return xa_store(xat->xa + which, index, entry, gfp);
+	ret = xa_store(xat->xa + which, index, entry, gfp);
+	NOVA_END_TIMING(xatable_store_t, xatable_store_time);
+	return ret;
 }
 
 void *xatable_load(struct xatable *xat, unsigned long index)
 {
 	unsigned long which = index & ((1UL << xat->num_bit) - 1);
+	INIT_TIMING(xatable_load_time);
+	void *ret;
+
+	NOVA_START_TIMING(xatable_load_t, xatable_load_time);
 	index >>= xat->num_bit;
-	return xa_load(xat->xa + which, index);
+	ret = xa_load(xat->xa + which, index);
+	NOVA_END_TIMING(xatable_load_t, xatable_load_time);
+	return ret;
 }

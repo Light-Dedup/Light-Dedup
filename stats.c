@@ -177,6 +177,11 @@ const char *Timingstring[TIMING_NUM] = {
 	"normal_recover_entry_allocator",
 	"scan_fp_entry_table",
 	"upsert_fp_entry",
+
+	/* xatable */
+	"=================== xatable ===================",
+	"xatable_store",
+	"xatable_load",
 };
 
 u64 Timingstats[TIMING_NUM];
