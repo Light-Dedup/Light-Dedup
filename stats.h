@@ -180,6 +180,7 @@ enum timing_category {
 	normal_recover_fp_table_t,
 	normal_recover_entry_allocator_t,
 	scan_fp_entry_table_t,
+	upsert_fp_entry_t,
 
 	/* Sentinel */
 	TIMING_NUM,

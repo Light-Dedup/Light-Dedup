@@ -779,10 +779,16 @@ int nova_fp_table_upsert_entry(struct nova_mm_table *table,
 {
 	struct nova_pmm_entry *pentries = table->pentries;
 	struct nova_write_para_entry wp;
+	INIT_TIMING(upsert_fp_entry_time);
+	int ret;
+
 	wp.base.fp = pentries[entrynr].fp;
 	wp.base.refcount = 1;
 	wp.entrynr = entrynr;
-	return nova_table_upsert_entry(table, &wp);
+	NOVA_START_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
+	ret = nova_table_upsert_entry(table, &wp);
+	NOVA_END_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
+	return ret;
 }
 
 static void __save_bucket(struct nova_mm_table *table,

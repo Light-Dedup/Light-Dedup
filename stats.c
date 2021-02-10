@@ -175,7 +175,8 @@ const char *Timingstring[TIMING_NUM] = {
 	"save_entry_allocator",
 	"normal_recover_fp_table",
 	"normal_recover_entry_allocator",
-	"scan_fp_entry_table"
+	"scan_fp_entry_table",
+	"upsert_fp_entry",
 };
 
 u64 Timingstats[TIMING_NUM];
