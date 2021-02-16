@@ -32,7 +32,7 @@ struct nova_entry_refcount_record {
 
 struct nova_bucket {
 	struct {
-		uint16_t mask: 4;	// The number of bits the bucket used. At most 9
+		uint16_t disbits: 4;	// The number of bits the bucket used. At most 9
 		uint16_t size: 7;	// At most 64. Need recalculate when recovering.
 	};
 	uint8_t tags[NOVA_TABLE_LEAF_SIZE];
