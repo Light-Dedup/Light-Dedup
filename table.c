@@ -644,14 +644,14 @@ handle_bucket_size_decrease(struct nova_mm_table *table, unsigned long * __restr
 	kmem_cache_free(table->inner_cache[inner->bits / 3], old_inner);
 }
 
-static int64_t nova_table_recursive_upsert(
+static int nova_table_recursive_upsert(
 	struct nova_mm_table *table,
 	unsigned long * __restrict__ node_p,
 	struct nova_write_para_base *wp,
 	int used_hash_bit,
 	bucket_upsert_func bucket_upsert)
 {
-	int64_t retval;
+	int retval;
 	uint64_t hash, index;
 	struct nova_inner *inner;
 	INIT_TIMING(split_time);
