@@ -132,12 +132,12 @@ static int rewrite_block(
 	NOVA_END_TIMING(alloc_and_memcpy_w_t, memcpy_time);
 	return 0;
 }
-static unsigned long
+static size_t
 find_free_slot_in_bucket(
 	struct nova_bucket *bucket,
-	unsigned long indicator)
+	size_t indicator)
 {
-	unsigned long i;
+	size_t i;
 	for (i = indicator; i < NOVA_TABLE_LEAF_SIZE; i++)
 		if (bucket->tags[i] == 0)
 			return i;
@@ -153,7 +153,7 @@ static int nova_table_leaf_insert(
 	int get_new_block(struct super_block *, struct nova_write_para_normal *))
 {
 	struct super_block *sb = table->sblock;
-	unsigned long i;
+	size_t i;
 	struct nova_pmm_entry *pentry;
 	struct nova_mm_entry_info info;
 	struct nova_mm_entry_p *entry_p;
@@ -195,7 +195,7 @@ static int nova_table_leaf_mm_insert(
 	const struct nova_pmm_entry *pentry,
 	struct nova_mm_entry_p entry_p)
 {
-	uint64_t i;
+	size_t i;
 	struct nova_mm_entry_info entry_info = entry_info_pmm_to_mm(pentry->info);
 
 	BUG_ON(entry_info.flag != NOVA_LEAF_ENTRY_MAGIC);
@@ -359,7 +359,7 @@ static int64_t bucket_insert_entry(
 	struct nova_write_para_base *__wp)
 {
 	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
-	unsigned long i;
+	size_t i;
 	struct nova_mm_entry_p *entry_p;
 
 	i = find_free_slot_in_bucket(bucket, wp->base.fp.indicator);
