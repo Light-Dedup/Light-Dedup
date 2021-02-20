@@ -72,13 +72,13 @@ static inline bool nova_is_leaf_node(unsigned long node_p)
 static inline struct nova_bucket *
 nova_node_p_to_bucket(unsigned long node_p)
 {
-	return (void *)node_p;
+	return (struct nova_bucket *)node_p;
 }
 
 static inline struct nova_inner *
 nova_node_p_to_inner(unsigned long node_p)
 {
-	return (void *)(node_p - 1);
+	return (struct nova_inner *)(node_p - 1);
 }
 
 static inline unsigned long
