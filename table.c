@@ -223,7 +223,7 @@ static bool cmp_content(struct super_block *sb, unsigned long blocknr, const voi
 	}
 	return res;
 }
-static int64_t bucket_upsert_base(
+static int bucket_upsert_base(
 	struct nova_mm_table *table,
 	struct nova_bucket *bucket,
 	struct nova_write_para_normal *wp,
@@ -289,14 +289,14 @@ static int64_t bucket_upsert_base(
 	}
 	return nova_table_leaf_insert(table, bucket, wp, get_new_block);
 }
-static int64_t bucket_upsert_normal(
+static int bucket_upsert_normal(
 	struct nova_mm_table *table,
 	struct nova_bucket *bucket,
 	struct nova_write_para_base *wp)
 {
 	return bucket_upsert_base(table, bucket, (struct nova_write_para_normal *)wp, alloc_and_fill_block);
 }
-static int64_t bucket_upsert_rewrite(
+static int bucket_upsert_rewrite(
 	struct nova_mm_table *table,
 	struct nova_bucket *bucket,
 	struct nova_write_para_base *wp)
@@ -305,7 +305,7 @@ static int64_t bucket_upsert_rewrite(
 }
 
 // refcount-- only if refcount == 1
-static int64_t bucket_upsert_decr1(
+static int bucket_upsert_decr1(
 	struct nova_mm_table *table,
 	struct nova_bucket *bucket,
 	struct nova_write_para_base *__wp)
@@ -353,7 +353,7 @@ static int64_t bucket_upsert_decr1(
 	return 0;
 }
 
-static int64_t bucket_insert_entry(
+static int bucket_insert_entry(
 	struct nova_mm_table *table,
 	struct nova_bucket *bucket,
 	struct nova_write_para_base *__wp)
@@ -373,7 +373,7 @@ static int64_t bucket_insert_entry(
 	return 0;
 }
 
-static int64_t bucket_upsert_entry(
+static int bucket_upsert_entry(
 	struct nova_mm_table *table,
 	struct nova_bucket *bucket,
 	struct nova_write_para_base *__wp)
@@ -392,7 +392,7 @@ static int64_t bucket_upsert_entry(
 	return 0;
 }
 
-typedef int64_t (*bucket_upsert_func)(struct nova_mm_table *, struct nova_bucket *, struct nova_write_para_base *);
+typedef int (*bucket_upsert_func)(struct nova_mm_table *, struct nova_bucket *, struct nova_write_para_base *);
 
 // Free old_pbucket, make old_bucket a new inner node.
 static int __nova_table_split_leaf(
