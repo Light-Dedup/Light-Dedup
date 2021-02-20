@@ -14,19 +14,17 @@
 
 // #define static _Static_assert(1, "2333");
 
-#define NOVA_LEAF_NOT_FOUND (-1)
-
 struct nova_write_para_entry {
 	struct nova_write_para_base base;
 	entrynr_t entrynr;
 };
 
-static int nova_table_leaf_find(
+static size_t nova_table_leaf_find(
 	const struct nova_pmm_entry *pentries,
 	const struct nova_bucket *bucket,
 	const struct nova_fp *fp)
 {
-	int i;
+	size_t i;
 	uint64_t index = fp->indicator;
 	uint8_t tag = (uint8_t)(fp->tag % 0xff + 1);
 #ifdef MEASURE_FP_TRY
@@ -65,13 +63,13 @@ static int nova_table_leaf_find(
 	}
 #endif
 
-	return NOVA_LEAF_NOT_FOUND;
+	return NOVA_TABLE_LEAF_SIZE;
 }
 
 static int nova_table_leaf_delete(
 	struct nova_mm_table *table,
 	struct nova_bucket *bucket,
-	int entry_index)
+	size_t entry_index)
 {
 	entrynr_t entrynr = bucket->entry_p[entry_index].entrynr;
 	nova_free_entry(table->entry_allocator, entrynr);
@@ -233,7 +231,7 @@ static int64_t bucket_upsert_base(
 {
 	struct super_block *sb = table->sblock;
 	struct nova_pmm_entry *pentries = table->pentries;
-	int leaf_index;
+	size_t leaf_index;
 	// struct nova_pmm_node *pnode;
 	struct nova_pmm_entry *pentry;
 	struct nova_mm_entry_p *entry_p;
@@ -246,7 +244,7 @@ static int64_t bucket_upsert_base(
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	leaf_index = nova_table_leaf_find(pentries, bucket, &wp->base.fp);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	if (leaf_index >= 0) {
+	if (leaf_index != NOVA_TABLE_LEAF_SIZE) {
 		entry_p = bucket->entry_p + leaf_index;
 		pentry = pentries + entry_p->entrynr;
 		pentry_info = entry_info_pmm_to_mm(pentry->info);
@@ -313,7 +311,7 @@ static int64_t bucket_upsert_decr1(
 	struct nova_write_para_base *__wp)
 {
 	struct nova_pmm_entry *pentries = table->pentries;
-	int leaf_index;
+	size_t leaf_index;
 	struct nova_pmm_entry *pentry;
 	struct nova_mm_entry_p *entry_p;
 	struct nova_mm_entry_info pentry_info;
@@ -324,7 +322,7 @@ static int64_t bucket_upsert_decr1(
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	leaf_index = nova_table_leaf_find(pentries, bucket, &wp->base.fp);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	if (leaf_index < 0) {
+	if (leaf_index == NOVA_TABLE_LEAF_SIZE) {
 		// Collision happened. Just free it.
 		printk("A collision happened. Block %ld can not be found in the hash table.", wp->blocknr);
 		wp->base.refcount = 0;
@@ -381,11 +379,11 @@ static int64_t bucket_upsert_entry(
 	struct nova_write_para_base *__wp)
 {
 	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
-	unsigned long i;
+	size_t i;
 	struct nova_mm_entry_p *entry_p;
 
 	i = nova_table_leaf_find(table->pentries, bucket, &wp->base.fp);
-	if (i == NOVA_LEAF_NOT_FOUND)
+	if (i == NOVA_TABLE_LEAF_SIZE)
 		return bucket_insert_entry(table, bucket, __wp);
 	entry_p = bucket->entry_p + i;
 	// There should not be two entries which have the same fingerprint.
