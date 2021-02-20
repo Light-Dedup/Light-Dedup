@@ -94,7 +94,7 @@ nova_inner_to_node_p(struct nova_inner *inner) {
 struct nova_mm_tablet {
 	struct mutex           mtx;
 	unsigned long   node_p;
-} ____cacheline_aligned_in_smp;
+};
 
 struct nova_mm_table {
 	struct super_block    *sblock;
