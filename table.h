@@ -42,8 +42,9 @@ _Static_assert((1 << INDICATOR_BIT_NUM) == NOVA_TABLE_LEAF_SIZE, "(1 << INDICATO
 
 struct nova_inner {
 	struct {
-		uint16_t bits: 4;	// At most 9.
-		uint16_t merged: 9;	// At most 256.	If merged == 1 << (bits - 1), then shrink, and --bits.
+		uint32_t bits: 4;	// At most 9.
+		uint32_t max_bits: 4;	// At most 9.
+		uint32_t merged: 9;	// At most 256.	If merged == 1 << (bits - 1), then shrink, and --bits.
 	};
 	unsigned long node_p[0];	// If (node_p[i] & 1) != 0, then it is an inner node, else it is a bucket.
 };

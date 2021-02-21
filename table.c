@@ -14,6 +14,55 @@
 
 // #define static _Static_assert(1, "2333");
 
+static inline size_t
+max_bits_to_type(size_t max_bits)
+{
+	return max_bits / 3 - 1;
+}
+static inline size_t
+type_to_max_bits(size_t type)
+{
+	return (type + 1) * 3;
+}
+static inline size_t
+least_type(size_t bits)
+{
+	return (bits - 1) / 3;
+}
+
+static inline void
+nova_table_free_inner(struct nova_mm_table *table, struct nova_inner *inner)
+{
+	size_t type = max_bits_to_type(inner->max_bits);
+	kmem_cache_free(table->inner_cache[type], inner);
+}
+static struct nova_inner *
+inner_realloc(struct nova_mm_table *table,
+	struct nova_inner *inner, size_t new_type)
+{
+	struct nova_inner *new_inner = kmem_cache_alloc(
+		table->inner_cache[new_type], GFP_KERNEL);
+	if (new_inner == NULL)
+		return NULL;
+	*new_inner = *inner;
+	new_inner->max_bits = type_to_max_bits(new_type);
+	memcpy(new_inner->node_p, inner->node_p, (1 << inner->bits) * sizeof(unsigned long));
+	nova_table_free_inner(table, inner);
+	return new_inner;
+}
+static inline struct nova_inner *
+inner_shrink(struct nova_mm_table *table, struct nova_inner *inner)
+{
+	size_t type = least_type(inner->bits);
+	return inner_realloc(table, inner, type);
+}
+static inline struct nova_inner *
+inner_expand(struct nova_mm_table *table, struct nova_inner *inner)
+{
+	size_t type = max_bits_to_type(inner->max_bits) + 1;
+	return inner_realloc(table, inner, type);
+}
+
 struct nova_write_para_entry {
 	struct nova_write_para_base base;
 	entrynr_t entrynr;
@@ -419,6 +468,7 @@ static int __nova_table_split_leaf(
 		goto err_out;
 	}
 	new_inner->bits = 1;
+	new_inner->max_bits = 3;
 	new_inner->merged = 0;
 
 	bucket0 = kmem_cache_zalloc(table->bucket_cache, GFP_KERNEL);
@@ -461,7 +511,7 @@ err_out:
 			kmem_cache_free(table->bucket_cache, nova_node_p_to_bucket(new_inner->node_p[0]));
 		if (new_inner->node_p[1])
 			kmem_cache_free(table->bucket_cache, nova_node_p_to_bucket(new_inner->node_p[1]));
-		kmem_cache_free(table->inner_cache[0], new_inner);
+		nova_table_free_inner(table, new_inner);
 	}
 	NOVA_END_TIMING(split_leaf_t, split_leaf_time);
 	// printk("__nova_table_split_leaf: err_out");
@@ -491,16 +541,10 @@ static int __nova_table_split(
 		}
 		// extend
 		n = 1 << inner->bits;
-		if (inner->bits % 3 == 0) {
-			struct nova_inner *new_inner = kmem_cache_alloc(table->inner_cache[inner->bits / 3], GFP_KERNEL);
-			// if (new_inner == NULL)
-			// 	return -ENOMEM;	// Nothing to free, just return.
-			BUG_ON(new_inner == NULL);	// TODO: Handle it. Record the kmem_cache number.
-			*new_inner = *inner;
-			memcpy(new_inner->node_p, inner->node_p, n * sizeof(unsigned long));
-			*inner_p = nova_inner_to_node_p(new_inner);
-			kmem_cache_free(table->inner_cache[inner->bits / 3 - 1], inner);
-			inner = new_inner;
+		if (inner->bits == inner->max_bits) {
+			inner = inner_expand(table, inner);
+			if (inner == NULL)
+				return -ENOMEM;	// Nothing to free, just return.
 			// old_bucket = nova_node_p_to_bucket(inner->node_p[index]);
 		}
 		memcpy(inner->node_p + n, inner->node_p, n * sizeof(unsigned long));
@@ -581,7 +625,7 @@ merged_bucket(struct nova_inner *inner, int i) {
 }
 static void
 handle_bucket_size_decrease(struct nova_mm_table *table, unsigned long * __restrict__ node_p, uint64_t index) {
-	struct nova_inner *inner = nova_node_p_to_inner(*node_p), *old_inner;
+	struct nova_inner *inner = nova_node_p_to_inner(*node_p);
 	struct nova_bucket *bucket = nova_node_p_to_bucket(inner->node_p[index]);
 	struct nova_bucket *sibling;
 	int i;
@@ -618,28 +662,23 @@ handle_bucket_size_decrease(struct nova_mm_table *table, unsigned long * __restr
 		if (merged_bucket(inner, i))
 			++inner->merged;
 	}
-	if (inner->bits % 3 != 0)
+	if (inner->bits + 3 > inner->max_bits)
 		return;
 	if (inner->bits == 0) {
 		// printk("Delete the inner node, replace it with a bucket.\n");
 		bucket->disbits = NOVA_TABLE_INNER_BITS;	// Even if the node_p belongs to a tablet, the wrong disbits will do no harm.
 		*node_p = nova_bucket_to_node_p(bucket);
-		kmem_cache_free(table->inner_cache[0], inner);
+		nova_table_free_inner(table, inner);
 		// Even if the new bucket has a sibling bucket whose size is 0,
 		// the size of the new bucket is not 0,
 		// so the next deletion in the new bucket will result in a mergence.
 		return;
 	}
 	// printk("Shrink the capacity of inner to save space.\n");
-	old_inner = inner;
-	inner = kmem_cache_alloc(table->inner_cache[inner->bits / 3 - 1], GFP_KERNEL);
-	// if (inner == NULL)
-	// 	return -ENOMEM;
-	BUG_ON(inner == NULL);	// TODO: Handle this case. Record the kmem_cache number?
-	*inner = *old_inner;
-	memcpy(inner->node_p, old_inner->node_p, (1 << inner->bits) * sizeof(unsigned long));
+	inner = inner_shrink(table, inner);
+	if (inner == NULL)
+		return;	// The next decrease of bits will try to shrink again.
 	*node_p = nova_inner_to_node_p(inner);
-	kmem_cache_free(table->inner_cache[inner->bits / 3], old_inner);
 }
 
 static int nova_table_recursive_upsert(
@@ -854,7 +893,7 @@ static void __nova_table_rescursive_save(
 		save_bucket(table, bucket, saved);
 	}
 	// printk("Going to free inners %pK", inner->inners);
-	kmem_cache_free(table->inner_cache[(inner->bits - 1) / 3], inner);
+	nova_table_free_inner(table, inner);
 	// printk("return");
 }
 
@@ -995,7 +1034,7 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table)
 	struct nova_super_block *psb = (struct nova_super_block *)sbi->virt_addr;
 	unsigned long nr_tablets = sbi->nr_tablets;
 	int retval;
-	unsigned long i = 0, i_inner_cache = 0, j;
+	unsigned long i = 0, inner_cache_type = 0, j;
 #define NOVA_INNER_CACHE_BASE_NAME_LEN sizeof("nova_inner_cache")
 	char inner_cache_name[NOVA_INNER_CACHE_BASE_NAME_LEN + 1] = "nova_inner_cache";	// The last two bytes are zero.
 	struct nova_bucket *bucket;
@@ -1017,12 +1056,12 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table)
 	table->pentries = nova_blocknr_to_addr(sb, sbi->entry_table_start);
 	table->entry_allocator = &sbi->meta_table.entry_allocator;
 
-	for (; i_inner_cache < 3; ++i_inner_cache) {
-		inner_cache_name[NOVA_INNER_CACHE_BASE_NAME_LEN - 1] = i_inner_cache + '0';
-		table->inner_cache[i_inner_cache] = kmem_cache_create(inner_cache_name,
-			sizeof(struct nova_inner) + sizeof(unsigned long) * (1 << ((i_inner_cache + 1) * 3)),
+	for (; inner_cache_type < 3; ++inner_cache_type) {
+		inner_cache_name[NOVA_INNER_CACHE_BASE_NAME_LEN - 1] = inner_cache_type + '0';
+		table->inner_cache[inner_cache_type] = kmem_cache_create(inner_cache_name,
+			sizeof(struct nova_inner) + sizeof(unsigned long) * (1 << type_to_max_bits(inner_cache_type)),
 			NOVA_INNER_ALIGN, TABLE_KMEM_CACHE_FLAGS, NULL);
-		if (table->inner_cache[i_inner_cache] == NULL) {
+		if (table->inner_cache[inner_cache_type] == NULL) {
 			retval = -ENOMEM;
 			goto err_out;
 		}
@@ -1059,7 +1098,7 @@ err_out:
 	}
 	if (table->bucket_cache)
 		kmem_cache_destroy(table->bucket_cache);
-	for (j = 0; j < i_inner_cache; ++j) {
+	for (j = 0; j < inner_cache_type; ++j) {
 		kmem_cache_destroy(table->inner_cache[j]);
 	}
 
