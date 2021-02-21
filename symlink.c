@@ -42,6 +42,7 @@ int nova_block_symlink(struct super_block *sb, struct nova_inode *pi,
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
 
+	// Do not dedup symlink.
 	allocated = nova_new_data_blocks(sb, sih, &name_blocknr, 0, 1,
 				 ALLOC_INIT_ZERO, ANY_CPU, ALLOC_FROM_TAIL);
 	if (allocated != 1 || name_blocknr == 0) {
@@ -67,7 +68,7 @@ int nova_block_symlink(struct super_block *sb, struct nova_inode *pi,
 	if (ret) {
 		nova_dbg("%s: append file write entry failed %d\n",
 					__func__, ret);
-		nova_free_data_blocks(sb, sih, name_blocknr, 1);	// TODO: Does it need to be modified to nova_block_decr?
+		nova_free_data_blocks(sb, sih, name_blocknr, 1);
 		return ret;
 	}
 
