@@ -546,6 +546,7 @@ static int __nova_table_split(
 			inner = inner_expand(table, inner);
 			if (inner == NULL)
 				return -ENOMEM;	// Nothing to free, just return.
+			*inner_p = nova_inner_to_node_p(inner);
 			// old_bucket = nova_node_p_to_bucket(inner->node_p[index]);
 		}
 		memcpy(inner->node_p + n, inner->node_p, n * sizeof(unsigned long));
