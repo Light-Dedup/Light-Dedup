@@ -15,19 +15,19 @@
 // #define static _Static_assert(1, "2333");
 
 static inline size_t
+least_type(size_t bits)
+{
+	return (bits - 1) / 3;
+}
+static inline size_t
 max_bits_to_type(size_t max_bits)
 {
-	return max_bits / 3 - 1;
+	return least_type(max_bits);
 }
 static inline size_t
 type_to_max_bits(size_t type)
 {
 	return (type + 1) * 3;
-}
-static inline size_t
-least_type(size_t bits)
-{
-	return (bits - 1) / 3;
 }
 
 static inline void
@@ -46,6 +46,7 @@ inner_realloc(struct nova_mm_table *table,
 		return NULL;
 	*new_inner = *inner;
 	new_inner->max_bits = type_to_max_bits(new_type);
+	BUG_ON(new_inner->max_bits < inner->bits);
 	memcpy(new_inner->node_p, inner->node_p, (1 << inner->bits) * sizeof(unsigned long));
 	nova_table_free_inner(table, inner);
 	return new_inner;
