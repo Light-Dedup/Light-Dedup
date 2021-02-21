@@ -64,6 +64,18 @@ inner_expand(struct nova_mm_table *table, struct nova_inner *inner)
 	return inner_realloc(table, inner, type);
 }
 
+static struct nova_bucket *
+alloc_empty_bucket(struct nova_mm_table *table)
+{
+	return kmem_cache_zalloc(table->bucket_cache, GFP_KERNEL);
+	// struct nova_bucket *bucket = kmem_cache_alloc(table->bucket_cache, GFP_KERNEL);
+	// if (bucket == NULL)
+	// 	return NULL;
+	// bucket->size = 0;
+	// memset(bucket->tags, 0, sizeof(bucket->tags));
+	// return bucket;
+}
+
 struct nova_write_para_entry {
 	struct nova_write_para_base base;
 	entrynr_t entrynr;
@@ -474,13 +486,12 @@ static int __nova_table_split_leaf(
 	new_inner->merged = 0;
 
 	for (i = 0; i < 2; ++i) {
-		bucket[i] = kmem_cache_zalloc(table->bucket_cache, GFP_KERNEL);
+		bucket[i] = alloc_empty_bucket(table);
 		if (bucket[i] == NULL) {
 			retval = -ENOMEM;
 			goto err_out;
 		}
 		bucket[i]->disbits = 1;
-		bucket[i]->size = 0;
 		new_inner->node_p[i] = nova_bucket_to_node_p(bucket[i]);
 	}
 	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; i++) {
@@ -549,7 +560,7 @@ static int __nova_table_split(
 	}
 
 	new_bit = 1 << old_bucket->disbits;
-	new_bucket = kmem_cache_zalloc(table->bucket_cache, GFP_KERNEL);
+	new_bucket = alloc_empty_bucket(table);
 	if (new_bucket == NULL) {
 		retval = -ENOMEM;
 		goto err_out;
@@ -557,7 +568,6 @@ static int __nova_table_split(
 	// No error next.
 	++old_bucket->disbits;
 	new_bucket->disbits = old_bucket->disbits;
-	new_bucket->size = 0;
 
 #ifdef TABLE_STAT_SPLIT
 	++extend_cnt;
@@ -1069,13 +1079,13 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table)
 
 	for (; i < nr_tablets; i++) {
 		mutex_init(&table->tablets[i].mtx);
-		bucket = kmem_cache_zalloc(table->bucket_cache, GFP_KERNEL);
+		bucket = alloc_empty_bucket(table);
 		if (bucket == NULL) {
 			printk("OOM when allocating bucket!\n");
 			retval = -ENOMEM;
 			goto err_out;
 		}
-		bucket->disbits = bucket->size = 0;
+		bucket->disbits = 0;
 		table->tablets[i].node_p = nova_bucket_to_node_p(bucket);
 	}
 
