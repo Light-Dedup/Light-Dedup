@@ -105,7 +105,7 @@ struct nova_mm_table {
 	struct nova_mm_tablet  *tablets;
 };
 
-static inline bool nova_fp_strong_equal(
+static inline bool nova_fp_equal(
 	const struct nova_fp* left, 
 	const struct nova_fp* right) 
 {

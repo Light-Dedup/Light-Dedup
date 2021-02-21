@@ -32,7 +32,7 @@ static size_t nova_table_leaf_find(
 		if (bucket->tags[i] == tag) {
 			++fp_try_total;
 			if (pbucket->entries[i].flags == NOVA_LEAF_ENTRY_MAGIC &&
-				nova_fp_strong_equal(fp, &pbucket->entries[i].fp)) {
+				nova_fp_equal(fp, &pbucket->entries[i].fp)) {
 				++fp_try_count;	// fp_try_total / fp_try_count = The times it should read from nvmm to find an entry.
 				return i;
 			}
@@ -42,7 +42,7 @@ static size_t nova_table_leaf_find(
 		if (bucket->tags[i] == tag) {
 			++fp_try_total;
 			if (pbucket->entries[i].flags == NOVA_LEAF_ENTRY_MAGIC &&
-				nova_fp_strong_equal(fp, &pbucket->entries[i].fp)) {
+				nova_fp_equal(fp, &pbucket->entries[i].fp)) {
 				++fp_try_count;
 				return i;
 			}
@@ -51,13 +51,13 @@ static size_t nova_table_leaf_find(
 #else
 	for (i = index; i < NOVA_TABLE_LEAF_SIZE; i++) {
 		if (bucket->tags[i] == tag &&
-			nova_fp_strong_equal(fp, &pentries[bucket->entry_p[i].entrynr].fp)) {
+			nova_fp_equal(fp, &pentries[bucket->entry_p[i].entrynr].fp)) {
 			return i;
 		}
 	}
 	for (i = 0; i < index; i++) {
 		if (bucket->tags[i] == tag &&
-			nova_fp_strong_equal(fp, &pentries[bucket->entry_p[i].entrynr].fp)) {
+			nova_fp_equal(fp, &pentries[bucket->entry_p[i].entrynr].fp)) {
 			return i;
 		}
 	}
