@@ -456,18 +456,33 @@ static int bucket_upsert_entry(
 
 typedef int (*bucket_upsert_func)(struct nova_mm_table *, struct nova_bucket *, struct nova_write_para_base *);
 
+static void bucket_rehash(
+	struct nova_mm_table *table,
+	const struct nova_bucket *old_bucket,
+	struct nova_bucket *bucket[2],
+	size_t new_disbit)
+{
+	struct nova_pmm_entry *pentries = table->pentries, *pentry;
+	size_t which;
+	size_t i;
+	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; i++) {
+		pentry = pentries + old_bucket->entry_p[i].entrynr;
+		which = (pentry->fp.index >> new_disbit) & 1;
+		BUG_ON(nova_table_leaf_mm_insert(table, 
+					bucket[which],
+					pentry, old_bucket->entry_p[i]));
+	}
+}
 // Free old_pbucket, make old_bucket a new inner node.
 static int __nova_table_split_leaf(
 	struct nova_mm_table *table,
 	unsigned long *node_p,	// A full bucket, will becomes a new inner.
 	int used_hash_bit)
 {
-	struct nova_pmm_entry *pentries = table->pentries, *pentry;
 	struct nova_bucket *old_bucket = nova_node_p_to_bucket(*node_p);
 	struct nova_bucket *bucket[2] = {NULL, NULL};
 	struct nova_inner *new_inner = NULL;
 	int i, retval;
-	uint64_t hash;
 	INIT_TIMING(split_leaf_time);
 #ifdef TABLE_STAT_SPLIT
 	int left_bucket_entry_num;
@@ -494,13 +509,7 @@ static int __nova_table_split_leaf(
 		bucket[i]->disbits = 1;
 		new_inner->node_p[i] = nova_bucket_to_node_p(bucket[i]);
 	}
-	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; i++) {
-		pentry = pentries + old_bucket->entry_p[i].entrynr;
-		hash = pentry->fp.index >> used_hash_bit;
-		BUG_ON(nova_table_leaf_mm_insert(table, 
-					nova_node_p_to_bucket(new_inner->node_p[hash&1]),
-					pentry, old_bucket->entry_p[i]));
-	}
+	bucket_rehash(table, old_bucket, bucket, used_hash_bit);
 #ifdef TABLE_STAT_SPLIT
 	++left_bucket_entry_cnt[left_bucket_entry_num];
 #endif
