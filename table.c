@@ -451,9 +451,10 @@ static int __nova_table_split_leaf(
 	int used_hash_bit)
 {
 	struct nova_pmm_entry *pentries = table->pentries, *pentry;
-	struct nova_bucket *old_bucket = nova_node_p_to_bucket(*node_p), *bucket0, *bucket1;
+	struct nova_bucket *old_bucket = nova_node_p_to_bucket(*node_p);
+	struct nova_bucket *bucket[2] = {NULL, NULL};
 	struct nova_inner *new_inner = NULL;
-	int i = 0, retval;
+	int i, retval;
 	uint64_t hash;
 	INIT_TIMING(split_leaf_time);
 #ifdef TABLE_STAT_SPLIT
@@ -463,7 +464,7 @@ static int __nova_table_split_leaf(
 	// printk("__nova_table_split_leaf");
 	NOVA_START_TIMING(split_leaf_t, split_leaf_time);
 
-	new_inner = kmem_cache_zalloc(table->inner_cache[0], GFP_KERNEL);
+	new_inner = kmem_cache_alloc(table->inner_cache[0], GFP_KERNEL);
 	if (!new_inner) {
 		retval = -ENOMEM;
 		goto err_out;
@@ -472,23 +473,16 @@ static int __nova_table_split_leaf(
 	new_inner->max_bits = 3;
 	new_inner->merged = 0;
 
-	bucket0 = kmem_cache_zalloc(table->bucket_cache, GFP_KERNEL);
-	if (bucket0 == NULL) {
-		retval = -ENOMEM;
-		goto err_out;
+	for (i = 0; i < 2; ++i) {
+		bucket[i] = kmem_cache_zalloc(table->bucket_cache, GFP_KERNEL);
+		if (bucket[i] == NULL) {
+			retval = -ENOMEM;
+			goto err_out;
+		}
+		bucket[i]->disbits = 1;
+		bucket[i]->size = 0;
+		new_inner->node_p[i] = nova_bucket_to_node_p(bucket[i]);
 	}
-	bucket0->disbits = 1;
-	bucket0->size = 0;
-	new_inner->node_p[0] = nova_bucket_to_node_p(bucket0);
-	bucket1 = kmem_cache_zalloc(table->bucket_cache, GFP_KERNEL);
-	if (bucket1 == NULL) {
-		retval = -ENOMEM;
-		goto err_out;
-	}
-	bucket1->disbits = 1;
-	bucket1->size = 0;
-	new_inner->node_p[1] = nova_bucket_to_node_p(bucket1);
-
 	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; i++) {
 		pentry = pentries + old_bucket->entry_p[i].entrynr;
 		hash = pentry->fp.index >> used_hash_bit;
@@ -507,13 +501,11 @@ static int __nova_table_split_leaf(
 	return 0;
 
 err_out:
-	if (new_inner) {
-		if (new_inner->node_p[0])
-			kmem_cache_free(table->bucket_cache, nova_node_p_to_bucket(new_inner->node_p[0]));
-		if (new_inner->node_p[1])
-			kmem_cache_free(table->bucket_cache, nova_node_p_to_bucket(new_inner->node_p[1]));
+	for (i = 0; i < 2; ++i)
+		if (bucket[i])
+			kmem_cache_free(table->bucket_cache, bucket[i]);
+	if (new_inner)
 		nova_table_free_inner(table, new_inner);
-	}
 	NOVA_END_TIMING(split_leaf_t, split_leaf_time);
 	// printk("__nova_table_split_leaf: err_out");
 	return retval;
