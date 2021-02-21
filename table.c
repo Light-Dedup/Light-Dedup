@@ -475,7 +475,7 @@ static void __bucket_rehash(
 }
 static int bucket_rehash(
 	struct nova_mm_table *table,
-	struct nova_bucket *old_bucket,
+	const struct nova_bucket *old_bucket,
 	struct nova_bucket *bucket[2],
 	size_t new_disbit)
 {
@@ -488,7 +488,6 @@ static int bucket_rehash(
 		return -ENOMEM;
 	}
 	__bucket_rehash(table, old_bucket, bucket, new_disbit);
-	kmem_cache_free(table->bucket_cache, old_bucket);
 	return 0;
 }
 // Free old_pbucket, make old_bucket a new inner node.
@@ -518,6 +517,7 @@ static int __nova_table_split_leaf(
 	retval = bucket_rehash(table, old_bucket, bucket, used_hash_bit);
 	if (retval < 0)
 		goto err_out;
+	kmem_cache_free(table->bucket_cache, old_bucket);
 	for (i = 0; i < 2; ++i) {
 		bucket[i]->disbits = 1;
 		new_inner->node_p[i] = nova_bucket_to_node_p(bucket[i]);
@@ -542,10 +542,11 @@ static int __nova_table_split(
 	int used_hash_bit)
 {
 	struct nova_inner *inner = nova_node_p_to_inner(*inner_p);
-	struct nova_pmm_entry *pentries = table->pentries, *pentry;
-	struct nova_bucket *old_bucket = nova_node_p_to_bucket(inner->node_p[index]), *new_bucket = NULL;
-	int retval, i, n;
-	uint64_t hash, new_bit;
+	struct nova_bucket *old_bucket = nova_node_p_to_bucket(inner->node_p[index]);
+	struct nova_bucket *bucket[2];
+	int retval, n;
+	size_t i;
+	uint64_t new_bit;
 
 	if (old_bucket->disbits == inner->bits) {
 		if (inner->bits == NOVA_TABLE_INNER_BITS) {
@@ -569,45 +570,20 @@ static int __nova_table_split(
 		// 	depth, index, (uint64_t)inner->inner.bits);
 	}
 
-	new_bit = 1 << old_bucket->disbits;
-	new_bucket = alloc_empty_bucket(table);
-	if (new_bucket == NULL) {
-		retval = -ENOMEM;
-		goto err_out;
-	}
-	// No error next.
-	++old_bucket->disbits;
-	new_bucket->disbits = old_bucket->disbits;
-
-	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; i++) {
-		pentry = pentries + old_bucket->entry_p[i].entrynr;
-		hash = pentry->fp.index >> used_hash_bit;
-		if (hash & new_bit) {
-			BUG_ON(nova_table_leaf_mm_insert(table, 
-				new_bucket, pentry, old_bucket->entry_p[i]));
-		}
-	}
-
-	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; i++) {
-		pentry = pentries + old_bucket->entry_p[i].entrynr;
-		hash = pentry->fp.index >> used_hash_bit;
-		if (hash & new_bit) {
-			old_bucket->tags[i] = 0;
-			--old_bucket->size;
-		}
-	}
-	for (i = (index & (new_bit - 1)) | new_bit; i < (1 << inner->bits); i += (new_bit << 1)) {
-		// New bucket
-		inner->node_p[i] = nova_bucket_to_node_p(new_bucket);
-	}
+	retval = bucket_rehash(table, old_bucket, bucket, used_hash_bit + old_bucket->disbits);
+	if (retval < 0)
+		return retval;	// No need to revert expanded inner.
 	if (old_bucket->disbits == inner->bits)
 		--inner->merged;
-	return 0;
+	bucket[0]->disbits = bucket[1]->disbits = old_bucket->disbits + 1;
+	new_bit = 1 << old_bucket->disbits;
+	kmem_cache_free(table->bucket_cache, old_bucket);
 
-err_out:
-	if (new_bucket)
-		kmem_cache_free(table->bucket_cache, new_bucket);
-	return retval;
+	for (i = (index & (new_bit - 1)); i < (1 << inner->bits); i += (new_bit << 1)) {
+		inner->node_p[i] = nova_bucket_to_node_p(bucket[0]);
+		inner->node_p[i | new_bit] = nova_bucket_to_node_p(bucket[1]);
+	}
+	return 0;
 }
 
 static void merge_bucket(struct nova_mm_table *table, struct nova_bucket *dst, struct nova_bucket *src) {
