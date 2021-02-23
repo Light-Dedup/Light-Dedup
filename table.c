@@ -573,7 +573,7 @@ static int __nova_table_split(
 	retval = bucket_rehash(table, old_bucket, bucket, used_hash_bit + old_bucket->disbits);
 	if (retval < 0)
 		return retval;	// No need to revert expanded inner.
-	if (old_bucket->disbits == inner->bits)
+	if (old_bucket->disbits + 1 == inner->bits)
 		--inner->merged;
 	bucket[0]->disbits = bucket[1]->disbits = old_bucket->disbits + 1;
 	new_bit = 1 << old_bucket->disbits;
