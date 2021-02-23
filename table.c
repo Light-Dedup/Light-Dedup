@@ -75,6 +75,11 @@ alloc_empty_bucket(struct nova_mm_table *table)
 	// memset(bucket->tags, 0, sizeof(bucket->tags));
 	// return bucket;
 }
+static void
+free_bucket(struct nova_mm_table *table, struct nova_bucket *bucket)
+{
+	kmem_cache_free(table->bucket_cache, bucket);
+}
 
 struct nova_write_para_entry {
 	struct nova_write_para_base base;
@@ -484,7 +489,7 @@ static int bucket_rehash(
 		return -ENOMEM;
 	bucket[1] = alloc_empty_bucket(table);
 	if (bucket[1] == NULL) {
-		kmem_cache_free(table->bucket_cache, bucket[0]);
+		free_bucket(table, bucket[0]);
 		return -ENOMEM;
 	}
 	__bucket_rehash(table, old_bucket, bucket, new_disbit);
@@ -517,7 +522,7 @@ static int __nova_table_split_leaf(
 	retval = bucket_rehash(table, old_bucket, bucket, used_hash_bit);
 	if (retval < 0)
 		goto err_out;
-	kmem_cache_free(table->bucket_cache, old_bucket);
+	free_bucket(table, old_bucket);
 	for (i = 0; i < 2; ++i) {
 		bucket[i]->disbits = 1;
 		new_inner->node_p[i] = nova_bucket_to_node_p(bucket[i]);
@@ -577,7 +582,7 @@ static int __nova_table_split(
 		--inner->merged;
 	bucket[0]->disbits = bucket[1]->disbits = old_bucket->disbits + 1;
 	new_bit = 1 << old_bucket->disbits;
-	kmem_cache_free(table->bucket_cache, old_bucket);
+	free_bucket(table, old_bucket);
 
 	for (i = (index & (new_bit - 1)); i < (1 << inner->bits); i += (new_bit << 1)) {
 		inner->node_p[i] = nova_bucket_to_node_p(bucket[0]);
@@ -628,7 +633,7 @@ handle_bucket_size_decrease(struct nova_mm_table *table, unsigned long * __restr
 	) {
 		inner->node_p[i] = nova_bucket_to_node_p(bucket);
 	}
-	kmem_cache_free(table->bucket_cache, sibling);
+	free_bucket(table, sibling);
 	if (bucket->disbits == inner->bits)
 		++inner->merged;
 	--bucket->disbits;
@@ -841,7 +846,7 @@ static void save_bucket(struct nova_mm_table *table,
 {
 	if (saved)
 		__save_bucket(table, bucket, saved);
-	kmem_cache_free(table->bucket_cache, bucket);
+	free_bucket(table, bucket);
 }
 static void __nova_table_rescursive_save(
 	struct nova_mm_table* table,
@@ -1073,8 +1078,10 @@ err_out:
 	BUG_ON(1);
 #endif
 	for (j = 0; j < i; j++) {
-		if (table->tablets[i].node_p)
-			kmem_cache_free(table->bucket_cache, nova_node_p_to_bucket(table->tablets[i].node_p));
+		if (table->tablets[i].node_p) {
+			bucket = nova_node_p_to_bucket(table->tablets[i].node_p);
+			free_bucket(table, bucket);
+		}
 	}
 	if (table->bucket_cache)
 		kmem_cache_destroy(table->bucket_cache);
