@@ -307,12 +307,16 @@ handle_overflow(struct entry_allocator *allocator, uint64_t index) {
 	}
 }
 
-entrynr_t nova_alloc_entry(struct entry_allocator *allocator) {
+entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
+	struct nova_fp fp, __le64 info)
+{
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct nova_pmm_entry *pentries = meta_table->pentries;
+	struct super_block *sb = meta_table->sblock;
+	struct nova_pmm_entry *pentries = meta_table->pentries, *pentry;
 	uint64_t regionnr_index, index;
 	entrynr_t entrynr;
+	unsigned long irq_flags = 0;
 
 	do {
 		regionnr_index = atomic64_add_return(1, &allocator->regionnr_index);
@@ -324,6 +328,14 @@ entrynr_t nova_alloc_entry(struct entry_allocator *allocator) {
 		}
 	} while (entry_info_pmm_to_mm(pentries[entrynr].info).flag == NOVA_LEAF_ENTRY_MAGIC);
 	atomic_add_return(1, allocator->valid_entry + (entrynr / ENTRY_PER_REGION));
+
+	pentry = pentries + entrynr;
+	nova_memunlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
+	pentry->fp = fp;
+	wmb();
+	pentry->info = info;
+	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
+	nova_flush_buffer(pentry, sizeof *pentry, true);
 
 	return entrynr;
 }

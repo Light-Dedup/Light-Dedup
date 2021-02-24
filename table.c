@@ -221,11 +221,9 @@ static int nova_table_leaf_insert(
 {
 	struct super_block *sb = table->sblock;
 	size_t i;
-	struct nova_pmm_entry *pentry;
 	struct nova_mm_entry_info info;
 	struct nova_mm_entry_p *entry_p;
 	int retval;
-	unsigned long irq_flags = 0;
 	INIT_TIMING(write_new_entry_time);
 
 	i = find_free_slot_in_bucket(bucket, wp->base.fp.indicator);
@@ -236,19 +234,12 @@ static int nova_table_leaf_insert(
 		return retval;
 
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
-	entry_p = bucket->entry_p + i;
-	entry_p->entrynr = nova_alloc_entry(table->entry_allocator);
-	entry_p->refcount = wp->base.refcount;
-	pentry = table->pentries + entry_p->entrynr;
 	info.blocknr = wp->blocknr;
 	info.flag = NOVA_LEAF_ENTRY_MAGIC;
-
-	nova_memunlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
-	pentry->fp = wp->base.fp;
-	wmb();
-	pentry->info = cpu_to_le64(info.value);
-	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
-	nova_flush_buffer(pentry, sizeof *pentry, true);
+	entry_p = bucket->entry_p + i;
+	entry_p->entrynr = nova_alloc_and_write_entry(
+			table->entry_allocator, wp->base.fp, cpu_to_le64(info.value));
+	entry_p->refcount = wp->base.refcount;
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 
 	bucket->tags[i] = (uint8_t)((wp->base.fp.tag % 0xff) + 1); // non zero
