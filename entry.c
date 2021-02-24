@@ -3,9 +3,9 @@
 #include "multithread.h"
 #include "arithmetic.h"
 
-#define INDEX_BIT 32
-#define INDEX_MASK ((1ULL << INDEX_BIT) - 1)
+// #define static _Static_assert(1, "2333");
 
+#define ENTRY_PER_CACHELINE (CACHELINE_SIZE / sizeof(struct nova_pmm_entry))
 // If the number of free entries in a region is greater or equal to FREE_THRESHOLD, then the region is regarded as free.
 #define FREE_THRESHOLD (ENTRY_PER_REGION / 2)
 
@@ -38,23 +38,24 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 	int ret = entry_allocator_alloc(sbi, allocator, true);
 	if (ret < 0)
 		return ret;
-	for (i = 1; i < sbi->nr_regions; ++i)
+	for (i = 0; i < sbi->nr_regions; ++i)
 		BUG_ON(kfifo_in(&allocator->free_regions, &i, sizeof(i)) == 0);
-	atomic64_set(&allocator->regionnr_index, -1);
+	// The first allocation will trigger a new_region request.
+	allocator->top_entrynr = allocator->last_entrynr = -1;
 	return 0;
 }
 
 static void rebuild_free_regions(struct nova_sb_info *sbi,
 	struct entry_allocator *allocator)
 {
-	atomic_t *valid_entry = allocator->valid_entry;
+	uint16_t *valid_entry = allocator->valid_entry;
 	struct kfifo *free_regions = &allocator->free_regions;
 	regionnr_t i;
 	for (i = 0; i < sbi->nr_regions; ++i)
-		if (atomic_read(valid_entry + i) <= FREE_THRESHOLD)
+		if (valid_entry[i] <= FREE_THRESHOLD)
 			BUG_ON(kfifo_in(free_regions, &i, sizeof(i)) != sizeof(i));
 	// The first allocation will trigger a new_region request.
-	atomic64_set(&allocator->regionnr_index, ENTRY_PER_REGION - 1);
+	allocator->top_entrynr = allocator->last_entrynr = -1;
 }
 int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
@@ -70,7 +71,7 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 		return ret;
 	NOVA_START_TIMING(normal_recover_entry_allocator_t, normal_recover_entry_allocator_time);
 	for (i = 0; i < sbi->nr_regions; ++i)
-		atomic_set(allocator->valid_entry + i, le16_to_cpu(valid_entry_count[i]));
+		allocator->valid_entry[i] = le16_to_cpu(valid_entry_count[i]);
 	rebuild_free_regions(sbi, allocator);
 	NOVA_END_TIMING(normal_recover_entry_allocator_t, normal_recover_entry_allocator_time);
 	return 0;
@@ -94,7 +95,7 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 	NOVA_START_TIMING(save_entry_allocator_t, save_entry_allocator_time);
 	nova_memunlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
 	for (i = 0; i < sbi->nr_regions; ++i)
-		valid_entry_count[i] = cpu_to_le16(atomic_read(allocator->valid_entry + i));
+		valid_entry_count[i] = cpu_to_le16(allocator->valid_entry[i]);
 	nova_memlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
 	nova_flush_buffer(valid_entry_count, sbi->nr_regions * sizeof(valid_entry_count[0]), true);
 	nova_unlock_write(sb, &recover_meta->region_valid_entry_count_saved, NOVA_RECOVER_META_FLAG_COMPLETE, true);
@@ -112,16 +113,17 @@ struct scan_para {
 	atomic64_t *cur_scan_region;
 	uint64_t scan_region_end;
 };
-static inline int handle_entry(struct nova_pmm_entry *pentries, atomic_t *valid_entry,
+static inline int handle_entry(struct nova_pmm_entry *pentries, uint16_t *valid_entry,
 	struct xatable *xat, entrynr_t entrynr)
 {
 	struct nova_mm_entry_info info = entry_info_pmm_to_mm(pentries[entrynr].info);
 	if (info.flag != NOVA_LEAF_ENTRY_MAGIC)
 		return 0;
-	atomic_add_return(1, valid_entry + entrynr / ENTRY_PER_REGION);
+	// Impossible to conflict
+	++valid_entry[entrynr / ENTRY_PER_REGION];
 	return xa_err(xatable_store(xat, info.blocknr, xa_mk_value(entrynr), GFP_KERNEL));
 }
-static int scan_region(struct nova_pmm_entry *pentries, atomic_t *valid_entry,
+static int scan_region(struct nova_pmm_entry *pentries, uint16_t *valid_entry,
 	struct xatable *xat, uint64_t scan_regionnr)
 {
 	entrynr_t entrynr;
@@ -143,7 +145,7 @@ static int __scan_worker(struct scan_para *para)
 	struct nova_meta_table *meta_table = &sbi->meta_table;
 	struct entry_allocator *entry_allocator = &meta_table->entry_allocator;
 	struct nova_pmm_entry *pentries = meta_table->pentries;
-	atomic_t *valid_entry = entry_allocator->valid_entry;
+	uint16_t *valid_entry = entry_allocator->valid_entry;
 	atomic64_t *cur_scan_region = para->cur_scan_region;
 	uint64_t scan_region_end = para->scan_region_end;
 	uint64_t scan_regionnr;
@@ -179,7 +181,7 @@ static int handle_tail_entry(struct nova_sb_info *sbi, struct xatable *xat,
 	struct entry_allocator *allocator = &meta_table->entry_allocator;
 	entrynr_t entrynr_start = scan_region_end * ENTRY_PER_SCAN;
 	struct nova_pmm_entry *pentries = meta_table->pentries;
-	atomic_t *valid_entry = allocator->valid_entry;
+	uint16_t *valid_entry = allocator->valid_entry;
 	entrynr_t entrynr;
 	int ret;
 	for (entrynr = entrynr_start; entrynr < sbi->nr_entries; ++entrynr) {
@@ -265,78 +267,92 @@ err_out:
 	return ret;
 }
 
-static entrynr_t
-new_region(struct entry_allocator *allocator) {
+static inline void
+__flush_entry(struct entry_allocator *allocator, entrynr_t entrynr)
+{
+	struct nova_meta_table *meta_table =
+		container_of(allocator, struct nova_meta_table, entry_allocator);
+	struct nova_pmm_entry *pentries = meta_table->pentries;
+	nova_flush_cacheline(pentries + entrynr, true);
+}
+static inline void flush_last_entry(struct entry_allocator *allocator)
+{
+	if (allocator->last_entrynr == (entrynr_t)-1)
+		return;
+	__flush_entry(allocator, allocator->last_entrynr);
+}
+static inline bool in_the_same_cacheline(entrynr_t a, entrynr_t b)
+{
+	return b / ENTRY_PER_CACHELINE == a / ENTRY_PER_CACHELINE;
+}
+void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr)
+{
+	if (!in_the_same_cacheline(entrynr, allocator->last_entrynr))
+		return;	// Not in the volatile cache line.
+	flush_last_entry(allocator);
+	allocator->last_entrynr = -1;
+}
+
+static regionnr_t
+new_region(struct entry_allocator *allocator)
+{
 	regionnr_t regionnr;
-
-	// Singer consumer, but multiple producer.
-	spin_lock(&allocator->lock);
-	BUG_ON(kfifo_out(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
-	spin_unlock(&allocator->lock);
-
-	atomic64_set(&allocator->regionnr_index, (uint64_t)regionnr << INDEX_BIT); // Allocate 0 for itself.
-
-	return (entrynr_t)regionnr * ENTRY_PER_REGION;
-}
-
-// Test and test and add.
-static entrynr_t
-TTAA(struct entry_allocator *allocator) {
-	uint64_t regionnr_index, index;
-	do {
-		do {
-			regionnr_index = atomic64_read(&allocator->regionnr_index);   // TODO: Read directly without atomic?
-			index = regionnr_index & INDEX_MASK;
-		} while (index > ENTRY_PER_REGION);
-		regionnr_index = atomic64_add_return(1, &allocator->regionnr_index);
-		index = regionnr_index & INDEX_MASK;
-		BUG_ON(index == INDEX_MASK);
-	} while (index > ENTRY_PER_REGION);
-	if (index == ENTRY_PER_REGION)
-		return new_region(allocator);
-	return (regionnr_index >> INDEX_BIT) * ENTRY_PER_REGION + index;
-}
-
-static entrynr_t
-handle_overflow(struct entry_allocator *allocator, uint64_t index) {
-	BUG_ON(index == INDEX_MASK);
-	if (index > ENTRY_PER_REGION) {
-		return TTAA(allocator);
-	} else {    // index == ENTRY_PER_REGION
-		return new_region(allocator);
+	flush_last_entry(allocator);
+	allocator->last_entrynr = -1;
+	if (allocator->top_entrynr != -1) {
+		regionnr = allocator->top_entrynr / ENTRY_PER_REGION;
+		if (allocator->valid_entry[regionnr] <= FREE_THRESHOLD)
+			BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
+		// new_region at most once, so it is safe to not update top_entrynr here.
 	}
+	BUG_ON(kfifo_out(&allocator->free_regions,
+			&regionnr, sizeof(regionnr_t)
+		) != sizeof(regionnr_t));
+	return regionnr;
 }
-
-entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
+static entrynr_t
+alloc_entry(struct entry_allocator *allocator)
+{
+	struct nova_meta_table *meta_table =
+		container_of(allocator, struct nova_meta_table, entry_allocator);
+	struct nova_pmm_entry *pentries = meta_table->pentries;
+	entrynr_t entrynr = allocator->top_entrynr;
+	do {
+		++entrynr;
+		if ((entrynr % ENTRY_PER_REGION) == 0)
+			entrynr = (entrynr_t)new_region(allocator) * ENTRY_PER_REGION;
+	} while (entry_info_pmm_to_mm(pentries[entrynr].info).flag == NOVA_LEAF_ENTRY_MAGIC);
+	allocator->top_entrynr = entrynr;
+	++allocator->valid_entry[entrynr / ENTRY_PER_REGION];
+	if (!in_the_same_cacheline(allocator->last_entrynr, entrynr))
+		flush_last_entry(allocator);
+	allocator->last_entrynr = entrynr;
+	return entrynr;
+}
+static void
+write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	struct nova_fp fp, __le64 info)
 {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
 	struct super_block *sb = meta_table->sblock;
-	struct nova_pmm_entry *pentries = meta_table->pentries, *pentry;
-	uint64_t regionnr_index, index;
-	entrynr_t entrynr;
+	struct nova_pmm_entry *pentries = meta_table->pentries;
+	struct nova_pmm_entry *pentry = pentries + entrynr;
 	unsigned long irq_flags = 0;
-
-	do {
-		regionnr_index = atomic64_add_return(1, &allocator->regionnr_index);
-		index = regionnr_index & INDEX_MASK;
-		if (unlikely(index >= ENTRY_PER_REGION)) {
-			entrynr = handle_overflow(allocator, index);
-		} else {
-			entrynr = (regionnr_index >> INDEX_BIT) * ENTRY_PER_REGION + index;
-		}
-	} while (entry_info_pmm_to_mm(pentries[entrynr].info).flag == NOVA_LEAF_ENTRY_MAGIC);
-	atomic_add_return(1, allocator->valid_entry + (entrynr / ENTRY_PER_REGION));
-
-	pentry = pentries + entrynr;
 	nova_memunlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
 	pentry->fp = fp;
 	wmb();
 	pentry->info = info;
 	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
-	nova_flush_buffer(pentry, sizeof *pentry, true);
-
+}
+entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
+	struct nova_fp fp, __le64 info)
+{
+	entrynr_t entrynr;
+	spin_lock(&allocator->lock);
+	entrynr = alloc_entry(allocator);
+	write_entry(allocator, entrynr, fp, info);
+	spin_unlock(&allocator->lock);
 	return entrynr;
 }
 
@@ -348,12 +364,13 @@ void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 	struct super_block *sb = meta_table->sblock;
 	struct nova_pmm_entry *pentry = meta_table->pentries + entrynr;
 	regionnr_t regionnr = entrynr / ENTRY_PER_REGION;
-	if (atomic_sub_return(1, allocator->valid_entry + regionnr) == FREE_THRESHOLD) {
-		spin_lock(&allocator->lock);
-		BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
-		spin_unlock(&allocator->lock);
-	}
+
+	spin_lock(&allocator->lock);
+	if ((--allocator->valid_entry[regionnr]) == FREE_THRESHOLD)
+		if (regionnr != allocator->top_entrynr / ENTRY_PER_REGION)
+			BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
 	nova_unlock_write(sb, &pentry->info, 0, true);
+	spin_unlock(&allocator->lock);
 }
 
 int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocator *allocator)
@@ -362,10 +379,12 @@ int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocato
 	unsigned long *count = vzalloc((ENTRY_PER_REGION + 1) * sizeof(unsigned long));
 	if (count == NULL)
 		return -ENOMEM;
-	for (i = 0; i < sbi->nr_regions; ++i)
-		++count[atomic_read(allocator->valid_entry + i)];
+	for (i = 0; i < sbi->nr_regions; ++i) {
+		BUG_ON(allocator->valid_entry[i] > ENTRY_PER_REGION);
+		++count[allocator->valid_entry[i]];
+	}
 	printk("Valid entry count of the regions:");
-	for (i = 0; i < ENTRY_PER_REGION + 1; ++i)
+	for (i = 0; i <= ENTRY_PER_REGION; ++i)
 		if (count[i])
 			printk(KERN_CONT " (%d)%lu", (int)i, count[i]);
 	printk(KERN_CONT "\n");

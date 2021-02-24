@@ -130,6 +130,16 @@ static inline void nova_flush_buffer(void *buf, uint32_t len, bool fence)
 		PERSISTENT_BARRIER();
 }
 
+static inline void nova_flush_cacheline(void *buf, bool fence)
+{
+	if (support_clwb)
+		_mm_clwb(buf);
+	else
+		_mm_clflush(buf);
+	if (fence)
+		PERSISTENT_BARRIER();
+}
+
 /* =============== Integrity and Recovery Parameters =============== */
 #define	NOVA_META_CSUM_LEN	(4)
 #define	NOVA_DATA_CSUM_LEN	(4)

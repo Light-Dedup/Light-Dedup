@@ -41,11 +41,11 @@ entry_info_pmm_to_mm(__le64 info) {
 
 // typedef uint32_t region_entry_index_t;
 struct entry_allocator {
-	atomic_t *valid_entry;
-	/* Hopefuly the 4B index won't overflow. */
-	atomic64_t regionnr_index;	// The lower 4B is index, upper 4B is regionnr.
+	uint16_t *valid_entry;	// At most ENTRY_PER_REGION
+	entrynr_t top_entrynr;	// Last allocated entry.
+	entrynr_t last_entrynr;	// Last not flushed entry. If none then -1.
     struct kfifo free_regions;
-    spinlock_t lock;	// For free_regions
+    spinlock_t lock;
 };
 
 int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator);
@@ -55,6 +55,7 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 int nova_scan_entry_table(struct super_block *sb, struct entry_allocator *allocator,
 	struct xatable *xat);
 
+void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr);
 entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator, struct nova_fp fp, __le64 info);
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr);
 
