@@ -36,9 +36,12 @@ struct nova_bucket {
 		uint16_t size: 7;	// At most 64. Need recalculate when recovering.
 	};
 	uint8_t tags[NOVA_TABLE_LEAF_SIZE];
+	uint8_t indicators[NOVA_TABLE_LEAF_SIZE];
+	uint8_t disbyte[NOVA_TABLE_LEAF_SIZE];
 	struct nova_mm_entry_p entry_p[NOVA_TABLE_LEAF_SIZE];
 };
 _Static_assert((1 << INDICATOR_BIT_NUM) == NOVA_TABLE_LEAF_SIZE, "(1 << INDICATOR_BIT_NUM) != NOVA_TABLE_LEAF_SIZE!");
+_Static_assert(NOVA_TABLE_INNER_BITS <= 1 + sizeof(uint8_t) * 8, "Type of disbyte too small!");
 
 struct nova_inner {
 	struct {
