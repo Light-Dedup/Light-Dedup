@@ -728,22 +728,27 @@ retry:
 	mutex_unlock(&table->tablets[tablet].mtx);
 	return retval;
 }
+// Upsert : update or insert
 int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_normal);
 }
+// Inplace 
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_rewrite);
 }
+// Handle edge case when inplace
 int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
 }
+// Insert entry to rebuild the hash table during normal recovery
 static int nova_table_insert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_insert_entry);
 }
+// Rebuild the hash table during failure recovery
 static int nova_table_upsert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_entry);
