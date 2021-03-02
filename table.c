@@ -1188,8 +1188,8 @@ out:
 }
 
 
-static uint64_t node_height(unsigned long node_p) {
-	uint64_t height, mx = 0;
+static size_t node_height(unsigned long node_p) {
+	size_t height, mx = 0;
 	struct nova_inner *inner;
 	int i;
 	if (nova_is_leaf_node(node_p))
@@ -1201,8 +1201,8 @@ static uint64_t node_height(unsigned long node_p) {
 	}
 	return mx + 1;
 }
-static uint64_t nova_table_height(struct nova_mm_table *table) {
-	uint64_t height, mx = 0;
+static size_t nova_table_height(struct nova_mm_table *table) {
+	size_t height, mx = 0;
 	int i;
 	for (i = 0; i < table->nr_tablets; ++i) {
 		height = node_height(table->tablets[i].node_p);
@@ -1226,18 +1226,18 @@ struct nova_stat_info {
 	struct nova_inner_stat_info inner;
 	struct nova_bucket_stat_info bucket;
 };
-static void update_inner_stat(struct nova_inner *inner, struct nova_inner_stat_info *stat) {
+static void update_inner_stat(const struct nova_inner *inner, struct nova_inner_stat_info *stat) {
 	++stat->cnt;
 	++stat->bits_cnt[inner->bits];
 	++stat->merged_cnt[inner->merged];
 }
-static void update_bucket_stat(struct nova_bucket *bucket, uint64_t bits, struct nova_bucket_stat_info *stat) {
+static void update_bucket_stat(const struct nova_bucket *bucket, uint64_t bits, struct nova_bucket_stat_info *stat) {
 	++stat->cnt;
 	// ++stat->mask_cnt[maskbits];
 	++stat->delta_cnt[bits - bucket->disbits];
 	++stat->entry_cnt[bucket->size];
 }
-static void __nova_table_recursive_stat(unsigned long node_p, uint64_t bits, struct nova_stat_info *stats, uint64_t height)
+static void __nova_table_recursive_stat(unsigned long node_p, uint64_t bits, struct nova_stat_info *stats, size_t height)
 {
 	int i;
 	if (nova_is_leaf_node(node_p)) {
