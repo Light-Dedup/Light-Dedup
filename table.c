@@ -508,11 +508,11 @@ static void __bucket_rehash_new_inner(
 	size_t i;
 	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; i++) {
 		pentry = pentries + old_bucket->entry_p[i].entrynr;
-		cur_layer_fp = (pentry->fp.index >> disbase) & 1;
+		cur_layer_fp = pentry->fp.index >> disbase;
 		which =  cur_layer_fp & 1;
 		BUG_ON(nova_table_leaf_mm_insert(table, 
 					bucket[which], old_bucket, i,
-					cur_layer_fp >> 1));
+					(uint8_t)(cur_layer_fp >> 1)));
 	}
 }
 static void __bucket_rehash(
