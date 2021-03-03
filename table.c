@@ -519,7 +519,7 @@ static void __bucket_rehash(
 	struct nova_mm_table *table,
 	const struct nova_bucket *old_bucket,
 	struct nova_bucket *bucket[2],
-	size_t disbase, size_t disoff)
+	size_t disoff)
 {
 	size_t which;
 	size_t i;
@@ -552,7 +552,7 @@ static int bucket_rehash(
 	if (disoff == 0)
 		__bucket_rehash_new_inner(table, old_bucket, bucket, disbase);
 	else
-		__bucket_rehash(table, old_bucket, bucket, disbase, disoff);
+		__bucket_rehash(table, old_bucket, bucket, disoff);
 	return 0;
 }
 // Free old_pbucket, make old_bucket a new inner node.
