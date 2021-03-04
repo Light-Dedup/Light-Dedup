@@ -95,13 +95,13 @@ static size_t nova_table_leaf_find(
 	uint64_t index = fp->indicator;
 	uint8_t tag = (uint8_t)(fp->tag % 0xff + 1);
 	for (i = index; i < NOVA_TABLE_LEAF_SIZE; i++) {
-		if (bucket->tags[i] == tag &&
+		if (bucket->tags[i] == tag && bucket->indicators[i] == fp->indicator &&
 			nova_fp_equal(fp, &pentries[bucket->entry_p[i].entrynr].fp)) {
 			return i;
 		}
 	}
 	for (i = 0; i < index; i++) {
-		if (bucket->tags[i] == tag &&
+		if (bucket->tags[i] == tag && bucket->indicators[i] == fp->indicator &&
 			nova_fp_equal(fp, &pentries[bucket->entry_p[i].entrynr].fp)) {
 			return i;
 		}
