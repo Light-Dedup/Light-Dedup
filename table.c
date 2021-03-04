@@ -94,28 +94,6 @@ static size_t nova_table_leaf_find(
 	size_t i;
 	uint64_t index = fp->indicator;
 	uint8_t tag = (uint8_t)(fp->tag % 0xff + 1);
-#ifdef MEASURE_FP_TRY
-	for (i = index; i < NOVA_TABLE_LEAF_SIZE; i++) {
-		if (bucket->tags[i] == tag) {
-			++fp_try_total;
-			if (pbucket->entries[i].flags == NOVA_LEAF_ENTRY_MAGIC &&
-				nova_fp_equal(fp, &pbucket->entries[i].fp)) {
-				++fp_try_count;	// fp_try_total / fp_try_count = The times it should read from nvmm to find an entry.
-				return i;
-			}
-		}
-	}
-	for (i = 0; i < index; i++) {
-		if (bucket->tags[i] == tag) {
-			++fp_try_total;
-			if (pbucket->entries[i].flags == NOVA_LEAF_ENTRY_MAGIC &&
-				nova_fp_equal(fp, &pbucket->entries[i].fp)) {
-				++fp_try_count;
-				return i;
-			}
-		}
-	}
-#else
 	for (i = index; i < NOVA_TABLE_LEAF_SIZE; i++) {
 		if (bucket->tags[i] == tag &&
 			nova_fp_equal(fp, &pentries[bucket->entry_p[i].entrynr].fp)) {
@@ -128,8 +106,6 @@ static size_t nova_table_leaf_find(
 			return i;
 		}
 	}
-#endif
-
 	return NOVA_TABLE_LEAF_SIZE;
 }
 
