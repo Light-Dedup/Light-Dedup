@@ -46,9 +46,9 @@ _Static_assert(NOVA_TABLE_INNER_BITS <= 1 + sizeof(uint8_t) * 8, "Type of disbyt
 
 struct nova_inner {
 	struct {
-		uint32_t bits: 4;	// Global depth. At most 9.
-		uint32_t max_bits: 4;	// At most 9.
-		uint32_t merged: 9;	// At most 256.	If merged == 1 << (bits - 1), then shrink, and --bits.
+		uint32_t depth: 4;	// At most 9. Global depth. (1 << depth) is the number of child nodes.
+		uint32_t max_depth: 4;	// At most 9.
+		uint32_t merged: 9;	// At most 256.	If merged == 1 << (depth - 1), then shrink, and --depth.
 	};
 	unsigned long node_p[0];	// If (node_p[i] & 1) != 0, then it is an inner node, else it is a bucket.
 };

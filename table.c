@@ -33,7 +33,7 @@ type_to_max_bits(size_t type)
 static inline void
 nova_table_free_inner(struct nova_mm_table *table, struct nova_inner *inner)
 {
-	size_t type = max_bits_to_type(inner->max_bits);
+	size_t type = max_bits_to_type(inner->max_depth);
 	kmem_cache_free(table->inner_cache[type], inner);
 }
 static struct nova_inner *
@@ -45,22 +45,22 @@ inner_realloc(struct nova_mm_table *table,
 	if (new_inner == NULL)
 		return NULL;
 	*new_inner = *inner;
-	new_inner->max_bits = type_to_max_bits(new_type);
-	BUG_ON(new_inner->max_bits < inner->bits);
-	memcpy(new_inner->node_p, inner->node_p, (1 << inner->bits) * sizeof(unsigned long));
+	new_inner->max_depth = type_to_max_bits(new_type);
+	BUG_ON(new_inner->max_depth < inner->depth);
+	memcpy(new_inner->node_p, inner->node_p, (1 << inner->depth) * sizeof(unsigned long));
 	nova_table_free_inner(table, inner);
 	return new_inner;
 }
 static inline struct nova_inner *
 inner_shrink(struct nova_mm_table *table, struct nova_inner *inner)
 {
-	size_t type = least_type(inner->bits);
+	size_t type = least_type(inner->depth);
 	return inner_realloc(table, inner, type);
 }
 static inline struct nova_inner *
 inner_expand(struct nova_mm_table *table, struct nova_inner *inner)
 {
-	size_t type = max_bits_to_type(inner->max_bits) + 1;
+	size_t type = max_bits_to_type(inner->max_depth) + 1;
 	return inner_realloc(table, inner, type);
 }
 
@@ -551,8 +551,8 @@ static int __nova_table_split_leaf(
 		retval = -ENOMEM;
 		goto err_out;
 	}
-	new_inner->bits = 1;
-	new_inner->max_bits = 3;
+	new_inner->depth = 1;
+	new_inner->max_depth = 3;
 	new_inner->merged = 0;
 
 	retval = bucket_rehash(table, old_bucket, bucket, used_hash_bit, 0);
@@ -589,15 +589,15 @@ static int __nova_table_split(
 	size_t i;
 	uint64_t new_bit;
 
-	if (old_bucket->depth == inner->bits) {
-		if (inner->bits == NOVA_TABLE_INNER_BITS) {
+	if (old_bucket->depth == inner->depth) {
+		if (inner->depth == NOVA_TABLE_INNER_BITS) {
 			// printk(KERN_WARNING " split fulled depth %d, index %llu\n", depth, index);
 			return __nova_table_split_leaf(table,
 				inner->node_p + index, used_hash_bit + NOVA_TABLE_INNER_BITS);
 		}
 		// extend
-		n = 1 << inner->bits;
-		if (inner->bits == inner->max_bits) {
+		n = 1 << inner->depth;
+		if (inner->depth == inner->max_depth) {
 			inner = inner_expand(table, inner);
 			if (inner == NULL)
 				return -ENOMEM;	// Nothing to free, just return.
@@ -605,7 +605,7 @@ static int __nova_table_split(
 			// old_bucket = nova_node_p_to_bucket(inner->node_p[index]);
 		}
 		memcpy(inner->node_p + n, inner->node_p, n * sizeof(unsigned long));
-		++inner->bits;
+		++inner->depth;
 		inner->merged = n;
 		// printk(KERN_WARNING " extend depth %d, index %llu bits %llu\n", 
 		// 	depth, index, (uint64_t)inner->inner.bits);
@@ -614,13 +614,13 @@ static int __nova_table_split(
 	retval = bucket_rehash(table, old_bucket, bucket, used_hash_bit, old_bucket->depth);
 	if (retval < 0)
 		return retval;	// No need to revert expanded inner.
-	if (old_bucket->depth + 1 == inner->bits)
+	if (old_bucket->depth + 1 == inner->depth)
 		--inner->merged;
 	bucket[0]->depth = bucket[1]->depth = old_bucket->depth + 1;
 	new_bit = 1 << old_bucket->depth;
 	free_bucket(table, old_bucket);
 
-	for (i = (index & (new_bit - 1)); i < (1 << inner->bits); i += (new_bit << 1)) {
+	for (i = (index & (new_bit - 1)); i < (1 << inner->depth); i += (new_bit << 1)) {
 		inner->node_p[i] = nova_bucket_to_node_p(bucket[0]);
 		inner->node_p[i | new_bit] = nova_bucket_to_node_p(bucket[1]);
 	}
@@ -642,7 +642,7 @@ merged_bucket(struct nova_inner *inner, int i) {
 	if (nova_is_inner_node(inner->node_p[i]))
 		return false;
 	bucket = nova_node_p_to_bucket(inner->node_p[i]);
-	return bucket->depth < inner->bits;
+	return bucket->depth < inner->depth;
 }
 static void
 handle_bucket_size_decrease(struct nova_mm_table *table, unsigned long * __restrict__ node_p, uint64_t index) {
@@ -664,28 +664,28 @@ handle_bucket_size_decrease(struct nova_mm_table *table, unsigned long * __restr
 	// printk("Sibling mergable.\n");
 	merge_bucket(table, bucket, sibling);
 	for (i = index & ((1 << bucket->depth) - 1);
-		i < (1 << inner->bits);
+		i < (1 << inner->depth);
 		i += (1 << bucket->depth)
 	) {
 		inner->node_p[i] = nova_bucket_to_node_p(bucket);
 	}
 	free_bucket(table, sibling);
-	if (bucket->depth == inner->bits)
+	if (bucket->depth == inner->depth)
 		++inner->merged;
 	--bucket->depth;
-	if (inner->merged != 1 << (inner->bits - 1))
+	if (inner->merged != 1 << (inner->depth - 1))
 		return;
 	// printk("Shrink the size of inner.\n");
-	--inner->bits;
+	--inner->depth;
 	// Update merged bucket counter.
 	inner->merged = 0;
-	for (i = 0; i < (1 << (inner->bits - 1)); ++i) {
+	for (i = 0; i < (1 << (inner->depth - 1)); ++i) {
 		if (merged_bucket(inner, i))
 			++inner->merged;
 	}
-	if (inner->bits + 3 > inner->max_bits)
+	if (inner->depth + 3 > inner->max_depth)
 		return;
-	if (inner->bits == 0) {
+	if (inner->depth == 0) {
 		// printk("Delete the inner node, replace it with a bucket.\n");
 		bucket->depth = NOVA_TABLE_INNER_BITS;	// Even if the node_p belongs to a tablet, the wrong disbits will do no harm.
 		*node_p = nova_bucket_to_node_p(bucket);
@@ -698,7 +698,7 @@ handle_bucket_size_decrease(struct nova_mm_table *table, unsigned long * __restr
 	// printk("Shrink the capacity of inner to save space.\n");
 	inner = inner_shrink(table, inner);
 	if (inner == NULL)
-		return;	// The next decrease of bits will try to shrink again.
+		return;	// The next decrease of depth will try to shrink again.
 	*node_p = nova_inner_to_node_p(inner);
 }
 
@@ -721,7 +721,7 @@ static int nova_table_recursive_upsert(
 	hash = wp->fp.index >> used_hash_bit;
 retry:
 	inner = nova_node_p_to_inner(*node_p);
-	index = ((1 << inner->bits) - 1) & hash;
+	index = ((1 << inner->depth) - 1) & hash;
 	retval = nova_table_recursive_upsert(table, inner->node_p + index,
 		wp, used_hash_bit + NOVA_TABLE_INNER_BITS, bucket_upsert);
 
@@ -900,7 +900,7 @@ static void __nova_table_rescursive_save(
 	struct nova_bucket *bucket;
 
 	// printk("__nova_table_rescursive_free: table = %pK, inner = %pK, depth = %d\n", table, inner, depth);
-	n = (1 << inner->bits);
+	n = (1 << inner->depth);
 	for (i = 0; i < n; i++) {
 		next = inner->node_p[i];
 		if (nova_is_inner_node(next)) {
@@ -1243,7 +1243,7 @@ static size_t node_height(unsigned long node_p) {
 	if (nova_is_leaf_node(node_p))
 		return 1;
 	inner = nova_node_p_to_inner(node_p);
-	for (i = 0; i < (1 << inner->bits); ++i) {
+	for (i = 0; i < (1 << inner->depth); ++i) {
 		height = node_height(inner->node_p[i]);
 		mx = mx < height ? height : mx;
 	}
@@ -1276,7 +1276,7 @@ struct nova_stat_info {
 };
 static void update_inner_stat(const struct nova_inner *inner, struct nova_inner_stat_info *stat) {
 	++stat->cnt;
-	++stat->bits_cnt[inner->bits];
+	++stat->bits_cnt[inner->depth];
 	++stat->merged_cnt[inner->merged];
 }
 static void update_bucket_stat(const struct nova_bucket *bucket, uint64_t bits, struct nova_bucket_stat_info *stat) {
@@ -1293,8 +1293,8 @@ static void __nova_table_recursive_stat(unsigned long node_p, uint64_t bits, str
 	} else {
 		struct nova_inner *inner = nova_node_p_to_inner(node_p);
 		update_inner_stat(inner, &stats[height].inner);
-		for (i = 0; i < (1 << inner->bits); ++i) {
-			__nova_table_recursive_stat(inner->node_p[i], inner->bits, stats, height + 1);
+		for (i = 0; i < (1 << inner->depth); ++i) {
+			__nova_table_recursive_stat(inner->node_p[i], inner->depth, stats, height + 1);
 		}
 	}
 }
