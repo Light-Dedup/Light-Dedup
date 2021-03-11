@@ -32,7 +32,7 @@ struct nova_entry_refcount_record {
 
 struct nova_bucket {
 	struct {
-		uint16_t disbits: 4;	// The number of bits the bucket used. At most 9
+		uint16_t depth: 4;	// Local depth. At most 9
 		uint16_t size: 7;	// At most 64. Need recalculate when recovering.
 	};
 	uint8_t tags[NOVA_TABLE_LEAF_SIZE];
@@ -46,7 +46,7 @@ _Static_assert(NOVA_TABLE_INNER_BITS <= 1 + sizeof(uint8_t) * 8, "Type of disbyt
 
 struct nova_inner {
 	struct {
-		uint32_t bits: 4;	// At most 9.
+		uint32_t bits: 4;	// Global depth. At most 9.
 		uint32_t max_bits: 4;	// At most 9.
 		uint32_t merged: 9;	// At most 256.	If merged == 1 << (bits - 1), then shrink, and --bits.
 	};
