@@ -297,8 +297,6 @@ static regionnr_t
 new_region(struct entry_allocator *allocator)
 {
 	regionnr_t regionnr;
-	flush_last_entry(allocator);
-	allocator->last_entrynr = -1;
 	if (allocator->top_entrynr != -1) {
 		regionnr = allocator->top_entrynr / ENTRY_PER_REGION;
 		if (allocator->valid_entry[regionnr] <= FREE_THRESHOLD)
@@ -367,6 +365,7 @@ void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 
 	spin_lock(&allocator->lock);
 	if ((--allocator->valid_entry[regionnr]) == FREE_THRESHOLD)
+		// To avoid adding the current region into free region queue repeatedly.
 		if (regionnr != allocator->top_entrynr / ENTRY_PER_REGION)
 			BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
 	nova_unlock_write(sb, &pentry->info, 0, true);
