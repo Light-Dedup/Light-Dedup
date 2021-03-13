@@ -531,7 +531,7 @@ static int bucket_rehash(
 		__bucket_rehash(table, old_bucket, bucket, disoff);
 	return 0;
 }
-// Free old_pbucket, make old_bucket a new inner node.
+// Split vertically
 static int __nova_table_split_leaf(
 	struct nova_mm_table *table,
 	unsigned long *node_p,	// A full bucket, will becomes a new inner.
