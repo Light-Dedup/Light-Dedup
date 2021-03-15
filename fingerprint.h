@@ -3,9 +3,16 @@
 
 #include <linux/types.h>
 #include <linux/xxhash.h>
+#include <crypto/hash.h>
+#include <crypto/skcipher.h>
 #include "stats.h"
 
-struct nova_fp_strong_ctx {};
+#define NOVA_FP_STRONG_CTX_BUF_SIZE 256
+
+struct nova_fp_strong_ctx {
+	struct shash_desc    shash_desc;
+	uint8_t              ctx[NOVA_FP_STRONG_CTX_BUF_SIZE];
+};
 
 #define WHICH_TABLET_BIT_NUM 6
 #define INDICATOR_BIT_NUM 5
@@ -26,18 +33,31 @@ struct nova_fp {
 _Static_assert(sizeof(struct nova_fp) == 8, "Fingerprint not 8B!");
 
 static inline int nova_fp_strong_ctx_init(struct nova_fp_strong_ctx *ctx) {
+	struct crypto_shash *alg = crypto_alloc_shash("sha256", 0, 0);
+	if (IS_ERR(alg))
+		return PTR_ERR(alg);
+	if (crypto_shash_descsize(alg) > NOVA_FP_STRONG_CTX_BUF_SIZE) {
+		crypto_free_shash(alg);
+		return -EINVAL;
+	}
+	ctx->shash_desc.tfm = alg;
 	return 0;
 }
 static inline void nova_fp_strong_ctx_free(struct nova_fp_strong_ctx *ctx) {
+	crypto_free_shash(ctx->shash_desc.tfm);
 }
 
 static inline int nova_fp_calc(struct nova_fp_strong_ctx *fp_ctx, const void *addr, struct nova_fp *fp)
 {
+	uint64_t fp_strong[4];
+	int ret;
 	INIT_TIMING(fp_calc_time);
+
 	NOVA_START_TIMING(fp_calc_t, fp_calc_time);
-	fp->value = xxh64((const char *)addr, 4096, 0);
+	ret = crypto_shash_digest(&fp_ctx->shash_desc, (const void*)addr, 4096, (void*)fp_strong);
+	fp->value = fp_strong[0];
 	NOVA_END_TIMING(fp_calc_t, fp_calc_time);
-	return 0;
+	return ret;
 }
 
 #endif // FINGERPRINT_H_
