@@ -800,7 +800,7 @@ static int nova_table_upsert_entry(struct nova_mm_table *table, struct nova_writ
 static void init_normal_wp_incr(struct nova_sb_info *sbi,
 	struct nova_write_para_normal *wp, const void *addr)
 {
-	BUG_ON(nova_fp_calc(&sbi->fp_ctx, addr, &wp->base.fp));
+	BUG_ON(nova_fp_calc(&sbi->meta_table.fp_ctx, addr, &wp->base.fp));
 	wp->addr = addr;
 	wp->base.refcount = 1;
 }

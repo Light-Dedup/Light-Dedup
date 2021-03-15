@@ -196,7 +196,6 @@ struct nova_sb_info {
 	unsigned long entry_refcount_record_start;
 
 	struct nova_meta_table meta_table;
-	struct nova_fp_strong_ctx fp_ctx;
 };
 
 static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)

@@ -9,6 +9,7 @@ struct nova_meta_table {
     struct super_block   		*sblock;
 	struct nova_pmm_entry *pentries;
 	struct kmem_cache *kbuf_cache;
+	struct nova_fp_strong_ctx fp_ctx;
 
     struct nova_mm_table      metas;
 	struct entry_allocator entry_allocator;

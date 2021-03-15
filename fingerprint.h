@@ -28,6 +28,8 @@ _Static_assert(sizeof(struct nova_fp) == 8, "Fingerprint not 8B!");
 static inline int nova_fp_strong_ctx_init(struct nova_fp_strong_ctx *ctx) {
 	return 0;
 }
+static inline void nova_fp_strong_ctx_free(struct nova_fp_strong_ctx *ctx) {
+}
 
 static inline int nova_fp_calc(struct nova_fp_strong_ctx *fp_ctx, const void *addr, struct nova_fp *fp)
 {

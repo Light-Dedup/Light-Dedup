@@ -8,19 +8,29 @@ int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb)
 	int ret;
 	table->sblock = sb;
 	table->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
+	ret = nova_fp_strong_ctx_init(&table->fp_ctx);
+	if (ret < 0)
+		goto err_out0;
 	table->kbuf_cache = kmem_cache_create_usercopy(
 		"nova_kbuf_cache", PAGE_SIZE, 8, TABLE_KMEM_CACHE_FLAGS, 0, PAGE_SIZE, NULL);
-	if (table->kbuf_cache == NULL)
-		return -ENOMEM;
-	ret = nova_table_init(sb, &table->metas);
-	if (ret < 0) {
-		kmem_cache_destroy(table->kbuf_cache);
-		return ret;
+	if (table->kbuf_cache == NULL) {
+		ret = -ENOMEM;
+		goto err_out1;
 	}
+	ret = nova_table_init(sb, &table->metas);
+	if (ret < 0)
+		goto err_out2;
 	return 0;
+err_out2:
+	kmem_cache_destroy(table->kbuf_cache);
+err_out1:
+	nova_fp_strong_ctx_free(&table->fp_ctx);
+err_out0:
+	return ret;
 }
 void nova_meta_table_free(struct nova_meta_table *table)
 {
+	nova_fp_strong_ctx_free(&table->fp_ctx);
 	kmem_cache_destroy(table->kbuf_cache);
 	nova_table_free(&table->metas);
 }
@@ -65,6 +75,7 @@ void nova_meta_table_save(struct nova_meta_table *table)
 {
 	struct super_block *sb = table->sblock;
 	table->sblock = NULL;
+	nova_fp_strong_ctx_free(&table->fp_ctx);
 	kmem_cache_destroy(table->kbuf_cache);
 	nova_table_save(&table->metas);
 	nova_save_entry_allocator(sb, &table->entry_allocator);
@@ -73,13 +84,12 @@ void nova_meta_table_save(struct nova_meta_table *table)
 long nova_meta_table_decr_refcount(struct nova_meta_table *table,
 	const void *addr, unsigned long blocknr)
 {
-	struct super_block *sb = table->sblock;
 	struct nova_write_para_normal wp;
 	int    retval;
 	INIT_TIMING(decr_ref_time);
 
 	BUG_ON(blocknr == 0);
-	BUG_ON(nova_fp_calc(&NOVA_SB(sb)->fp_ctx, addr, &wp.base.fp));
+	BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
 
 	wp.addr = addr;
 	wp.base.refcount = -1;
@@ -105,13 +115,12 @@ long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 
 long nova_meta_table_decr1(struct nova_meta_table *table, const void *addr, unsigned long blocknr)
 {
-	struct super_block *sb = table->sblock;
 	struct nova_write_para_normal wp;
 	int    retval;
 	INIT_TIMING(decr_ref_time);
 
 	BUG_ON(blocknr == 0);
-	BUG_ON(nova_fp_calc(&NOVA_SB(sb)->fp_ctx, addr, &wp.base.fp));
+	BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
 
 	wp.addr = addr;
 	wp.blocknr = blocknr;
