@@ -131,9 +131,9 @@ static void nova_init_free_list(struct super_block *sb,
 	free_list->block_start = per_list_blocks * index;
 	free_list->block_end = free_list->block_start +
 					per_list_blocks - 1;
-	if (index == 0)
+	if (free_list->block_start < sbi->block_start)
 		free_list->block_start = sbi->block_start;
-	if (index == sbi->cpus - 1)
+	if (free_list->block_end > sbi->block_end - 1)
 		free_list->block_end = sbi->block_end - 1;
 
 	nova_data_csum_init_free_list(sb, free_list);
@@ -169,8 +169,11 @@ void nova_init_blockmap(struct super_block *sb, int recovery)
 
 		/* For recovery, update these fields later */
 		if (recovery == 0) {
-			free_list->num_free_blocks = free_list->block_end -
-						free_list->block_start + 1;
+			if (free_list->block_start <= free_list->block_end)
+				free_list->num_free_blocks = free_list->block_end -
+							free_list->block_start + 1;
+			else
+				free_list->num_free_blocks = 0;
 
 			blknode = nova_alloc_blocknode(sb);
 			if (blknode == NULL)
