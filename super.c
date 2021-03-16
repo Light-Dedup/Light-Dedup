@@ -154,13 +154,18 @@ static int nova_get_nvmm_info(struct super_block *sb,
 
 	sbi->phys_addr = pfn_t_to_pfn(__pfn_t) << PAGE_SHIFT;
 	sbi->initsize = size;
-	sbi->replica_reserved_inodes_addr = virt_addr + size -
-			(sbi->tail_reserved_blocks << PAGE_SHIFT);
-	sbi->replica_sb_addr = virt_addr + size - PAGE_SIZE;
+	sbi->num_blocks = ((unsigned long)(size) >> PAGE_SHIFT);
+	sbi->block_start = HEAD_RESERVED_BLOCKS;
 
-	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld\n",
+	sbi->replica_sb_addr = virt_addr + size - PAGE_SIZE;
+	sbi->replica_reserved_inodes_addr = (char *)sbi->replica_sb_addr - PAGE_SIZE;
+	sbi->block_end = sbi->num_blocks - 2;
+
+	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
+		"num_blocks %lu, block_start %lu, block_end %lu\n",
 		__func__, sbi->s_bdev->bd_disk->disk_name,
-		sbi->phys_addr, (unsigned long)sbi->virt_addr, sbi->initsize);
+		sbi->phys_addr, (unsigned long)sbi->virt_addr, sbi->initsize,
+		sbi->num_blocks, sbi->block_start, sbi->block_end);
 
 	return 0;
 }
@@ -402,7 +407,6 @@ static struct nova_inode *nova_init(struct super_block *sb,
 
 	NOVA_START_TIMING(new_init_t, init_time);
 	nova_info("creating an empty nova of size %lu\n", size);
-	sbi->num_blocks = ((unsigned long)(size) >> PAGE_SHIFT);
 
 	nova_dbgv("nova: Default block size set to 4K\n");
 	sbi->blocksize = blocksize = NOVA_DEF_BLOCK_SIZE_4K;
@@ -419,7 +423,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 
 	nova_memunlock_reserved(sb, super, &irq_flags);
 	/* clear out super-block and inode table */
-	memset_nt(super, 0, sbi->head_reserved_blocks * sbi->blocksize);
+	memset_nt(super, 0, sbi->block_start * sbi->blocksize);
 
 	pi = nova_get_inode_by_ino(sb, NOVA_BLOCKNODE_INO);
 	pi->nova_ino = NOVA_BLOCKNODE_INO;
@@ -493,8 +497,6 @@ static inline void set_default_opts(struct nova_sb_info *sbi)
 {
 	set_opt(sbi->s_mount_opt, HUGEIOREMAP);
 	set_opt(sbi->s_mount_opt, ERRORS_CONT);
-	sbi->head_reserved_blocks = HEAD_RESERVED_BLOCKS;
-	sbi->tail_reserved_blocks = TAIL_RESERVED_BLOCKS;
 	sbi->cpus = num_online_cpus();
 	nova_info("%d cpus online\n", sbi->cpus);
 	sbi->map_id = 0;

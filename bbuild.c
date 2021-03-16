@@ -1548,7 +1548,6 @@ int nova_recovery(struct super_block *sb)
 		getrawmonotonic(&start);
 
 	NOVA_START_TIMING(recovery_t, start);
-	sbi->num_blocks = ((unsigned long)(initsize) >> PAGE_SHIFT);
 
 	/* initialize free list info */
 	nova_init_blockmap(sb, 1);

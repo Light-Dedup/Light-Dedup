@@ -127,8 +127,6 @@ struct nova_sb_info {
 	atomic_t	next_generation;
 	/* inode tracking */
 	unsigned long	s_inodes_used_count;
-	unsigned long	head_reserved_blocks;
-	unsigned long	tail_reserved_blocks;
 
 	struct mutex	s_lock;	/* protects the SB's buffer-head */
 
@@ -174,6 +172,8 @@ struct nova_sb_info {
 	/* Per-CPU free block list */
 	struct free_list *free_lists;
 	unsigned long per_list_blocks;
+	unsigned long	block_start;
+	unsigned long	block_end;
 };
 
 static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)
