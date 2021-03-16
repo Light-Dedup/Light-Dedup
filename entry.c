@@ -93,6 +93,7 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 	INIT_TIMING(save_entry_allocator_time);
 
 	NOVA_START_TIMING(save_entry_allocator_t, save_entry_allocator_time);
+	flush_last_entry(allocator);
 	nova_memunlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
 	for (i = 0; i < sbi->nr_regions; ++i)
 		valid_entry_count[i] = cpu_to_le16(allocator->valid_entry[i]);
