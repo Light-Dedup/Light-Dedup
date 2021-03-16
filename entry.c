@@ -83,28 +83,6 @@ void nova_free_entry_allocator(struct entry_allocator *allocator)
 	kfifo_free(&allocator->free_regions);
 }
 
-void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
-	__le16 *valid_entry_count = nova_sbi_blocknr_to_addr(sbi, sbi->region_valid_entry_count_start);
-	regionnr_t i;
-	unsigned long irq_flags = 0;
-	INIT_TIMING(save_entry_allocator_time);
-
-	NOVA_START_TIMING(save_entry_allocator_t, save_entry_allocator_time);
-	flush_last_entry(allocator);
-	nova_memunlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
-	for (i = 0; i < sbi->nr_regions; ++i)
-		valid_entry_count[i] = cpu_to_le16(allocator->valid_entry[i]);
-	nova_memlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
-	nova_flush_buffer(valid_entry_count, sbi->nr_regions * sizeof(valid_entry_count[0]), true);
-	nova_unlock_write(sb, &recover_meta->region_valid_entry_count_saved, NOVA_RECOVER_META_FLAG_COMPLETE, true);
-	NOVA_END_TIMING(save_entry_allocator_t, save_entry_allocator_time);
-
-	nova_free_entry_allocator(allocator);
-}
-
 #define REGION_PER_SCAN (2 * 1024 * 1024 / REGION_SIZE)
 #define ENTRY_PER_SCAN (REGION_PER_SCAN * ENTRY_PER_REGION)
 struct scan_para {
@@ -371,6 +349,28 @@ void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 			BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
 	nova_unlock_write(sb, &pentry->info, 0, true);
 	spin_unlock(&allocator->lock);
+}
+
+void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
+	__le16 *valid_entry_count = nova_sbi_blocknr_to_addr(sbi, sbi->region_valid_entry_count_start);
+	regionnr_t i;
+	unsigned long irq_flags = 0;
+	INIT_TIMING(save_entry_allocator_time);
+
+	NOVA_START_TIMING(save_entry_allocator_t, save_entry_allocator_time);
+	flush_last_entry(allocator);
+	nova_memunlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
+	for (i = 0; i < sbi->nr_regions; ++i)
+		valid_entry_count[i] = cpu_to_le16(allocator->valid_entry[i]);
+	nova_memlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
+	nova_flush_buffer(valid_entry_count, sbi->nr_regions * sizeof(valid_entry_count[0]), true);
+	nova_unlock_write(sb, &recover_meta->region_valid_entry_count_saved, NOVA_RECOVER_META_FLAG_COMPLETE, true);
+	NOVA_END_TIMING(save_entry_allocator_t, save_entry_allocator_time);
+
+	nova_free_entry_allocator(allocator);
 }
 
 int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocator *allocator)
