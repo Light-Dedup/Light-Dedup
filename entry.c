@@ -329,7 +329,7 @@ alloc_entry(struct entry_allocator *allocator)
 }
 static void
 write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
-	struct nova_fp fp, __le64 info)
+	const struct nova_fp *fp, __le64 info)
 {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
@@ -338,13 +338,13 @@ write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	struct nova_pmm_entry *pentry = pentries + entrynr;
 	unsigned long irq_flags = 0;
 	nova_memunlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
-	pentry->fp = fp;
+	pentry->fp = *fp;
 	wmb();
 	pentry->info = info;
 	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
 }
 entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
-	struct nova_fp fp, __le64 info)
+	const struct nova_fp *fp, __le64 info)
 {
 	entrynr_t entrynr;
 	spin_lock(&allocator->lock);

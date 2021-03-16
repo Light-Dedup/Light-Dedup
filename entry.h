@@ -27,7 +27,10 @@ struct nova_mm_entry_info {
 struct nova_pmm_entry {
 	__le64 info;
 	struct nova_fp fp;	// TODO: cpu_to_le64?
-};
+	__le64 padding[3];
+} ____cacheline_aligned_in_smp;
+
+_Static_assert(sizeof(struct nova_pmm_entry) == 64, "Meta Data Entry not 64B!");
 
 #define REGION_SIZE 4096
 #define ENTRY_PER_REGION (REGION_SIZE / sizeof(struct nova_pmm_entry))
@@ -56,7 +59,7 @@ int nova_scan_entry_table(struct super_block *sb, struct entry_allocator *alloca
 	struct xatable *xat);
 
 void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr);
-entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator, struct nova_fp fp, __le64 info);
+entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator, const struct nova_fp *fp, __le64 info);
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr);
 
 int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocator *allocator);

@@ -21,16 +21,19 @@ struct nova_fp_strong_ctx {
 _Static_assert(INDICATOR_BIT_NUM + WHICH_TABLET_BIT_NUM + TAG_BIT_NUM + INDEX_BIT_NUM == 64, "Fingerprint not 8 bytes!");
 struct nova_fp {
 	union {
-		struct {
-			uint64_t which_tablet: WHICH_TABLET_BIT_NUM;
-			uint64_t index: INDEX_BIT_NUM;
-			uint64_t indicator: INDICATOR_BIT_NUM;	// Indicate where the entry is.
-			uint64_t tag: TAG_BIT_NUM;
+		union {
+			struct {
+				uint64_t which_tablet: WHICH_TABLET_BIT_NUM;
+				uint64_t index: INDEX_BIT_NUM;
+				uint64_t indicator: INDICATOR_BIT_NUM;	// Indicate where the entry is.
+				uint64_t tag: TAG_BIT_NUM;
+			};
+			uint64_t value;
 		};
-		uint64_t value;
+		uint64_t u64s[4];
 	};
 };
-_Static_assert(sizeof(struct nova_fp) == 8, "Fingerprint not 8B!");
+_Static_assert(sizeof(struct nova_fp) == 32, "Fingerprint not 32B!");
 
 static inline int nova_fp_strong_ctx_init(struct nova_fp_strong_ctx *ctx) {
 	struct crypto_shash *alg = crypto_alloc_shash("sha256", 0, 0);
@@ -49,13 +52,11 @@ static inline void nova_fp_strong_ctx_free(struct nova_fp_strong_ctx *ctx) {
 
 static inline int nova_fp_calc(struct nova_fp_strong_ctx *fp_ctx, const void *addr, struct nova_fp *fp)
 {
-	uint64_t fp_strong[4];
 	int ret;
 	INIT_TIMING(fp_calc_time);
 
 	NOVA_START_TIMING(fp_calc_t, fp_calc_time);
-	ret = crypto_shash_digest(&fp_ctx->shash_desc, (const void*)addr, 4096, (void*)fp_strong);
-	fp->value = fp_strong[0];
+	ret = crypto_shash_digest(&fp_ctx->shash_desc, (const void*)addr, 4096, (void*)fp->u64s);
 	NOVA_END_TIMING(fp_calc_t, fp_calc_time);
 	return ret;
 }

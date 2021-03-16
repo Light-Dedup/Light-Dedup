@@ -193,19 +193,19 @@ static void assign_entry(
 	struct nova_bucket *bucket,
 	size_t i,
 	struct nova_mm_entry_p entry_p,
-	struct nova_fp fp,
+	const struct nova_fp *fp,
 	size_t used_hash_bit)
 {
 	size_t disbase;
-	bucket->tags[i] = (uint8_t)((fp.tag % 0xff) + 1); // non zero
-	bucket->indicators[i] = fp.indicator;
+	bucket->tags[i] = (uint8_t)((fp->tag % 0xff) + 1); // non zero
+	bucket->indicators[i] = fp->indicator;
 	if (used_hash_bit == 0) {
 		// The bucket is the root of tablet, disbyte will not be used.
 		bucket->disbyte[i] = 0;
 	} else {
 		BUG_ON(used_hash_bit < NOVA_TABLE_INNER_BITS);
 		disbase = used_hash_bit - NOVA_TABLE_INNER_BITS;
-		bucket->disbyte[i] = fp.index >> (disbase + 1);
+		bucket->disbyte[i] = fp->index >> (disbase + 1);
 	}
 	bucket->entry_p[i] = entry_p;
 	++bucket->size;
@@ -218,14 +218,14 @@ static int nova_table_leaf_insert(
 	int get_new_block(struct super_block *, struct nova_write_para_normal *))
 {
 	struct super_block *sb = table->sblock;
-	struct nova_fp fp = wp->base.fp;
+	const struct nova_fp *fp = &wp->base.fp;
 	size_t i;
 	struct nova_mm_entry_info info;
 	struct nova_mm_entry_p entry_p;
 	int retval;
 	INIT_TIMING(write_new_entry_time);
 
-	i = find_free_slot_in_bucket(bucket, fp.indicator);
+	i = find_free_slot_in_bucket(bucket, fp->indicator);
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
 	retval = get_new_block(sb, wp);
@@ -445,7 +445,7 @@ static int bucket_insert_entry(
 		return NOVA_FULL;
 	entry_p.entrynr = wp->entrynr;
 	entry_p.refcount = wp->base.refcount;
-	assign_entry(bucket, i, entry_p, wp->base.fp, used_hash_bit);
+	assign_entry(bucket, i, entry_p, &wp->base.fp, used_hash_bit);
 	return 0;
 }
 
