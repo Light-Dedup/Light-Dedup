@@ -991,9 +991,13 @@ static int nova_set_ring_array(struct super_block *sb,
 {
 	unsigned long pgoff = entryc->pgoff;
 	u64 epoch_id = entryc->epoch_id;
+	void *xa_ret;
 	int ret;
 
-	entry = xa_untag_pointer(xa_store(&ring->entry_array, pgoff, xa_tag_pointer(entry, 0), GFP_KERNEL));
+	xa_ret = xa_store(&ring->entry_array, pgoff, xa_tag_pointer(entry, 0), GFP_KERNEL);
+	if (xa_is_err(xa_ret))
+		return xa_err(xa_ret);
+	entry = xa_untag_pointer(xa_ret);
 	if (entry) {
 		ret = nova_check_old_entry(sb, sih, entry, pgoff, epoch_id, info, cpuid);
 		if (ret < 0)
