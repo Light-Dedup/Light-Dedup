@@ -946,7 +946,7 @@ static int nova_traverse_dir_inode_log(struct super_block *sb,
  * retval == 0: Not deletable?
  * retval < 0: Error code.
  */
-static unsigned int nova_check_old_entry(struct super_block *sb,
+static int nova_check_old_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
 	unsigned long pgoff,
 	u64 epoch_id,
