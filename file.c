@@ -42,7 +42,7 @@ int nova_set_blocksize_hint(struct super_block *sb, struct inode *inode,
 	struct nova_inode *pi, loff_t new_size)
 {
 	unsigned short block_type;
-	unsigned long flags = 0;
+	unsigned long irq_flags = 0;
 
 	if (!nova_can_set_blocksize_hint(inode, pi, new_size))
 		return 0;
@@ -65,9 +65,9 @@ hint_set:
 		"Hint: new_size 0x%llx, i_size 0x%llx\n",
 		new_size, pi->i_size);
 	nova_dbg_verbose("Setting the hint to 0x%x\n", block_type);
-	nova_memunlock_inode(sb, pi, &flags);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	pi->i_blk_type = block_type;
-	nova_memlock_inode(sb, pi, &flags);
+	nova_memlock_inode(sb, pi, &irq_flags);
 	return 0;
 }
 
@@ -187,7 +187,7 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	INIT_TIMING(fallocate_time);
 	u64 epoch_id;
 	u32 time;
-	unsigned long flags = 0;
+	unsigned long irq_flags = 0;
 
 	/*
 	 * Fallocate does not make much sence for CoW,
@@ -242,9 +242,9 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	nova_dbgv("blocks: %llu, %lu\n", (u64)inode->i_blocks, sih->i_blocks);
 
 	if (ret || (mode & FALLOC_FL_KEEP_SIZE)) {
-		nova_memunlock_inode(sb, pi, &flags);
+		nova_memunlock_inode(sb, pi, &irq_flags);
 		pi->i_flags |= cpu_to_le32(NOVA_EOFBLOCKS_FL);
-		nova_memlock_inode(sb, pi, &flags);
+		nova_memlock_inode(sb, pi, &irq_flags);
 		sih->i_flags |= cpu_to_le32(NOVA_EOFBLOCKS_FL);
 	}
 
@@ -253,10 +253,10 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 		sih->i_size = new_size;
 	}
 
-	nova_memunlock_inode(sb, pi, &flags);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	nova_update_inode_checksum(pi);
 	nova_update_alter_inode(sb, inode, pi);
-	nova_memlock_inode(sb, pi, &flags);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	sih->trans_id++;
 out:
@@ -552,7 +552,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	u32 time;
 	char *kbuf = NULL;
 	struct nova_write_para_normal wp;
-	unsigned long flags = 0;
+	unsigned long irq_flags = 0;
 
 	if (len == 0)
 		return 0;
@@ -681,9 +681,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits));
 
-	nova_memunlock_inode(sb, pi, &flags);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	nova_update_inode(sb, inode, pi, &update, 1);
-	nova_memlock_inode(sb, pi, &flags);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	/* Free the overlap blocks after the write is committed */
 	ret = nova_reassign_file_tree(sb, sih, begin_tail);

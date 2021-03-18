@@ -236,7 +236,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	u32 time;
 	INIT_TIMING(mmap_cow_time);
 	int ret = 0;
-	unsigned long flags = 0;
+	unsigned long irq_flags = 0;
 
 	NOVA_START_TIMING(mmap_cow_t, mmap_cow_time);
 
@@ -336,10 +336,10 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 
 		/* Now copy from user buf */
 		NOVA_START_TIMING(memcpy_w_wb_t, memcpy_time);
-		nova_memunlock_range(sb, to_kmem, bytes, &flags);
+		nova_memunlock_range(sb, to_kmem, bytes, &irq_flags);
 		copied = bytes - memcpy_to_pmem_nocache(to_kmem, from_kmem,
 							bytes);
-		nova_memlock_range(sb, to_kmem, bytes, &flags);
+		nova_memlock_range(sb, to_kmem, bytes, &irq_flags);
 		NOVA_END_TIMING(memcpy_w_wb_t, memcpy_time);
 
 		if (copied == bytes) {
@@ -373,9 +373,9 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	if (begin_tail == 0)
 		goto out;
 
-	nova_memunlock_inode(sb, pi, &flags);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	nova_update_inode(sb, inode, pi, &update, 1);
-	nova_memlock_inode(sb, pi, &flags);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	/* Update file tree */
 	ret = nova_reassign_file_tree(sb, sih, begin_tail);

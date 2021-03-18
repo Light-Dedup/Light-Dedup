@@ -144,14 +144,14 @@ static int nova_rebuild_inode_finish(struct super_block *sb,
 {
 	struct nova_inode *alter_pi;
 	u64 next;
-	unsigned long flags = 0;
+	unsigned long irq_flags = 0;
 
 	sih->i_size = le64_to_cpu(reb->i_size);
 	sih->i_mode = le64_to_cpu(reb->i_mode);
 	sih->i_flags = le32_to_cpu(reb->i_flags);
 	sih->trans_id = reb->trans_id + 1;
 
-	nova_memunlock_inode(sb, pi, &flags);
+	nova_memunlock_inode(sb, pi, &irq_flags);
 	nova_update_inode_with_rebuild(sb, reb, pi);
 	nova_update_inode_checksum(pi);
 	if (metadata_csum) {
@@ -159,7 +159,7 @@ static int nova_rebuild_inode_finish(struct super_block *sb,
 							sih->alter_pi_addr);
 		memcpy_to_pmem_nocache(alter_pi, pi, sizeof(struct nova_inode));
 	}
-	nova_memlock_inode(sb, pi, &flags);
+	nova_memlock_inode(sb, pi, &irq_flags);
 
 	/* Keep traversing until log ends */
 	curr_p &= PAGE_MASK;
@@ -410,8 +410,15 @@ static int nova_rebuild_file_inode_tree(struct super_block *sb,
 		goto out;
 
 	curr_p = sih->log_head;
-	if (curr_p == 0 && sih->log_tail == 0)
+	// if (curr_p == 0 && sih->log_tail == 0)
+	// 	goto out;
+	if (curr_p == 0 || sih->log_tail == 0) {
+		nova_warn("NULL log pointer(s) in file inode %llu\n", ino);
+		pi->log_head = 0;
+		pi->log_tail = 0;
+		nova_flush_buffer(pi, sizeof(struct nova_inode), 1);
 		goto out;
+	}
 
 	entryc = (metadata_csum == 0) ? NULL : entry_copy;
 

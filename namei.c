@@ -84,14 +84,14 @@ static void nova_lite_transaction_for_new_inode(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int cpu;
 	u64 journal_tail;
-	unsigned long flags = 0;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(trans_time);
 
 	NOVA_START_TIMING(create_trans_t, trans_time);
 
 	cpu = nova_get_cpuid(sb);
 	spin_lock(&sbi->journal_locks[cpu]);
-	nova_memunlock_journal(sb, &flags);
+	nova_memunlock_journal(sb, &irq_flags);
 
 	// If you change what's required to create a new inode, you need to
 	// update this functions so the changes will be roll back on failure.
@@ -105,14 +105,14 @@ static void nova_lite_transaction_for_new_inode(struct super_block *sb,
 	PERSISTENT_BARRIER();
 
 	nova_commit_lite_transaction(sb, journal_tail, cpu);
-	nova_memlock_journal(sb, &flags);
+	nova_memlock_journal(sb, &irq_flags);
 	spin_unlock(&sbi->journal_locks[cpu]);
 
 	if (metadata_csum) {
-		nova_memunlock_inode(sb, pi, &flags);
+		nova_memunlock_inode(sb, pi, &irq_flags);
 		nova_update_alter_inode(sb, inode, pi);
 		nova_update_alter_inode(sb, dir, pidir);
-		nova_memlock_inode(sb, pi, &flags);
+		nova_memlock_inode(sb, pi, &irq_flags);
 	}
 	NOVA_END_TIMING(create_trans_t, trans_time);
 }
@@ -306,14 +306,14 @@ static void nova_lite_transaction_for_time_and_link(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	u64 journal_tail;
 	int cpu;
-	unsigned long flags = 0;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(trans_time);
 
 	NOVA_START_TIMING(link_trans_t, trans_time);
 
 	cpu = nova_get_cpuid(sb);
 	spin_lock(&sbi->journal_locks[cpu]);
-	nova_memunlock_journal(sb, &flags);
+	nova_memunlock_journal(sb, &irq_flags);
 
 	// If you change what's required to create a new inode, you need to
 	// update this functions so the changes will be roll back on failure.
@@ -331,14 +331,14 @@ static void nova_lite_transaction_for_time_and_link(struct super_block *sb,
 	PERSISTENT_BARRIER();
 
 	nova_commit_lite_transaction(sb, journal_tail, cpu);
-	nova_memlock_journal(sb, &flags);
+	nova_memlock_journal(sb, &irq_flags);
 	spin_unlock(&sbi->journal_locks[cpu]);
 
 	if (metadata_csum) {
-		nova_memunlock_inode(sb, pi, &flags);
+		nova_memunlock_inode(sb, pi, &irq_flags);
 		nova_update_alter_inode(sb, inode, pi);
 		nova_update_alter_inode(sb, dir, pidir);
-		nova_memlock_inode(sb, pi, &flags);
+		nova_memlock_inode(sb, pi, &irq_flags);
 	}
 
 	NOVA_END_TIMING(link_trans_t, trans_time);
