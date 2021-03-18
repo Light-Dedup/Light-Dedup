@@ -1046,8 +1046,14 @@ again:
 	curr_p = pi->log_head;
 	nova_dbg_verbose("Log head 0x%llx, tail 0x%llx\n",
 				curr_p, pi->log_tail);
-	if (curr_p == 0 && pi->log_tail == 0)
+	if (curr_p == 0 || pi->log_tail == 0) {
+		nova_warn("NULL log pointer(s) in file inode %llu\n", ino);
+		pi->log_head = 0;
+		pi->log_tail = 0;
+		nova_flush_buffer(pi, sizeof(struct nova_inode), 1);
 		return 0;
+	}
+
 
 	if (base == 0) {
 		BUG_ON(curr_p & (PAGE_SIZE - 1));
@@ -1427,7 +1433,7 @@ static int nova_failure_recovery_crawl(struct super_block *sb)
 	}
 
 	nova_recover_inode_pages(sb, &sih, &task_rings[0],
-					&fake_pi, global_bm[1]);
+					&fake_pi, global_bm[0]);
 
 	return ret;
 }
