@@ -143,17 +143,17 @@ static int alloc_and_fill_block(
 	unsigned long irq_flags = 0;
 	INIT_TIMING(memcpy_time);
 
-	NOVA_START_TIMING(alloc_and_memcpy_w_t, memcpy_time);
 	wp->blocknr = nova_new_data_block(sb, false, ANY_CPU);
 	if (wp->blocknr == 0)
 		return -ENOSPC;
 	// printk("%s: Block %ld allocated", __func__, wp->blocknr);
 	xmem = nova_blocknr_to_addr(sb, wp->blocknr);
+	NOVA_START_TIMING(memcpy_data_block_t, memcpy_time);
 	nova_memunlock_block(sb, xmem, &irq_flags);
 	memcpy_flushcache((char *)xmem, (const char *)wp->addr, 4096);
 	nova_memlock_block(sb, xmem, &irq_flags);
 	// wp->refcount = wp->base.delta;
-	NOVA_END_TIMING(alloc_and_memcpy_w_t, memcpy_time);
+	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	// printk("xmem = %pK", xmem);
 	return 0;
 }
@@ -166,13 +166,13 @@ static int rewrite_block(
 	unsigned long irq_flags = 0;
 	INIT_TIMING(memcpy_time);
 
-	NOVA_START_TIMING(alloc_and_memcpy_w_t, memcpy_time);
 	xmem = nova_blocknr_to_addr(sb, wp->normal.blocknr);
+	NOVA_START_TIMING(memcpy_data_block_t, memcpy_time);
 	nova_memunlock_range(sb, xmem + wp->offset, wp->len, &irq_flags);
 	memcpy_flushcache((char *)xmem + wp->offset, (const char *)wp->normal.addr + wp->offset, wp->len);
 	nova_memlock_range(sb, xmem + wp->offset, wp->len, &irq_flags);
 	// wp->refcount = wp->base.delta;
-	NOVA_END_TIMING(alloc_and_memcpy_w_t, memcpy_time);
+	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	return 0;
 }
 static size_t
