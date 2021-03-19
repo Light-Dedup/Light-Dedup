@@ -164,7 +164,7 @@ const char *Timingstring[TIMING_NUM] = {
 	"fp_calc",
 	"incr_ref",
 	"decr_ref",
-	"alloc_and_memcpy_w",
+	"memcpy_data_block",
 	"write_new_entry",
 	"mem_bucket_find",
 	"split_leaf",
