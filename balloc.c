@@ -779,11 +779,11 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 		return -ENOSPC;
 	}
 
-	if (atype == LOG && not_enough_blocks(free_list, num_blocks, atype)) {
-		nova_dbgv("%s: Can't alloc.  not_enough_blocks() == true",
-			  __func__);
-		return -ENOSPC;
-	}
+	// if (atype == LOG && not_enough_blocks(free_list, num_blocks, atype)) {
+	// 	nova_dbgv("%s: Can't alloc.  not_enough_blocks() == true",
+	// 		  __func__);
+	// 	return -ENOSPC;
+	// }
 
 	tree = &(free_list->block_free_tree);
 	if (from_tail == ALLOC_FROM_HEAD)
