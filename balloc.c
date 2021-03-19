@@ -779,11 +779,11 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 		return -ENOSPC;
 	}
 
-	if (atype == LOG && not_enough_blocks(free_list, num_blocks, atype)) {
-		nova_dbgv("%s: Can't alloc.  not_enough_blocks() == true",
-			  __func__);
-		return -ENOSPC;
-	}
+	// if (atype == LOG && not_enough_blocks(free_list, num_blocks, atype)) {
+	// 	nova_dbgv("%s: Can't alloc.  not_enough_blocks() == true",
+	// 		  __func__);
+	// 	return -ENOSPC;
+	// }
 
 	tree = &(free_list->block_free_tree);
 	if (from_tail == ALLOC_FROM_HEAD)
@@ -915,7 +915,7 @@ static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	unsigned long new_blocknr = 0;
 	long ret_blocks = 0;
 	int retried = 0;
-	unsigned long flags = 0;
+	unsigned long irq_flags = 0;
 
 	num_blocks = num * nova_get_numblocks(btype);
 	if (num_blocks == 0) {
@@ -971,9 +971,9 @@ alloc:
 	if (zero) {
 		bp = nova_get_block(sb, nova_get_block_off(sb,
 						new_blocknr, btype));
-		nova_memunlock_range(sb, bp, PAGE_SIZE * ret_blocks, &flags);
+		nova_memunlock_range(sb, bp, PAGE_SIZE * ret_blocks, &irq_flags);
 		memset_nt(bp, 0, PAGE_SIZE * ret_blocks);
-		nova_memlock_range(sb, bp, PAGE_SIZE * ret_blocks, &flags);
+		nova_memlock_range(sb, bp, PAGE_SIZE * ret_blocks, &irq_flags);
 	}
 	*blocknr = new_blocknr;
 
