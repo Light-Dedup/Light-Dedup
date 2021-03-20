@@ -14,6 +14,8 @@ _Static_assert((1ULL << (sizeof(atomic_t) * 8)) > ENTRY_PER_REGION, "Type of cou
 static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocator *allocator,
 	bool zero_valid_entry)
 {
+	size_t buf_sz;
+	char *buf;
 	int ret;
 	if (zero_valid_entry)
 		allocator->valid_entry = vzalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
@@ -23,10 +25,16 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 		nova_dbg("%s: Allocate valid_entry failed.\n", __func__);
 		return -ENOMEM;
 	}
-	ret = kfifo_alloc(&allocator->free_regions, sbi->nr_regions * sizeof(regionnr_t), GFP_KERNEL);
-	if (ret) {
-		vfree(allocator->valid_entry);
+	buf_sz = sbi->nr_regions * sizeof(regionnr_t);
+	buf = vmalloc(buf_sz);
+	if (buf == NULL) {
+		vfree(buf);
 		return -ENOMEM;
+	}
+	ret = kfifo_init(&allocator->free_regions, buf, buf_sz);
+	if (ret) {
+		vfree(buf);
+		return ret;
 	}
 	spin_lock_init(&allocator->lock);
 	return 0;
@@ -80,7 +88,7 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 void nova_free_entry_allocator(struct entry_allocator *allocator)
 {
 	vfree(allocator->valid_entry);
-	kfifo_free(&allocator->free_regions);
+	vfree(allocator->free_regions.kfifo.data);
 }
 
 #define REGION_PER_SCAN (2 * 1024 * 1024 / REGION_SIZE)
