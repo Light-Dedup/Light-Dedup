@@ -1,11 +1,16 @@
 #!/bin/sh
 
+if [ ! $1 ]; then
+    timing=0
+else
+    timing=$1
+fi
 echo umounting...
 umount /mnt/pmem
 echo Removing the old kernel module...
 rmmod nova
 echo Inserting the new kernel module...
-insmod nova.ko measure_timing=0
+insmod nova.ko measure_timing=$timing
 
 sleep 1
 
