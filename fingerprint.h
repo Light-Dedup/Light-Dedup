@@ -10,8 +10,7 @@
 #define NOVA_FP_STRONG_CTX_BUF_SIZE 256
 
 struct nova_fp_strong_ctx {
-	struct shash_desc    shash_desc;
-	uint8_t              ctx[NOVA_FP_STRONG_CTX_BUF_SIZE];
+	struct crypto_shash *alg;
 };
 
 #define WHICH_TABLET_BIT_NUM 6
@@ -43,21 +42,29 @@ static inline int nova_fp_strong_ctx_init(struct nova_fp_strong_ctx *ctx) {
 		crypto_free_shash(alg);
 		return -EINVAL;
 	}
-	ctx->shash_desc.tfm = alg;
+	ctx->alg = alg;
 	return 0;
 }
 static inline void nova_fp_strong_ctx_free(struct nova_fp_strong_ctx *ctx) {
-	crypto_free_shash(ctx->shash_desc.tfm);
+	crypto_free_shash(ctx->alg);
 }
 
 static inline int nova_fp_calc(struct nova_fp_strong_ctx *fp_ctx, const void *addr, struct nova_fp *fp)
 {
+	struct shash_desc *shash_desc;
 	int ret;
 	INIT_TIMING(fp_calc_time);
 
+	shash_desc = kmalloc(sizeof(struct shash_desc) +
+		crypto_shash_descsize(fp_ctx->alg), GFP_KERNEL);
+	if (shash_desc == NULL)
+		return -ENOMEM;
+	shash_desc->tfm = fp_ctx->alg;
 	NOVA_START_TIMING(fp_calc_t, fp_calc_time);
-	ret = crypto_shash_digest(&fp_ctx->shash_desc, (const void*)addr, 4096, (void*)fp->u64s);
+	ret = crypto_shash_digest(shash_desc, (const void*)addr, 4096, (void*)fp->u64s);
 	NOVA_END_TIMING(fp_calc_t, fp_calc_time);
+	kfree(shash_desc);
+
 	return ret;
 }
 

@@ -797,12 +797,15 @@ static int nova_table_upsert_entry(struct nova_mm_table *table, struct nova_writ
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_entry);
 }
 
-static void init_normal_wp_incr(struct nova_sb_info *sbi,
+static int init_normal_wp_incr(struct nova_sb_info *sbi,
 	struct nova_write_para_normal *wp, const void *addr)
 {
-	BUG_ON(nova_fp_calc(&sbi->meta_table.fp_ctx, addr, &wp->base.fp));
+	int ret = nova_fp_calc(&sbi->meta_table.fp_ctx, addr, &wp->base.fp);
+	if (ret < 0)
+		return ret;
 	wp->addr = addr;
 	wp->base.refcount = 1;
+	return 0;
 }
 int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	struct nova_write_para_normal *wp)
@@ -813,8 +816,9 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	INIT_TIMING(incr_ref_time);
 
 	NOVA_START_TIMING(incr_ref_t, incr_ref_time);
-	init_normal_wp_incr(sbi, wp, addr);
-	ret = nova_table_upsert_normal(table, wp);
+	ret = init_normal_wp_incr(sbi, wp, addr);
+	if (!(ret < 0))
+		ret = nova_table_upsert_normal(table, wp);
 	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
 	return ret;
 }
@@ -828,11 +832,13 @@ int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 	INIT_TIMING(incr_ref_time);
 
 	NOVA_START_TIMING(incr_ref_t, incr_ref_time);
-	init_normal_wp_incr(sbi, &wp->normal, addr);
-	wp->normal.blocknr = blocknr;
-	wp->offset = offset;
-	wp->len = bytes;
-	ret = nova_table_upsert_rewrite(table, wp);
+	ret = init_normal_wp_incr(sbi, &wp->normal, addr);
+	if (!(ret < 0)) {
+		wp->normal.blocknr = blocknr;
+		wp->offset = offset;
+		wp->len = bytes;
+		ret = nova_table_upsert_rewrite(table, wp);
+	}
 	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
 	return ret;
 }

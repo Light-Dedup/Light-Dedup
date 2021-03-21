@@ -89,7 +89,9 @@ long nova_meta_table_decr_refcount(struct nova_meta_table *table,
 	INIT_TIMING(decr_ref_time);
 
 	BUG_ON(blocknr == 0);
-	BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
+	retval = nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp);
+	if (retval < 0)
+		return retval;
 
 	wp.addr = addr;
 	wp.base.refcount = -1;
@@ -120,7 +122,9 @@ long nova_meta_table_decr1(struct nova_meta_table *table, const void *addr, unsi
 	INIT_TIMING(decr_ref_time);
 
 	BUG_ON(blocknr == 0);
-	BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
+	retval = nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp);
+	if (retval < 0)
+		return retval;
 
 	wp.addr = addr;
 	wp.blocknr = blocknr;
