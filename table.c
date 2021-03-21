@@ -128,13 +128,6 @@ static int nova_table_leaf_delete(
 	// 	retval = NOVA_LEAF_ALL_DELETED;
 	// return retval;
 }
-static void print(const char *addr) {
-	int i;
-	for (i = 0; i < 4096; ++i) {
-		printk(KERN_CONT "%02x ", addr[i] & 0xff);
-	}
-	printk("\n");
-}
 static int alloc_and_fill_block(
 	struct super_block *sb,
 	struct nova_write_para_normal *wp)
@@ -278,22 +271,6 @@ static int nova_table_leaf_mm_insert(
 	++bucket->size;
 	return 0;
 }
-// True: Not equal. False: Equal
-static bool cmp_content(struct super_block *sb, unsigned long blocknr, const void *addr) {
-	INIT_TIMING(memcmp_time);
-	const void *content;
-	bool res;
-	NOVA_START_TIMING(memcmp_t, memcmp_time);
-	content = nova_blocknr_to_addr(sb, blocknr);
-	res = cmp64(content, addr);
-	NOVA_END_TIMING(memcmp_t, memcmp_time);
-	if (res) {
-		print(content);
-		printk("\n");
-		print(addr);
-	}
-	return res;
-}
 static int bucket_upsert_base(
 	struct nova_mm_table *table,
 	struct nova_bucket *bucket,
@@ -301,7 +278,6 @@ static int bucket_upsert_base(
 	struct nova_write_para_normal *wp,
 	int (*get_new_block)(struct super_block *, struct nova_write_para_normal *))
 {
-	struct super_block *sb = table->sblock;
 	struct nova_pmm_entry *pentries = table->pentries;
 	size_t leaf_index;
 	// struct nova_pmm_node *pnode;
@@ -323,14 +299,6 @@ static int bucket_upsert_base(
 		BUG_ON(pentry_info.flag != NOVA_LEAF_ENTRY_MAGIC);
 		blocknr = pentry_info.blocknr;
 		if (delta > 0) {
-			if (cmp_content(sb, blocknr, wp->addr)) {
-				printk("Collision, just write it.");
-				return get_new_block(sb, wp);
-				// const void *content = nova_get_block(sb, nova_sb_blocknr_to_addr(sb, le64_to_cpu(leaf->blocknr), NOVA_BLOCK_TYPE_4K));
-				// printk("First 8 bytes of existed_entry: %llx, chunk_id = %llx, fingerprint = %llx %llx %llx %llx\nFirst 8 bytes of incoming block: %llx, fingerprint = %llx %llx %llx %llx\n",
-				// 	*(uint64_t *)content, leaf->blocknr, leaf->fp_strong.u64s[0], leaf->fp_strong.u64s[1], leaf->fp_strong.u64s[2], leaf->fp_strong.u64s[3],
-				// 	*(uint64_t *)addr, entry->fp_strong.u64s[0], entry->fp_strong.u64s[1], entry->fp_strong.u64s[2], entry->fp_strong.u64s[3]);
-			}
 			wp->blocknr = blocknr;// retrieval block info
 			// Make sure that all entries with refcount > 1 is persistent.
 			nova_flush_entry(table->entry_allocator, entry_p->entrynr);
