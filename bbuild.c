@@ -688,7 +688,9 @@ static int invalidate_unused_fp_entry(
 	struct task_struct **tasks = NULL;
 	atomic64_t cur_xa;
 	int ret = 0, ret2;
+	INIT_TIMING(time);
 
+	NOVA_START_TIMING(invalidate_unused_fp_entry_t, time);
 	para = kmalloc(thread_num * sizeof(para[0]), GFP_KERNEL);
 	if (para == NULL) {
 		ret = -ENOMEM;
@@ -723,6 +725,7 @@ out:
 		kfree(para);
 	if (tasks)
 		kfree(tasks);
+	NOVA_END_TIMING(invalidate_unused_fp_entry_t, time);
 	return ret;
 }
 static int nova_build_blocknode_map(struct super_block *sb,
