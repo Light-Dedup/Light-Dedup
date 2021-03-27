@@ -181,6 +181,7 @@ enum timing_category {
 	normal_recover_entry_allocator_t,
 	scan_fp_entry_table_t,
 	upsert_fp_entry_t,
+	invalidate_unused_fp_entry_t,
 
 	/* xatable */
 	xatable_title_t,
