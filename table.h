@@ -98,7 +98,7 @@ nova_inner_to_node_p(struct nova_inner *inner) {
 }
 
 struct nova_mm_tablet {
-	struct mutex           mtx;
+	struct spinlock           lock;
 	unsigned long   node_p;
 };
 

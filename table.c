@@ -18,7 +18,7 @@ static inline struct nova_inner *
 alloc_inner(size_t bits)
 {
 	return (struct nova_inner *)kmalloc(sizeof(struct nova_inner) +
-		((size_t)1 << bits) * sizeof(unsigned long), GFP_KERNEL);
+		((size_t)1 << bits) * sizeof(unsigned long), GFP_ATOMIC);
 }
 static inline void
 nova_table_free_inner(struct nova_mm_table *table, struct nova_inner *inner)
@@ -33,7 +33,7 @@ inner_realloc(struct nova_mm_table *table,
 	(void)table;
 	return (struct nova_inner *)krealloc(inner,
 		sizeof(struct nova_inner) +
-		((size_t)1 << new_bits) * sizeof(unsigned long), GFP_KERNEL);
+		((size_t)1 << new_bits) * sizeof(unsigned long), GFP_ATOMIC);
 }
 static struct nova_inner *
 inner_shrink(struct nova_mm_table *table, struct nova_inner *inner)
@@ -60,7 +60,7 @@ inner_expand(struct nova_mm_table *table, struct nova_inner *inner)
 static struct nova_bucket *
 alloc_empty_bucket(struct nova_mm_table *table)
 {
-	return kmem_cache_zalloc(table->bucket_cache, GFP_KERNEL);
+	return kmem_cache_zalloc(table->bucket_cache, GFP_ATOMIC);
 	// struct nova_bucket *bucket = kmem_cache_alloc(table->bucket_cache, GFP_KERNEL);
 	// if (bucket == NULL)
 	// 	return NULL;
@@ -726,7 +726,7 @@ static int nova_table_upsert(
 	uint64_t tablet = wp->fp.which_tablet;
 
 	//printk(KERN_WARNING "tablet %llu, %llu\n", tablet, entry->fp_strong.u64s[0]);
-	mutex_lock(&table->tablets[tablet].mtx);
+	spin_lock(&table->tablets[tablet].lock);
 retry:
 	// printk("Step into tablet %lld", tablet);
 	node_p = &table->tablets[tablet].node_p;
@@ -742,7 +742,7 @@ retry:
 		if (0 == retval)
 			goto  retry;
 	}
-	mutex_unlock(&table->tablets[tablet].mtx);
+	spin_unlock(&table->tablets[tablet].lock);
 	return retval;
 }
 // Upsert : update or insert
@@ -1057,7 +1057,7 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table)
 	}
 
 	for (; i < nr_tablets; i++) {
-		mutex_init(&table->tablets[i].mtx);
+		spin_lock_init(&table->tablets[i].lock);
 		bucket = alloc_empty_bucket(table);
 		if (bucket == NULL) {
 			printk("OOM when allocating bucket!\n");
