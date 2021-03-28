@@ -49,7 +49,6 @@ _Static_assert(NOVA_TABLE_INNER_BITS <= 1 + sizeof(uint8_t) * 8, "Type of disbyt
 struct nova_inner {
 	struct {
 		uint32_t bits: 4;	// At most 9.
-		uint32_t max_bits: 4;	// At most 9.
 		uint32_t merged: 9;	// At most 256.	If merged == 1 << (bits - 1), then shrink, and --bits.
 	};
 	unsigned long node_p[0];	// If (node_p[i] & 1) != 0, then it is an inner node, else it is a bucket.
@@ -99,13 +98,13 @@ nova_inner_to_node_p(struct nova_inner *inner) {
 }
 
 struct nova_mm_tablet {
-	struct mutex           mtx;
+	struct spinlock           lock;
 	unsigned long   node_p;
 };
 
 struct nova_mm_table {
 	struct super_block    *sblock;
-	struct kmem_cache *inner_cache[3], *bucket_cache;
+	struct kmem_cache *bucket_cache;
 	struct entry_allocator *entry_allocator;
 	struct nova_pmm_entry *pentries;
 	uint64_t               nr_tablets;
