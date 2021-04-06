@@ -23,7 +23,7 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 	int ret = entry_allocator_alloc(sbi, allocator, true);
 	// The first allocation will trigger a new_region request.
 	allocator->top_entrynr = allocator->last_entrynr = -1;
-	allocator->num_entry = sbi->num_blocks*2;
+	allocator->num_entry = sbi->nr_entries;
 	return ret;
 }
 

@@ -24,12 +24,6 @@ struct nova_pmm_entry {
 #define REGION_SIZE 4096
 #define ENTRY_PER_REGION (REGION_SIZE / sizeof(struct nova_pmm_entry))
 
-static inline struct nova_mm_entry_info
-entry_info_pmm_to_mm(__le64 info) {
-	struct nova_mm_entry_info entry_info;
-	entry_info.value = le64_to_cpu(info);
-	return entry_info;
-}
 
 // typedef uint32_t region_entry_index_t;
 struct entry_allocator {
@@ -46,7 +40,7 @@ int nova_scan_entry_table(struct super_block *sb, struct entry_allocator *alloca
 	struct xatable *xat);
 
 void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr);
-entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator, struct nova_fp fp, __le64 info);
+entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator, struct nova_fp fp, __le32 blocknr, __le32 refcount);
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr);
 
 void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator);
