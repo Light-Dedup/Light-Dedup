@@ -22,6 +22,7 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 {
 	int ret = entry_allocator_alloc(sbi, allocator, true);
 	// The first allocation will trigger a new_region request.
+	allocator->entry_collision = 0 ;
 	allocator->top_entrynr = allocator->last_entrynr = -1;
 	allocator->num_entry = sbi->nr_entries;
 	return ret;
@@ -131,6 +132,6 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 
 int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
-	
+	printk("collision happens %lu",allocator->entry_collision);
 	return 0;
 }
