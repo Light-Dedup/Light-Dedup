@@ -106,12 +106,15 @@ static int nova_table_leaf_insert(
 	struct nova_write_para_normal *wp,
 	int get_new_block(struct super_block *, struct nova_write_para_normal *))
 {
+	struct super_block *sb = table->sblock;
 	struct nova_fp fp = wp->base.fp;
 	entrynr_t entrynr;
+	int retval;
 	INIT_TIMING(write_new_entry_time);
 
-	
-
+	retval = get_new_block(sb,wp);
+	if(retval < 0)
+		return retval;
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	entrynr = nova_alloc_and_write_entry(
 			table->entry_allocator, fp, wp->blocknr, wp->base.refcount);
