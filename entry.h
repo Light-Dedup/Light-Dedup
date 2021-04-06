@@ -15,17 +15,9 @@ struct nova_sb_info;
 typedef uint64_t entrynr_t;
 typedef uint32_t regionnr_t;
 
-struct nova_mm_entry_info {
-	union {
-		struct {
-			uint16_t flag: 16;
-			uint64_t blocknr: 48;
-		};
-		uint64_t value;
-	};
-};
 struct nova_pmm_entry {
-	__le64 info;
+	__le32 refcount;
+	__le32 blocknr;
 	struct nova_fp fp;	// TODO: cpu_to_le64?
 };
 
@@ -41,11 +33,10 @@ entry_info_pmm_to_mm(__le64 info) {
 
 // typedef uint32_t region_entry_index_t;
 struct entry_allocator {
-	uint16_t *valid_entry;	// At most ENTRY_PER_REGION
+	unsigned long num_entry;
 	entrynr_t top_entrynr;	// Last allocated entry.
 	entrynr_t last_entrynr;	// Last not flushed entry. If none then -1.
-    struct kfifo free_regions;
-    spinlock_t lock;
+  spinlock_t lock;
 };
 
 int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator);
