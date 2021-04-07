@@ -230,6 +230,7 @@ static int bucket_upsert_base(
 	if(leaf_index == NOVA_TABLE_NOT_FOUND) {
 		return nova_table_leaf_insert(table, wp, get_new_block);
 	}
+	return -ESRCH;
 }
 static int bucket_upsert_normal(
 	struct nova_mm_table *table,
