@@ -13,10 +13,10 @@ struct nova_fp_strong_ctx {
 	struct crypto_shash *alg;
 };
 
-#define WHICH_TABLET_BIT_NUM 6
+#define WHICH_TABLET_BIT_NUM 15
 #define INDICATOR_BIT_NUM 5
 #define TAG_BIT_NUM 8
-#define INDEX_BIT_NUM 45
+#define INDEX_BIT_NUM 36
 _Static_assert(INDICATOR_BIT_NUM + WHICH_TABLET_BIT_NUM + TAG_BIT_NUM + INDEX_BIT_NUM == 64, "Fingerprint not 8 bytes!");
 struct nova_fp {
 	union {
