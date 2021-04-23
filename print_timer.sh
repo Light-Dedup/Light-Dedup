@@ -1,7 +1,7 @@
 set -e
 make
 sudo bash setup.sh
-sudo fio -filename=/mnt/pmem/test1 -direct=1 -iodepth 1 -rw=write -ioengine=sync -bs=4K -thread -numjobs=1 -size=3G -name=randrw --dedupe_percentage=0 -group_reporting
+sudo fio -filename=/mnt/pmem/test1 -fallocate=none -direct=1 -iodepth 1 -rw=write -ioengine=sync -bs=4K -thread -numjobs=1 -size=3G -name=randrw --dedupe_percentage=0 -group_reporting -fallocate=none
 
 #sudo gcc ioctl_test.c -o ioctl_test && sudo ./ioctl_test
 #sudo gcc ioctl_table_stat.c -o ioctl_table_stat && sudo ./ioctl_table_stat
