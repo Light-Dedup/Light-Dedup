@@ -30,7 +30,6 @@ struct entry_allocator {
 	unsigned long num_entry;
 	unsigned long entry_collision;
 	entrynr_t top_entrynr;	// Last allocated entry.
-	entrynr_t last_entrynr;	// Last not flushed entry. If none then -1.
   spinlock_t lock;
 };
 

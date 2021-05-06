@@ -23,7 +23,7 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 	int ret = entry_allocator_alloc(sbi, allocator, true);
 	// The first allocation will trigger a new_region request.
 	allocator->entry_collision = 0 ;
-	allocator->top_entrynr = allocator->last_entrynr = -1;
+	allocator->top_entrynr = -1;
 	allocator->num_entry = sbi->nr_entries;
 	return ret;
 }
@@ -56,30 +56,12 @@ int nova_scan_entry_table(struct super_block *sb,
 	return ret;
 }
 
-static inline void
-__flush_entry(struct entry_allocator *allocator, entrynr_t entrynr)
+void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr)
 {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
 	struct nova_pmm_entry *pentries = meta_table->pentries;
 	nova_flush_cacheline(pentries + entrynr, true);
-}
-static inline void flush_last_entry(struct entry_allocator *allocator)
-{
-	if (allocator->last_entrynr == (entrynr_t)-1)
-		return;
-	__flush_entry(allocator, allocator->last_entrynr);
-}
-static inline bool in_the_same_cacheline(entrynr_t a, entrynr_t b)
-{
-	return b / ENTRY_PER_CACHELINE == a / ENTRY_PER_CACHELINE;
-}
-void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr)
-{
-	if (!in_the_same_cacheline(entrynr, allocator->last_entrynr))
-		return;	// Not in the volatile cache line.
-	flush_last_entry(allocator);
-	allocator->last_entrynr = -1;
 }
 
 static void
@@ -104,10 +86,8 @@ entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
 {
 	entrynr_t entrynr = fp.value % (allocator->num_entry);
 	spin_lock(&allocator->lock);
-	if (!in_the_same_cacheline(allocator->last_entrynr, entrynr))
-		flush_last_entry(allocator);
-	allocator->last_entrynr = entrynr;
 	write_entry(allocator, entrynr, fp, blocknr,refcount);
+	nova_flush_entry(allocator, entrynr);
 	spin_unlock(&allocator->lock);
 	return entrynr;
 }
