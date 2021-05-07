@@ -14,6 +14,9 @@
 
 // #define static _Static_assert(1, "2333");
 
+#define NOVA_TABLE_NOT_FOUND ((uint64_t)-1)
+#define NOVA_TABLE_SAME_INDEX ((uint64_t)-2)
+
 struct nova_write_para_entry {
 	struct nova_write_para_base base;
 	entrynr_t entrynr;
@@ -34,7 +37,7 @@ static uint64_t nova_table_leaf_find(
 		return index;
 	}
 	
-	return table->entry_allocator->num_entry;
+	return NOVA_TABLE_SAME_INDEX;
 }
 
 static int nova_table_leaf_delete(
@@ -174,7 +177,7 @@ static int bucket_upsert_base(
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	leaf_index = nova_table_leaf_find(table, pentries, &wp->base.fp);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	if (leaf_index != NOVA_TABLE_NOT_FOUND && leaf_index != table->entry_allocator->num_entry) {
+	if (leaf_index != NOVA_TABLE_NOT_FOUND && leaf_index != NOVA_TABLE_SAME_INDEX) {
 		pentry = pentries + leaf_index;
 		BUG_ON(pentry->blocknr == 0);
 		blocknr = pentry->blocknr;
@@ -220,7 +223,7 @@ static int bucket_upsert_base(
 		wp->base.refcount = 0;
 		return 0;
 	}
-	if(leaf_index == table->entry_allocator->num_entry) {
+	if(leaf_index == NOVA_TABLE_SAME_INDEX) {
 		if(delta > 0) {
 			// printk("Hash Collision,just write it.");
 			++table->entry_allocator->entry_collision;
@@ -260,7 +263,7 @@ static int bucket_upsert_decr1(
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	leaf_index = nova_table_leaf_find(table, pentries, &wp->base.fp);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	if (leaf_index == table->entry_allocator->num_entry || leaf_index == NOVA_TABLE_NOT_FOUND) {
+	if (leaf_index == NOVA_TABLE_SAME_INDEX || leaf_index == NOVA_TABLE_NOT_FOUND) {
 		// Collision happened. Just free it.
 		printk("A collision happened. Block %ld can not be found in the hash table.", wp->blocknr);
 		wp->base.refcount = 0;
@@ -304,7 +307,7 @@ static int bucket_upsert_entry(
 	uint64_t i;
 
 	i = nova_table_leaf_find(table,table->pentries, &wp->base.fp);
-	if (i == table->entry_allocator->num_entry || i == NOVA_TABLE_NOT_FOUND)
+	if (i == NOVA_TABLE_SAME_INDEX || i == NOVA_TABLE_NOT_FOUND)
 		return bucket_insert_entry(table, __wp);
 	return 0;
 }

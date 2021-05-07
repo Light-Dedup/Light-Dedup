@@ -7,8 +7,6 @@
 
 _Static_assert(sizeof(unsigned long) == sizeof(uint64_t), "You should make all blocknr 64 bit");
 
-#define NOVA_TABLE_NOT_FOUND ((uint64_t)-1)
-
 struct nova_entry_refcount_record {
 	__le32 entrynr;
 	__le32 refcount;
