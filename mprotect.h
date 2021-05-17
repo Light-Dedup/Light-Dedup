@@ -64,13 +64,8 @@ static inline void wprotect_enable(void)
 	write_cr0(cr0_val);
 }
 
-/* FIXME: Assumes that we are always called in the right order.
- * nova_writeable(vaddr, size, 1);
- * nova_writeable(vaddr, size, 0);
- */
-static inline int
-nova_writeable(void *vaddr, unsigned long size, int rw, unsigned long *flags)
-{
+static inline void
+__nova_writable(int rw, unsigned long *flags) {
 	INIT_TIMING(wprotect_time);
 
 	NOVA_START_TIMING(wprotect_t, wprotect_time);
@@ -82,6 +77,16 @@ nova_writeable(void *vaddr, unsigned long size, int rw, unsigned long *flags)
 		local_irq_restore(*flags);
 	}
 	NOVA_END_TIMING(wprotect_t, wprotect_time);
+}
+
+/* FIXME: Assumes that we are always called in the right order.
+ * nova_writeable(vaddr, size, 1);
+ * nova_writeable(vaddr, size, 0);
+ */
+static inline int
+nova_writeable(void *vaddr, unsigned long size, int rw, unsigned long *flags)
+{
+	__nova_writable(rw, flags);
 	return 0;
 }
 

@@ -74,12 +74,19 @@ write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	struct nova_pmm_entry *pentries = meta_table->pentries;
 	struct nova_pmm_entry *pentry = pentries + entrynr;
 	unsigned long irq_flags = 0;
-	nova_memunlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
+	INIT_TIMING(write_new_entry_time);
+
+	if (nova_is_protected(sb))
+		__nova_writable(1, &irq_flags);
+	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
 	wmb();
 	pentry->refcount = refcount;
 	pentry->blocknr = blocknr;
-	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
+	nova_flush_entry(allocator, entrynr);
+	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
+	if (nova_is_protected(sb))
+		__nova_writable(0, &irq_flags);
 }
 entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
 	struct nova_fp fp, __le32 blocknr, __le32 refcount)
@@ -87,7 +94,6 @@ entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
 	entrynr_t entrynr = fp.value % (allocator->num_entry);
 	spin_lock(&allocator->lock);
 	write_entry(allocator, entrynr, fp, blocknr,refcount);
-	nova_flush_entry(allocator, entrynr);
 	spin_unlock(&allocator->lock);
 	return entrynr;
 }

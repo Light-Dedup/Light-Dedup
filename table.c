@@ -76,12 +76,12 @@ static int alloc_and_fill_block(
 		return -ENOSPC;
 	// printk("%s: Block %ld allocated", __func__, wp->blocknr);
 	xmem = nova_blocknr_to_addr(sb, wp->blocknr);
-	NOVA_START_TIMING(memcpy_data_block_t, memcpy_time);
 	nova_memunlock_block(sb, xmem, &irq_flags);
+	NOVA_START_TIMING(memcpy_data_block_t, memcpy_time);
 	memcpy_flushcache((char *)xmem, (const char *)wp->addr, 4096);
+	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	nova_memlock_block(sb, xmem, &irq_flags);
 	// wp->refcount = wp->base.delta;
-	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	// printk("xmem = %pK", xmem);
 	return 0;
 }
@@ -113,15 +113,12 @@ static int nova_table_leaf_insert(
 	struct nova_fp fp = wp->base.fp;
 	entrynr_t entrynr;
 	int retval;
-	INIT_TIMING(write_new_entry_time);
 
 	retval = get_new_block(sb,wp);
 	if(retval < 0)
 		return retval;
-	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	entrynr = nova_alloc_and_write_entry(
 			table->entry_allocator, fp, wp->blocknr, wp->base.refcount);
-	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 
 	return 0;
 }
