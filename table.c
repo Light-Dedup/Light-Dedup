@@ -29,7 +29,7 @@ static uint64_t nova_table_leaf_find(
 {
 	uint64_t index = fp->value % table->entry_allocator->num_entry ;
 
-	if( pentries[index].fp.value == 0) {
+	if( pentries[index].blocknr == 0) {
 		return NOVA_TABLE_NOT_FOUND;
 	}
 	
