@@ -56,14 +56,6 @@ int nova_scan_entry_table(struct super_block *sb,
 	return ret;
 }
 
-void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr)
-{
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct nova_pmm_entry *pentries = meta_table->pentries;
-	nova_flush_cacheline(pentries + entrynr, true);
-}
-
 static void
 write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	struct nova_fp fp, __le32 blocknr, __le32 refcount)
@@ -76,17 +68,15 @@ write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	unsigned long irq_flags = 0;
 	INIT_TIMING(write_new_entry_time);
 
-	if (nova_is_protected(sb))
-		__nova_writable(1, &irq_flags);
+	nova_memunlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
 	wmb();
 	pentry->refcount = refcount;
 	pentry->blocknr = blocknr;
-	nova_flush_entry(allocator, entrynr);
+	nova_flush_buffer(pentry, sizeof(*pentry), true);
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
-	if (nova_is_protected(sb))
-		__nova_writable(0, &irq_flags);
+	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
 }
 entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
 	struct nova_fp fp, __le32 blocknr, __le32 refcount)
