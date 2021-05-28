@@ -39,7 +39,7 @@ void nova_free_entry_allocator(struct entry_allocator *allocator);
 int nova_scan_entry_table(struct super_block *sb, struct entry_allocator *allocator,
 	struct xatable *xat);
 
-entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator, struct nova_fp fp, __le32 blocknr, __le32 refcount);
+void nova_alloc_and_write_entry(struct entry_allocator *allocator, struct nova_fp fp, __le32 blocknr, __le32 refcount);
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr);
 
 void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator);

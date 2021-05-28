@@ -15,7 +15,6 @@
 // #define static _Static_assert(1, "2333");
 
 #define NOVA_TABLE_NOT_FOUND ((uint64_t)-1)
-#define NOVA_TABLE_SAME_INDEX ((uint64_t)-2)
 
 struct nova_write_para_entry {
 	struct nova_write_para_base base;
@@ -27,17 +26,19 @@ static uint64_t nova_table_leaf_find(
 	const struct nova_pmm_entry *pentries,
 	const struct nova_fp *fp)
 {
-	uint64_t index = fp->value % table->entry_allocator->num_entry ;
-
-	if( pentries[index].blocknr == 0) {
-		return NOVA_TABLE_NOT_FOUND;
-	}
-	
-	if ( nova_fp_equal(fp,&pentries[index].fp) ) {
-		return index;
-	}
-	
-	return NOVA_TABLE_SAME_INDEX;
+	entrynr_t index = fp->value % table->entry_allocator->num_entry;
+	entrynr_t base = index & ~(ENTRY_PER_REGION - 1);
+	entrynr_t offset = index & (ENTRY_PER_REGION - 1);
+	entrynr_t i = offset;
+	do {
+		index = base + i;
+		if (pentries[index].blocknr != 0)
+			if (nova_fp_equal(fp, &pentries[index].fp))
+				return index;
+		++i;
+		i &= ENTRY_PER_REGION - 1;
+	} while (i != offset);
+	return NOVA_TABLE_NOT_FOUND;
 }
 
 static int nova_table_leaf_delete(
@@ -111,13 +112,12 @@ static int nova_table_leaf_insert(
 {
 	struct super_block *sb = table->sblock;
 	struct nova_fp fp = wp->base.fp;
-	entrynr_t entrynr;
 	int retval;
 
 	retval = get_new_block(sb,wp);
 	if(retval < 0)
 		return retval;
-	entrynr = nova_alloc_and_write_entry(
+	nova_alloc_and_write_entry(
 			table->entry_allocator, fp, wp->blocknr, wp->base.refcount);
 
 	return 0;
@@ -174,7 +174,7 @@ static int bucket_upsert_base(
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	leaf_index = nova_table_leaf_find(table, pentries, &wp->base.fp);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	if (leaf_index != NOVA_TABLE_NOT_FOUND && leaf_index != NOVA_TABLE_SAME_INDEX) {
+	if (leaf_index != NOVA_TABLE_NOT_FOUND) {
 		pentry = pentries + leaf_index;
 		BUG_ON(pentry->blocknr == 0);
 		blocknr = pentry->blocknr;
@@ -218,13 +218,6 @@ static int bucket_upsert_base(
 		wp->base.refcount = 0;
 		return 0;
 	}
-	if(leaf_index == NOVA_TABLE_SAME_INDEX) {
-		if(delta > 0) {
-			// printk("Hash Collision,just write it.");
-			++table->entry_allocator->entry_collision;
-			return get_new_block(sb,wp);
-		}
-	}
 	if(leaf_index == NOVA_TABLE_NOT_FOUND) {
 		return nova_table_leaf_insert(table, wp, get_new_block);
 	}
@@ -258,7 +251,7 @@ static int bucket_upsert_decr1(
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	leaf_index = nova_table_leaf_find(table, pentries, &wp->base.fp);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	if (leaf_index == NOVA_TABLE_SAME_INDEX || leaf_index == NOVA_TABLE_NOT_FOUND) {
+	if (leaf_index == NOVA_TABLE_NOT_FOUND) {
 		// Collision happened. Just free it.
 		printk("A collision happened. Block %ld can not be found in the hash table.", wp->blocknr);
 		wp->base.refcount = 0;
@@ -302,7 +295,7 @@ static int bucket_upsert_entry(
 	uint64_t i;
 
 	i = nova_table_leaf_find(table,table->pentries, &wp->base.fp);
-	if (i == NOVA_TABLE_SAME_INDEX || i == NOVA_TABLE_NOT_FOUND)
+	if (i == NOVA_TABLE_NOT_FOUND)
 		return bucket_insert_entry(table, __wp);
 	return 0;
 }
