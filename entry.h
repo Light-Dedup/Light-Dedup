@@ -21,7 +21,7 @@ struct nova_pmm_entry {
 	struct nova_fp fp;	// TODO: cpu_to_le64?
 };
 
-#define REGION_SIZE 4096
+#define REGION_SIZE 256
 #define ENTRY_PER_REGION (REGION_SIZE / sizeof(struct nova_pmm_entry))
 
 

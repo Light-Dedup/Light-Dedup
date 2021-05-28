@@ -9,8 +9,6 @@
 // If the number of free entries in a region is greater or equal to FREE_THRESHOLD, then the region is regarded as free.
 #define FREE_THRESHOLD (ENTRY_PER_REGION / 2)
 
-#define ENTRY_PER_REGION (REGION_SIZE / sizeof(struct nova_pmm_entry))
-
 #define REGION_FULL ((entrynr_t)-1)
 
 _Static_assert((1ULL << (sizeof(atomic_t) * 8)) > ENTRY_PER_REGION, "Type of counter of valid entries in a region is too small!");
