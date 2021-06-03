@@ -43,6 +43,7 @@
 #include "super.h"
 #include "inode.h"
 #include "meta.h"
+#include "arithmetic.h"
 
 int measure_timing;
 int metadata_csum;
@@ -118,9 +119,10 @@ number_of_region_needed(unsigned long num_blocks)
 {
 	unsigned long ret = num_blocks * 2;
 	if (ret & (ENTRY_PER_REGION - 1))
-		return ret / ENTRY_PER_REGION + 1;
+		ret = ret / ENTRY_PER_REGION + 1;
 	else
-		return ret / ENTRY_PER_REGION;
+		ret = ret / ENTRY_PER_REGION;
+	return 1ULL << ceil_log_2(ret);
 }
 static int nova_get_nvmm_info(struct super_block *sb,
 	struct nova_sb_info *sbi)
@@ -185,10 +187,10 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	sbi->block_start += ((sbi->num_blocks * sizeof(struct nova_entry_refcount_record) - 1) >> PAGE_SHIFT) + 1;
 
 	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
-		"num_blocks %lu, block_start %lu, block_end %lu\n",
+		"num_blocks %lu, block_start %lu, block_end %lu, nr_regions %lu\n",
 		__func__, sbi->s_bdev->bd_disk->disk_name,
 		sbi->phys_addr, (unsigned long)sbi->virt_addr, sbi->initsize,
-		sbi->num_blocks, sbi->block_start, sbi->block_end);
+		sbi->num_blocks, sbi->block_start, sbi->block_end, sbi->nr_regions);
 
 	return 0;
 }
