@@ -309,9 +309,6 @@ alloc_entry(struct entry_allocator *allocator)
 	} while (entry_info_pmm_to_mm(pentries[entrynr].info).flag == NOVA_LEAF_ENTRY_MAGIC);
 	allocator->top_entrynr = entrynr;
 	++allocator->valid_entry[entrynr / ENTRY_PER_REGION];
-	if (!in_the_same_cacheline(allocator->last_entrynr, entrynr))
-		flush_last_entry(allocator);
-	allocator->last_entrynr = entrynr;
 	return entrynr;
 }
 static void
@@ -324,11 +321,18 @@ write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	struct nova_pmm_entry *pentries = meta_table->pentries;
 	struct nova_pmm_entry *pentry = pentries + entrynr;
 	unsigned long irq_flags = 0;
-	nova_memunlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
+	if (nova_is_protected(sb))
+		__nova_writable(1, &irq_flags);
+	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = *fp;
 	wmb();
 	pentry->info = info;
-	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
+	if (!in_the_same_cacheline(allocator->last_entrynr, entrynr))
+		flush_last_entry(allocator);
+	allocator->last_entrynr = entrynr;
+	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
+	if (nova_is_protected(sb))
+		__nova_writable(0, &irq_flags);
 }
 entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
 	const struct nova_fp *fp, __le64 info)
