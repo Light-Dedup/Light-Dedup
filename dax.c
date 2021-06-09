@@ -388,17 +388,15 @@ static bool nova_get_verify_entry(struct super_block *sb,
  * Used for inplace write, direct IO, DAX-mmap and fallocate.
  */
 void nova_check_existing_entry(struct super_block *sb,
-	struct inode *inode, unsigned long num_blocks, unsigned long start_blk,
+	struct inode *inode, unsigned long start_blk,
 	struct nova_file_write_entry **ret_entry,
-	struct nova_file_write_entry *ret_entryc, int check_next, u64 epoch_id,
+	struct nova_file_write_entry *ret_entryc, u64 epoch_id,
 	int *inplace, int locked)
 {
 	struct nova_inode_info *si = NOVA_I(inode);
 	struct nova_inode_info_header *sih = &si->header;
 	struct nova_file_write_entry *entry;
 	struct nova_file_write_entry *entryc;
-	unsigned long next_pgoff;
-	unsigned long ent_blks = 0;
 	INIT_TIMING(check_time);
 
 	NOVA_START_TIMING(check_entry_t, check_time);
@@ -418,18 +416,18 @@ void nova_check_existing_entry(struct super_block *sb,
 		*ret_entry = entry;
 
 		/* We can do inplace write. Find contiguous blocks */
-		if (entryc->reassigned == 0)
-			ent_blks = 1 - (start_blk - entryc->pgoff);
-		else
-			ent_blks = 1;
-
-		if (ent_blks > num_blocks)
-			ent_blks = num_blocks;
+		// if (entryc->reassigned == 0)
+		// 	ent_blks = 1 - (start_blk - entryc->pgoff);
+		// else
+		// 	ent_blks = 1;
+		BUG_ON(start_blk != entryc->pgoff);
 
 		if (entryc->epoch_id == epoch_id)
 			*inplace = 1;
 
-	} else if (check_next) {
+	}
+#if 0
+	else if (check_next) {
 		/* Possible Hole */
 		entry = nova_find_next_entry(sb, sih, start_blk);
 		if (entry) {
@@ -461,6 +459,7 @@ void nova_check_existing_entry(struct super_block *sb,
 		nova_dbg("%s: %d\n", __func__, check_next);
 		dump_stack();
 	}
+#endif
 
 out:
 	NOVA_END_TIMING(check_entry_t, check_time);
@@ -603,9 +602,9 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 		offset = pos & (nova_inode_blk_size(sih) - 1);
 		start_blk = pos >> sb->s_blocksize_bits;
 
-		nova_check_existing_entry(sb, inode, num_blocks,
+		nova_check_existing_entry(sb, inode,
 						start_blk, &entry, &entry_copy,
-						1, epoch_id, &inplace, 1);
+						epoch_id, &inplace, 1);
 
 		entryc = (metadata_csum == 0) ? entry : &entry_copy;
 
@@ -826,7 +825,6 @@ static int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 	unsigned long nvmm = 0;
 	unsigned long blocknr = 0;
 	u64 epoch_id;
-	int num_blocks = 0;
 	int inplace = 0;
 	int locked = 0;
 	int check_next = 1;
@@ -834,13 +832,13 @@ static int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 	unsigned long irq_flags = 0;
 	INIT_TIMING(get_block_time);
 
+	nova_dbgv("%s: pgoff %llu, num %lu, create %d\n",
+				__func__, (u64)iblock, max_blocks, create);
+
 	if (max_blocks == 0)
 		return 0;
 
 	NOVA_START_TIMING(dax_get_block_t, get_block_time);
-
-	nova_dbgv("%s: pgoff %llu, num %lu, create %d\n",
-				__func__, (u64)iblock, max_blocks, create);
 
 	epoch_id = nova_get_epoch_id(sb);
 
@@ -848,8 +846,8 @@ static int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 		check_next = 0;
 
 again:
-	nova_check_existing_entry(sb, inode, max_blocks,
-					iblock, &entry, &entry_copy, check_next,
+	nova_check_existing_entry(sb, inode,
+					iblock, &entry, &entry_copy,
 					epoch_id, &inplace, locked);
 
 	entryc = (metadata_csum == 0) ? entry : &entry_copy;
@@ -859,12 +857,16 @@ again:
 			nvmm = get_nvmm(sb, sih, entryc, iblock);
 			nova_dbgv("%s: found pgoff %llu, block %lu\n",
 					__func__, (u64)iblock, nvmm);
+			ret = 1;
 			goto out;
 		}
+	} else if (!check_next) {
+		ret = -EINVAL; // TODO: Is this correct?
+		goto out;
 	}
 
 	if (create == 0) {
-		num_blocks = 0;
+		ret = 0;
 		goto out1;
 	}
 
@@ -886,11 +888,10 @@ again:
 	blocknr = nova_new_data_block(sb, ALLOC_INIT_ZERO, ANY_CPU);
 	if (blocknr == 0) {
 		nova_dbgv("%s alloc blocks failed\n", __func__);
-		ret = 0;
+		ret = -ENOSPC;
 		goto out;
 	}
 
-	num_blocks = 1;
 	/* Do not extend file size */
 	nova_init_file_write_entry(sb, sih, &entry_data,
 					epoch_id, iblock,
@@ -921,13 +922,13 @@ again:
 	inode->i_blocks = sih->i_blocks;
 	sih->trans_id++;
 	NOVA_STATS_ADD(dax_new_blocks, 1);
+	ret = 1;
 
 //	set_buffer_new(bh);
 out:
 	if (ret < 0) {
 		nova_cleanup_incomplete_write(sb, sih, blocknr,
 						0, update.tail);
-		num_blocks = ret;
 		goto out1;
 	}
 
@@ -940,7 +941,7 @@ out1:
 		inode_unlock(inode);
 
 	NOVA_END_TIMING(dax_get_block_t, get_block_time);
-	return num_blocks;
+	return ret;
 }
 
 int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
