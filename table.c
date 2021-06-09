@@ -592,7 +592,28 @@ merged_bucket(struct nova_inner *inner, int i) {
 	return bucket->disbits < inner->bits;
 }
 static void
-handle_bucket_size_decrease(struct nova_mm_table *table, unsigned long * __restrict__ node_p, uint64_t index) {
+update_bucket_info(
+	struct nova_mm_table *table,
+	struct nova_bucket *bucket,
+	int used_hash_bit)
+{
+	struct nova_pmm_entry *pentry;
+	size_t shift = used_hash_bit - NOVA_TABLE_INNER_BITS + 1;
+	int i;
+	if (used_hash_bit == 0) // bucket is the root of a tablet.
+		return;
+	bucket->disbits = NOVA_TABLE_INNER_BITS;
+	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; ++i) {
+		pentry = table->pentries + bucket->entry_p[i].entrynr;
+		bucket->disbyte[i] = (uint8_t)(pentry->fp.index >> shift);
+	}
+}
+static void
+handle_bucket_size_decrease(
+	struct nova_mm_table *table,
+	unsigned long * __restrict__ node_p,
+	uint64_t index, int used_hash_bit)
+{
 	struct nova_inner *inner = nova_node_p_to_inner(*node_p);
 	struct nova_bucket *bucket = nova_node_p_to_bucket(inner->node_p[index]);
 	struct nova_bucket *sibling;
@@ -623,8 +644,8 @@ handle_bucket_size_decrease(struct nova_mm_table *table, unsigned long * __restr
 	if (inner->merged != 1 << (inner->bits - 1))
 		return;
 	if (inner->bits == 1) {
-		// printk("Delete the inner node, replace it with a bucket.\n");
-		bucket->disbits = NOVA_TABLE_INNER_BITS;	// Even if the node_p belongs to a tablet, the wrong disbits will do no harm.
+		// printk("Delete the inner node.\n");
+		update_bucket_info(table, bucket, used_hash_bit);
 		*node_p = nova_bucket_to_node_p(bucket);
 		nova_table_free_inner(table, inner);
 		// Even if the new bucket has a sibling bucket whose size is 0,
@@ -667,7 +688,7 @@ retry:
 	if (likely(retval <= 0)) {
 		return retval;
 	} else if (retval == NOVA_DELETE_ENTRY) {
-		handle_bucket_size_decrease(table, node_p, index);
+		handle_bucket_size_decrease(table, node_p, index, used_hash_bit);
 		return 0;
 	}
 	BUG_ON(retval != NOVA_FULL);

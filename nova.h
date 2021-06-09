@@ -836,9 +836,9 @@ void nova_init_file_write_entry(struct super_block *sb,
 int nova_reassign_file_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, u64 begin_tail);
 void nova_check_existing_entry(struct super_block *sb,
-	struct inode *inode, unsigned long num_blocks, unsigned long start_blk,
+	struct inode *inode, unsigned long start_blk,
 	struct nova_file_write_entry **ret_entry,
-	struct nova_file_write_entry *ret_entryc, int check_next, u64 epoch_id,
+	struct nova_file_write_entry *ret_entryc, u64 epoch_id,
 	int *inplace, int locked);
 int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	unsigned int flags, struct iomap *iomap, bool taking_lock);
