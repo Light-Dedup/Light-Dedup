@@ -39,11 +39,16 @@ entry_info_pmm_to_mm(__le64 info) {
 	return entry_info;
 }
 
-// typedef uint32_t region_entry_index_t;
-struct entry_allocator {
-	uint16_t *valid_entry;	// At most ENTRY_PER_REGION
+struct entry_allocator_cpu {
 	entrynr_t top_entrynr;	// Last allocated entry.
 	entrynr_t last_entrynr;	// Last not flushed entry. If none then -1.
+	int16_t allocated;
+};
+DECLARE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);
+
+// typedef uint32_t region_entry_index_t;
+struct entry_allocator {
+	int16_t *valid_entry;	// At most ENTRY_PER_REGION
     struct kfifo free_regions;
     spinlock_t lock;
 };
@@ -55,7 +60,15 @@ int nova_scan_entry_table(struct super_block *sb, struct entry_allocator *alloca
 	struct xatable *xat);
 
 void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr);
-entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator, struct nova_fp fp, __le64 info);
+entrynr_t nova_alloc_entry(struct entry_allocator *allocator,
+	struct entry_allocator_cpu *allocator_cpu);
+static inline void
+nova_alloc_entry_abort(struct entry_allocator_cpu *allocator_cpu)
+{
+}
+void nova_write_entry(struct entry_allocator *allocator,
+	struct entry_allocator_cpu *allocator_cpu, entrynr_t entrynr,
+	struct nova_fp fp, __le64 info);
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr);
 
 void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator);

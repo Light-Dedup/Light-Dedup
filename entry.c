@@ -11,11 +11,15 @@
 
 _Static_assert((1ULL << (sizeof(atomic_t) * 8)) > ENTRY_PER_REGION, "Type of counter of valid entries in a region is too small!");
 
+DEFINE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);
+
 static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocator *allocator,
 	bool zero_valid_entry)
 {
 	size_t buf_sz;
 	char *buf;
+	int cpu;
+	struct entry_allocator_cpu *allocator_cpu;
 	int ret;
 	if (zero_valid_entry)
 		allocator->valid_entry = vzalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
@@ -23,21 +27,32 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 		allocator->valid_entry = vmalloc(sbi->nr_regions * sizeof(allocator->valid_entry[0]));
 	if (allocator->valid_entry == NULL) {
 		nova_dbg("%s: Allocate valid_entry failed.\n", __func__);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_out0;
 	}
 	buf_sz = sbi->nr_regions * sizeof(regionnr_t);
 	buf = vmalloc(buf_sz);
 	if (buf == NULL) {
-		vfree(buf);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto err_out1;
 	}
 	ret = kfifo_init(&allocator->free_regions, buf, buf_sz);
-	if (ret) {
-		vfree(buf);
-		return ret;
+	if (ret)
+		goto err_out2;
+	for_each_possible_cpu(cpu) {
+		allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
+		// The first allocation will trigger a new_region request.
+		allocator_cpu->top_entrynr = allocator_cpu->last_entrynr = -1;
+		allocator_cpu->allocated = 0;
 	}
 	spin_lock_init(&allocator->lock);
 	return 0;
+err_out2:
+	vfree(buf);
+err_out1:
+	vfree(allocator->valid_entry);
+err_out0:
+	return ret;
 }
 
 int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator)
@@ -48,22 +63,18 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 		return ret;
 	for (i = 0; i < sbi->nr_regions; ++i)
 		BUG_ON(kfifo_in(&allocator->free_regions, &i, sizeof(i)) == 0);
-	// The first allocation will trigger a new_region request.
-	allocator->top_entrynr = allocator->last_entrynr = -1;
 	return 0;
 }
 
 static void rebuild_free_regions(struct nova_sb_info *sbi,
 	struct entry_allocator *allocator)
 {
-	uint16_t *valid_entry = allocator->valid_entry;
+	int16_t *valid_entry = allocator->valid_entry;
 	struct kfifo *free_regions = &allocator->free_regions;
 	regionnr_t i;
 	for (i = 0; i < sbi->nr_regions; ++i)
 		if (valid_entry[i] <= FREE_THRESHOLD)
 			BUG_ON(kfifo_in(free_regions, &i, sizeof(i)) != sizeof(i));
-	// The first allocation will trigger a new_region request.
-	allocator->top_entrynr = allocator->last_entrynr = -1;
 }
 int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
@@ -100,7 +111,7 @@ struct scan_para {
 	atomic64_t *cur_scan_region;
 	uint64_t scan_region_end;
 };
-static inline int handle_entry(struct nova_pmm_entry *pentries, uint16_t *valid_entry,
+static inline int handle_entry(struct nova_pmm_entry *pentries, int16_t *valid_entry,
 	struct xatable *xat, entrynr_t entrynr)
 {
 	struct nova_mm_entry_info info = entry_info_pmm_to_mm(pentries[entrynr].info);
@@ -110,7 +121,7 @@ static inline int handle_entry(struct nova_pmm_entry *pentries, uint16_t *valid_
 	++valid_entry[entrynr / ENTRY_PER_REGION];
 	return xa_err(xatable_store(xat, info.blocknr, xa_mk_value(entrynr), GFP_KERNEL));
 }
-static int scan_region(struct nova_pmm_entry *pentries, uint16_t *valid_entry,
+static int scan_region(struct nova_pmm_entry *pentries, int16_t *valid_entry,
 	struct xatable *xat, uint64_t scan_regionnr)
 {
 	entrynr_t entrynr;
@@ -132,7 +143,7 @@ static int __scan_worker(struct scan_para *para)
 	struct nova_meta_table *meta_table = &sbi->meta_table;
 	struct entry_allocator *entry_allocator = &meta_table->entry_allocator;
 	struct nova_pmm_entry *pentries = meta_table->pentries;
-	uint16_t *valid_entry = entry_allocator->valid_entry;
+	int16_t *valid_entry = entry_allocator->valid_entry;
 	atomic64_t *cur_scan_region = para->cur_scan_region;
 	uint64_t scan_region_end = para->scan_region_end;
 	uint64_t scan_regionnr;
@@ -168,7 +179,7 @@ static int handle_tail_entry(struct nova_sb_info *sbi, struct xatable *xat,
 	struct entry_allocator *allocator = &meta_table->entry_allocator;
 	entrynr_t entrynr_start = scan_region_end * ENTRY_PER_SCAN;
 	struct nova_pmm_entry *pentries = meta_table->pentries;
-	uint16_t *valid_entry = allocator->valid_entry;
+	int16_t *valid_entry = allocator->valid_entry;
 	entrynr_t entrynr;
 	int ret;
 	for (entrynr = entrynr_start; entrynr < sbi->nr_entries; ++entrynr) {
@@ -262,11 +273,13 @@ __flush_entry(struct entry_allocator *allocator, entrynr_t entrynr)
 	struct nova_pmm_entry *pentries = meta_table->pentries;
 	nova_flush_cacheline(pentries + entrynr, true);
 }
-static inline void flush_last_entry(struct entry_allocator *allocator)
+static inline void flush_last_entry(
+	struct entry_allocator *allocator,
+	struct entry_allocator_cpu *allocator_cpu)
 {
-	if (allocator->last_entrynr == (entrynr_t)-1)
+	if (allocator_cpu->last_entrynr == (entrynr_t)-1)
 		return;
-	__flush_entry(allocator, allocator->last_entrynr);
+	__flush_entry(allocator, allocator_cpu->last_entrynr);
 }
 static inline bool in_the_same_cacheline(entrynr_t a, entrynr_t b)
 {
@@ -274,45 +287,60 @@ static inline bool in_the_same_cacheline(entrynr_t a, entrynr_t b)
 }
 void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr)
 {
-	if (!in_the_same_cacheline(entrynr, allocator->last_entrynr))
-		return;	// Not in the volatile cache line.
-	flush_last_entry(allocator);
-	allocator->last_entrynr = -1;
+	// TODO: Is flushing a not dirty cache line expensive?
+	__flush_entry(allocator, entrynr);
 }
 
+// If none then return -1
 static regionnr_t
-new_region(struct entry_allocator *allocator)
+new_region(struct entry_allocator *allocator,
+	struct entry_allocator_cpu *allocator_cpu)
 {
 	regionnr_t regionnr;
-	if (allocator->top_entrynr != -1) {
-		regionnr = allocator->top_entrynr / ENTRY_PER_REGION;
+	spin_lock(&allocator->lock);
+	printk("top_entrynr = %llu\n", allocator_cpu->top_entrynr);
+	if (allocator_cpu->top_entrynr != -1) {
+		printk("Not -1\n");
+		regionnr = allocator_cpu->top_entrynr / ENTRY_PER_REGION;
+		allocator->valid_entry[regionnr] += allocator_cpu->allocated;
 		if (allocator->valid_entry[regionnr] <= FREE_THRESHOLD)
 			BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
 		// new_region at most once, so it is safe to not update top_entrynr here.
 	}
-	BUG_ON(kfifo_out(&allocator->free_regions,
-			&regionnr, sizeof(regionnr_t)
-		) != sizeof(regionnr_t));
+	if (kfifo_out(&allocator->free_regions, &regionnr, sizeof(regionnr_t))
+		 != sizeof(regionnr_t))
+	{
+		regionnr = 0;
+	}
+	spin_unlock(&allocator->lock);
+	printk("%s returns %u\n", __func__, regionnr);
 	return regionnr;
 }
-static entrynr_t
-alloc_entry(struct entry_allocator *allocator)
+// If none then return -1
+entrynr_t nova_alloc_entry(struct entry_allocator *allocator,
+	struct entry_allocator_cpu *allocator_cpu)
 {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
 	struct nova_pmm_entry *pentries = meta_table->pentries;
-	entrynr_t entrynr = allocator->top_entrynr;
+	entrynr_t entrynr = allocator_cpu->top_entrynr;
+	regionnr_t regionnr;
 	do {
 		++entrynr;
-		if ((entrynr % ENTRY_PER_REGION) == 0)
-			entrynr = (entrynr_t)new_region(allocator) * ENTRY_PER_REGION;
+		printk("2333\n");
+		if ((entrynr % ENTRY_PER_REGION) == 0) {
+			regionnr = new_region(allocator, allocator_cpu);
+			if (regionnr == -1)
+				return -1;
+			entrynr = (entrynr_t)regionnr * ENTRY_PER_REGION;
+		}
 	} while (entry_info_pmm_to_mm(pentries[entrynr].info).flag == NOVA_LEAF_ENTRY_MAGIC);
-	allocator->top_entrynr = entrynr;
-	++allocator->valid_entry[entrynr / ENTRY_PER_REGION];
+	allocator_cpu->top_entrynr = entrynr;
+	printk("%s returns %llu\n", __func__, entrynr);
 	return entrynr;
 }
-static void
-write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
+void nova_write_entry(struct entry_allocator *allocator,
+	struct entry_allocator_cpu *allocator_cpu, entrynr_t entrynr,
 	struct nova_fp fp, __le64 info)
 {
 	struct nova_meta_table *meta_table =
@@ -329,22 +357,13 @@ write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	pentry->fp = fp;
 	wmb();
 	pentry->info = info;
-	if (!in_the_same_cacheline(allocator->last_entrynr, entrynr))
-		flush_last_entry(allocator);
-	allocator->last_entrynr = entrynr;
+	if (!in_the_same_cacheline(allocator_cpu->last_entrynr, entrynr))
+		flush_last_entry(allocator, allocator_cpu);
+	allocator_cpu->last_entrynr = entrynr;
+	++allocator_cpu->allocated; // Commit the allocation
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	if (nova_is_protected(sb))
 		__nova_writable(0, &irq_flags);
-}
-entrynr_t nova_alloc_and_write_entry(struct entry_allocator *allocator,
-	struct nova_fp fp, __le64 info)
-{
-	entrynr_t entrynr;
-	spin_lock(&allocator->lock);
-	entrynr = alloc_entry(allocator);
-	write_entry(allocator, entrynr, fp, info);
-	spin_unlock(&allocator->lock);
-	return entrynr;
 }
 
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
@@ -358,9 +377,7 @@ void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 
 	spin_lock(&allocator->lock);
 	if ((--allocator->valid_entry[regionnr]) == FREE_THRESHOLD)
-		// To avoid adding the current region into free region queue repeatedly.
-		if (regionnr != allocator->top_entrynr / ENTRY_PER_REGION)
-			BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
+		BUG_ON(kfifo_in(&allocator->free_regions, &regionnr, sizeof(regionnr)) != sizeof(regionnr));
 	nova_unlock_write(sb, &pentry->info, 0, true);
 	spin_unlock(&allocator->lock);
 }
@@ -371,11 +388,16 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	__le16 *valid_entry_count = nova_sbi_blocknr_to_addr(sbi, sbi->region_valid_entry_count_start);
 	regionnr_t i;
+	int cpu;
+	struct entry_allocator_cpu *allocator_cpu;
 	unsigned long irq_flags = 0;
 	INIT_TIMING(save_entry_allocator_time);
 
 	NOVA_START_TIMING(save_entry_allocator_t, save_entry_allocator_time);
-	flush_last_entry(allocator);
+	for_each_possible_cpu(cpu) {
+		allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
+		flush_last_entry(allocator, allocator_cpu);
+	}
 	nova_memunlock_range(sb, valid_entry_count, sbi->nr_regions * sizeof(__le16), &irq_flags);
 	for (i = 0; i < sbi->nr_regions; ++i)
 		valid_entry_count[i] = cpu_to_le16(allocator->valid_entry[i]);

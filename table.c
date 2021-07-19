@@ -213,6 +213,8 @@ static int nova_table_leaf_insert(
 	struct super_block *sb = table->sblock;
 	struct nova_fp fp = wp->base.fp;
 	size_t i;
+	int cpu;
+	struct entry_allocator_cpu *allocator_cpu;
 	struct nova_mm_entry_info info;
 	struct nova_mm_entry_p entry_p;
 	int retval;
@@ -220,16 +222,27 @@ static int nova_table_leaf_insert(
 	i = find_free_slot_in_bucket(bucket, fp.indicator);
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
+	cpu = get_cpu();
+	printk("cpu: %d\n", cpu);
+	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
+	entry_p.entrynr = nova_alloc_entry(table->entry_allocator, allocator_cpu);
+	if (entry_p.entrynr == -1) {
+		put_cpu();
+		return -ENOSPC;
+	}
 	retval = get_new_block(sb, wp);
-	if (retval < 0)
+	if (retval < 0) {
+		nova_alloc_entry_abort(allocator_cpu);
+		put_cpu();
 		return retval;
-
+	}
 	info.blocknr = wp->blocknr;
 	info.flag = NOVA_LEAF_ENTRY_MAGIC;
-	entry_p.entrynr = nova_alloc_and_write_entry(
-			table->entry_allocator, fp, cpu_to_le64(info.value));
-	entry_p.refcount = wp->base.refcount;
+	nova_write_entry(table->entry_allocator, allocator_cpu, entry_p.entrynr,
+		fp, cpu_to_le64(info.value));
+	put_cpu();
 
+	entry_p.refcount = wp->base.refcount;
 	assign_entry(bucket, i, entry_p, fp, used_hash_bit);
 	return 0;
 }
@@ -301,6 +314,7 @@ static int bucket_upsert_base(
 	unsigned long blocknr;
 	long delta = wp->base.refcount;
 	INIT_TIMING(mem_bucket_find_time);
+	int ret;
 
 	BUG_ON(delta == 0);
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
@@ -351,7 +365,11 @@ static int bucket_upsert_base(
 		wp->base.refcount = 0;
 		return 0;
 	}
-	return nova_table_leaf_insert(table, bucket, used_hash_bit, wp, get_new_block);
+	ret = nova_table_leaf_insert(table, bucket, used_hash_bit, wp, get_new_block);
+	if (ret) {
+		printk("%d\n", ret);
+	}
+	return ret;
 }
 static int bucket_upsert_normal(
 	struct nova_mm_table *table,
