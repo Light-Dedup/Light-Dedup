@@ -298,9 +298,7 @@ new_region(struct entry_allocator *allocator,
 {
 	regionnr_t regionnr;
 	spin_lock(&allocator->lock);
-	printk("top_entrynr = %llu\n", allocator_cpu->top_entrynr);
 	if (allocator_cpu->top_entrynr != -1) {
-		printk("Not -1\n");
 		regionnr = allocator_cpu->top_entrynr / ENTRY_PER_REGION;
 		allocator->valid_entry[regionnr] += allocator_cpu->allocated;
 		if (allocator->valid_entry[regionnr] <= FREE_THRESHOLD)
@@ -313,7 +311,6 @@ new_region(struct entry_allocator *allocator,
 		regionnr = 0;
 	}
 	spin_unlock(&allocator->lock);
-	printk("%s returns %u\n", __func__, regionnr);
 	return regionnr;
 }
 // If none then return -1
@@ -327,7 +324,6 @@ entrynr_t nova_alloc_entry(struct entry_allocator *allocator,
 	regionnr_t regionnr;
 	do {
 		++entrynr;
-		printk("2333\n");
 		if ((entrynr % ENTRY_PER_REGION) == 0) {
 			regionnr = new_region(allocator, allocator_cpu);
 			if (regionnr == -1)
@@ -336,7 +332,6 @@ entrynr_t nova_alloc_entry(struct entry_allocator *allocator,
 		}
 	} while (entry_info_pmm_to_mm(pentries[entrynr].info).flag == NOVA_LEAF_ENTRY_MAGIC);
 	allocator_cpu->top_entrynr = entrynr;
-	printk("%s returns %llu\n", __func__, entrynr);
 	return entrynr;
 }
 void nova_write_entry(struct entry_allocator *allocator,

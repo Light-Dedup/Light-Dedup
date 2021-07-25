@@ -223,7 +223,6 @@ static int nova_table_leaf_insert(
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
 	cpu = get_cpu();
-	printk("cpu: %d\n", cpu);
 	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 	entry_p.entrynr = nova_alloc_entry(table->entry_allocator, allocator_cpu);
 	if (entry_p.entrynr == -1) {
@@ -314,7 +313,6 @@ static int bucket_upsert_base(
 	unsigned long blocknr;
 	long delta = wp->base.refcount;
 	INIT_TIMING(mem_bucket_find_time);
-	int ret;
 
 	BUG_ON(delta == 0);
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
@@ -365,11 +363,7 @@ static int bucket_upsert_base(
 		wp->base.refcount = 0;
 		return 0;
 	}
-	ret = nova_table_leaf_insert(table, bucket, used_hash_bit, wp, get_new_block);
-	if (ret) {
-		printk("%d\n", ret);
-	}
-	return ret;
+	return nova_table_leaf_insert(table, bucket, used_hash_bit, wp, get_new_block);
 }
 static int bucket_upsert_normal(
 	struct nova_mm_table *table,
