@@ -106,6 +106,19 @@ static inline int nova_is_wprotected(struct super_block *sb)
 }
 
 static inline void
+nova_memunlock(struct super_block *sb, unsigned long *flags)
+{
+	if (nova_is_protected(sb))
+		__nova_writable(1, flags);
+}
+static inline void
+nova_memlock(struct super_block *sb, unsigned long *flags)
+{
+	if (nova_is_protected(sb))
+		__nova_writable(0, flags);
+}
+
+static inline void
 __nova_memunlock_range(void *p, unsigned long len, unsigned long *flags)
 {
 	/*

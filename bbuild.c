@@ -782,23 +782,6 @@ out:
 	return ret;
 }
 
-static void free_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
-{
-	int i;
-	xatable_destroy(&info->map_blocknr_entrynr);
-	for (i = 0; i < sbi->cpus; i++)
-		kvfree(info->global_bm[i].bitmap);
-	kfree(info->global_bm);
-}
-static void free_all_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
-{
-	struct nova_meta_table *table = &sbi->meta_table;
-	struct entry_allocator *allocator = &table->entry_allocator;
-	free_failure_recovery_info(sbi, info);
-	nova_meta_table_free(table);
-	nova_free_entry_allocator(allocator);
-}
-
 static struct scan_bitmap *
 alloc_bm(struct nova_sb_info *sbi)
 {
@@ -831,6 +814,15 @@ alloc_bm(struct nova_sb_info *sbi)
 	}
 	return global_bm;
 }
+static inline void free_bm(struct nova_sb_info *sbi,
+	struct scan_bitmap *global_bm)
+{
+	int i;
+	for (i = 0; i < sbi->cpus; i++)
+		kvfree(global_bm[i].bitmap);
+	kfree(global_bm);
+}
+
 static int alloc_failure_recovery_info(struct super_block *sb,
 	struct failure_recovery_info *info)
 {
@@ -847,20 +839,23 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 	ret = nova_meta_table_alloc(table, sb);
 	if (ret < 0)
 		goto err_out1;
-	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
-	ret = nova_scan_entry_table(sb, allocator, xat);
-	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
-	if (ret < 0)
-		goto err_out2;
+
 	info->global_bm = alloc_bm(sbi);
 	if (IS_ERR(info->global_bm)) {
 		ret = PTR_ERR(info->global_bm);
-		goto err_out3;
+		goto err_out2;
 	}
 	info->fp_table = &table->metas;
+
+	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
+	ret = nova_scan_entry_table(sb, allocator, xat,
+		info->global_bm[0].bitmap);
+	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
+	if (ret < 0)
+		goto err_out3;
 	return 0;
 err_out3:
-	nova_free_entry_allocator(allocator);
+	free_bm(sbi, info->global_bm);
 err_out2:
 	nova_meta_table_free(table);
 err_out1:
@@ -868,6 +863,21 @@ err_out1:
 err_out0:
 	return ret;
 }
+
+static void free_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
+{
+	xatable_destroy(&info->map_blocknr_entrynr);
+	free_bm(sbi, info->global_bm);
+}
+static void free_all_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
+{
+	struct nova_meta_table *table = &sbi->meta_table;
+	struct entry_allocator *allocator = &table->entry_allocator;
+	free_failure_recovery_info(sbi, info);
+	nova_meta_table_free(table);
+	nova_free_entry_allocator(allocator);
+}
+
 static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *info)
 {
 	struct xatable *xat = &info->map_blocknr_entrynr;
@@ -1631,8 +1641,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 	struct nova_meta_table *table = &sbi->meta_table;
 	int ret;
 
-	if (recover_meta->region_valid_entry_count_saved != NOVA_RECOVER_META_FLAG_COMPLETE ||
-		recover_meta->refcount_saved != NOVA_RECOVER_META_FLAG_COMPLETE)
+	if (recover_meta->saved != NOVA_RECOVER_META_FLAG_COMPLETE)
 		return false;
 	if (pi->log_head == 0 || pi->log_tail == 0)
 		return false;
@@ -1664,8 +1673,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 		nova_err(sb, "Restore meta table failed, fall back to failure recovery\n");
 		return false;
 	}
-	recover_meta->region_valid_entry_count_saved = 0;
-	recover_meta->refcount_saved = 0;
+	recover_meta->saved = 0;
 
 	return true;
 }

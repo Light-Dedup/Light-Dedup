@@ -106,7 +106,6 @@ struct nova_mm_table {
 	struct super_block    *sblock;
 	struct kmem_cache *bucket_cache;
 	struct entry_allocator *entry_allocator;
-	struct nova_pmm_entry *pentries;
 	uint64_t               nr_tablets;
 	struct nova_mm_tablet  *tablets;
 };

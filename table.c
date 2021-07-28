@@ -1,7 +1,6 @@
 #include <linux/atomic.h>
 #include <linux/string.h>
 
-#include "table.h"
 #include "nova.h"
 #include "faststr.h"
 #include "arithmetic.h"
@@ -79,8 +78,18 @@ struct nova_write_para_entry {
 	entrynr_t entrynr;
 };
 
+static inline bool
+fp_matches(struct entry_allocator *allocator,
+	const struct nova_bucket *bucket,
+	size_t i,
+	const struct nova_fp *fp)
+{
+	entrynr_t entrynr = bucket->entry_p[i].entrynr;
+	struct nova_pmm_entry *pentry = entrynr_to_pentry(allocator, entrynr);
+	return nova_fp_equal(fp, &pentry->fp);
+}
 static size_t nova_table_leaf_find(
-	const struct nova_pmm_entry *pentries,
+	struct entry_allocator *allocator,
 	const struct nova_bucket *bucket,
 	const struct nova_fp *fp)
 {
@@ -89,13 +98,13 @@ static size_t nova_table_leaf_find(
 	uint8_t tag = (uint8_t)(fp->tag % 0xff + 1);
 	for (i = index; i < NOVA_TABLE_LEAF_SIZE; i++) {
 		if (bucket->tags[i] == tag && bucket->indicators[i] == fp->indicator &&
-			nova_fp_equal(fp, &pentries[bucket->entry_p[i].entrynr].fp)) {
+			fp_matches(allocator, bucket, i, fp)) {
 			return i;
 		}
 	}
 	for (i = 0; i < index; i++) {
 		if (bucket->tags[i] == tag && bucket->indicators[i] == fp->indicator &&
-			nova_fp_equal(fp, &pentries[bucket->entry_p[i].entrynr].fp)) {
+			fp_matches(allocator, bucket, i, fp)) {
 			return i;
 		}
 	}
@@ -211,25 +220,38 @@ static int nova_table_leaf_insert(
 	int get_new_block(struct super_block *, struct nova_write_para_normal *))
 {
 	struct super_block *sb = table->sblock;
+	struct entry_allocator *allocator = table->entry_allocator;
 	struct nova_fp fp = wp->base.fp;
 	size_t i;
+	entrynr_t entrynr;
 	struct nova_mm_entry_info info;
 	struct nova_mm_entry_p entry_p;
-	int retval;
+	int ret;
 
 	i = find_free_slot_in_bucket(bucket, fp.indicator);
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
-	retval = get_new_block(sb, wp);
-	if (retval < 0)
-		return retval;
+
+	spin_lock(&allocator->lock);
+	ret = alloc_entry(allocator, &entrynr);
+	if (ret < 0) {
+		spin_unlock(&allocator->lock);
+		return ret;
+	}
+
+	ret = get_new_block(sb, wp);
+	if (ret < 0) {
+		spin_unlock(&allocator->lock);
+		return ret;
+	}
 
 	info.blocknr = wp->blocknr;
 	info.flag = NOVA_LEAF_ENTRY_MAGIC;
-	entry_p.entrynr = nova_alloc_and_write_entry(
-			table->entry_allocator, fp, cpu_to_le64(info.value));
-	entry_p.refcount = wp->base.refcount;
+	write_entry(allocator, entrynr, fp, cpu_to_le64(info.value));
+	spin_unlock(&allocator->lock);
 
+	entry_p.entrynr = entrynr;
+	entry_p.refcount = wp->base.refcount;
 	assign_entry(bucket, i, entry_p, fp, used_hash_bit);
 	return 0;
 }
@@ -292,7 +314,7 @@ static int bucket_upsert_base(
 	int (*get_new_block)(struct super_block *, struct nova_write_para_normal *))
 {
 	struct super_block *sb = table->sblock;
-	struct nova_pmm_entry *pentries = table->pentries;
+	struct entry_allocator *allocator = table->entry_allocator;
 	size_t leaf_index;
 	// struct nova_pmm_node *pnode;
 	struct nova_pmm_entry *pentry;
@@ -304,11 +326,11 @@ static int bucket_upsert_base(
 
 	BUG_ON(delta == 0);
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	leaf_index = nova_table_leaf_find(pentries, bucket, &wp->base.fp);
+	leaf_index = nova_table_leaf_find(allocator, bucket, &wp->base.fp);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	if (leaf_index != NOVA_TABLE_LEAF_SIZE) {
 		entry_p = bucket->entry_p + leaf_index;
-		pentry = pentries + entry_p->entrynr;
+		pentry = entrynr_to_pentry(allocator, entry_p->entrynr);
 		pentry_info = entry_info_pmm_to_mm(pentry->info);
 		BUG_ON(pentry_info.flag != NOVA_LEAF_ENTRY_MAGIC);
 		blocknr = pentry_info.blocknr;
@@ -377,7 +399,7 @@ static int bucket_upsert_decr1(
 	size_t used_hash_bit,
 	struct nova_write_para_base *__wp)
 {
-	struct nova_pmm_entry *pentries = table->pentries;
+	struct entry_allocator *allocator = table->entry_allocator;
 	size_t leaf_index;
 	struct nova_pmm_entry *pentry;
 	struct nova_mm_entry_p *entry_p;
@@ -387,7 +409,7 @@ static int bucket_upsert_decr1(
 	INIT_TIMING(mem_bucket_find_time);
 
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	leaf_index = nova_table_leaf_find(pentries, bucket, &wp->base.fp);
+	leaf_index = nova_table_leaf_find(allocator, bucket, &wp->base.fp);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	if (leaf_index == NOVA_TABLE_LEAF_SIZE) {
 		// Collision happened. Just free it.
@@ -396,7 +418,7 @@ static int bucket_upsert_decr1(
 		return 0;
 	}
 	entry_p = bucket->entry_p + leaf_index;
-	pentry = pentries + entry_p->entrynr;
+	pentry = entrynr_to_pentry(allocator, entry_p->entrynr);
 	pentry_info = entry_info_pmm_to_mm(pentry->info);
 	BUG_ON(pentry_info.flag != NOVA_LEAF_ENTRY_MAGIC);
 	blocknr = pentry_info.blocknr;
@@ -449,7 +471,7 @@ static int bucket_upsert_entry(
 	size_t i;
 	struct nova_mm_entry_p *entry_p;
 
-	i = nova_table_leaf_find(table->pentries, bucket, &wp->base.fp);
+	i = nova_table_leaf_find(table->entry_allocator, bucket, &wp->base.fp);
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return bucket_insert_entry(table, bucket, used_hash_bit, __wp);
 	entry_p = bucket->entry_p + i;
@@ -468,12 +490,13 @@ static void __bucket_rehash_new_inner(
 	struct nova_bucket *bucket[2],
 	size_t disbase)
 {
-	struct nova_pmm_entry *pentries = table->pentries, *pentry;
+	struct entry_allocator *allocator = table->entry_allocator;
+	struct nova_pmm_entry *pentry;
 	uint64_t cur_layer_fp;
 	size_t which;
 	size_t i;
 	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; i++) {
-		pentry = pentries + old_bucket->entry_p[i].entrynr;
+		pentry = entrynr_to_pentry(allocator, old_bucket->entry_p[i].entrynr);
 		cur_layer_fp = pentry->fp.index >> disbase;
 		which =  cur_layer_fp & 1;
 		BUG_ON(nova_table_leaf_mm_insert(table, 
@@ -607,10 +630,11 @@ static int __nova_table_split(
 }
 
 static void merge_bucket(struct nova_mm_table *table, struct nova_bucket *dst, struct nova_bucket *src) {
-	struct nova_pmm_entry *pentries = table->pentries, *pentry;
+	struct entry_allocator *allocator = table->entry_allocator;
+	struct nova_pmm_entry *pentry;
 	int i;
 	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; ++i) {
-		pentry = pentries + src->entry_p[i].entrynr;
+		pentry = entrynr_to_pentry(allocator, src->entry_p[i].entrynr);
 		if (src->tags[i] != 0)
 			nova_table_leaf_mm_insert(table, dst, src, i, src->disbyte[i]);
 	}
@@ -629,6 +653,7 @@ update_bucket_info(
 	struct nova_bucket *bucket,
 	int used_hash_bit)
 {
+	struct entry_allocator *allocator = table->entry_allocator;
 	struct nova_pmm_entry *pentry;
 	size_t shift = used_hash_bit - NOVA_TABLE_INNER_BITS + 1;
 	int i;
@@ -636,7 +661,7 @@ update_bucket_info(
 		return;
 	bucket->disbits = NOVA_TABLE_INNER_BITS;
 	for (i = 0; i < NOVA_TABLE_LEAF_SIZE; ++i) {
-		pentry = table->pentries + bucket->entry_p[i].entrynr;
+		pentry = entrynr_to_pentry(allocator, bucket->entry_p[i].entrynr);
 		bucket->disbyte[i] = (uint8_t)(pentry->fp.index >> shift);
 	}
 }
@@ -832,13 +857,14 @@ int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 int nova_fp_table_upsert_entry(struct nova_mm_table *table,
 	entrynr_t entrynr)
 {
-	struct nova_pmm_entry *pentries = table->pentries;
+	struct nova_pmm_entry *pentry;
 	struct nova_write_para_entry wp;
 	INIT_TIMING(upsert_fp_entry_time);
 	int ret;
 
 	NOVA_START_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
-	wp.base.fp = pentries[entrynr].fp;
+	pentry = entrynr_to_pentry(table->entry_allocator, entrynr);
+	wp.base.fp = pentry->fp;
 	wp.base.refcount = 1;
 	wp.entrynr = entrynr;
 	ret = nova_table_upsert_entry(table, &wp);
@@ -1037,7 +1063,6 @@ void nova_table_save(struct nova_mm_table* table)
 	__nova_table_save(table, &__saved);
 	saved = atomic64_read(&__saved);
 	nova_unlock_write(sb, &recover_meta->refcount_record_num, cpu_to_le64(saved), true);
-	nova_unlock_write(sb, &recover_meta->refcount_saved, NOVA_RECOVER_META_FLAG_COMPLETE, true);
 	NOVA_END_TIMING(save_refcount_t, save_refcount_time);
 	nova_info("Refcount of %llu entries saved.", saved);
 }
@@ -1065,7 +1090,6 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table)
 
 	table->sblock = sb;
 	table->nr_tablets = nr_tablets;
-	table->pentries = nova_blocknr_to_addr(sb, sbi->entry_table_start);
 	table->entry_allocator = &sbi->meta_table.entry_allocator;
 
 	table->bucket_cache = kmem_cache_create("nova_bucket_cache", sizeof(struct nova_bucket), 0, TABLE_KMEM_CACHE_FLAGS, NULL);
@@ -1117,9 +1141,10 @@ static int __table_recover_func(struct nova_mm_table *table,
 {
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct entry_allocator *allocator = table->entry_allocator;
 	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
 		sbi, sbi->entry_refcount_record_start);
-	struct nova_pmm_entry *pentries = table->pentries;
+	struct nova_pmm_entry *pentry;
 	struct nova_write_para_entry wp;
 	entrynr_t i;
 	int ret = 0;
@@ -1127,7 +1152,8 @@ static int __table_recover_func(struct nova_mm_table *table,
 	for (i = entry_start; i < entry_end; ++i) {
 		wp.entrynr = le32_to_cpu(rec[i].entrynr);
 		wp.base.refcount = le32_to_cpu(rec[i].refcount);
-		wp.base.fp = pentries[wp.entrynr].fp;
+		pentry = entrynr_to_pentry(allocator, wp.entrynr);
+		wp.base.fp = pentry->fp;
 		ret = nova_table_insert_entry(table, &wp);
 		if (ret < 0)
 			break;
