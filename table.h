@@ -21,13 +21,12 @@ _Static_assert(INDEX_BIT_NUM % NOVA_TABLE_INNER_BITS == 0, "INDEX_BIT_NUM % NOVA
 struct nova_mm_entry_p {
 	// entrynr_t entrynr: 48;
 	// uint16_t refcount: 16;
-	entrynr_t entrynr: 32;
-	uint32_t refcount: 32;
+	struct nova_pmm_entry *pentry;
+	uint64_t refcount; // TODO: Place it in NVM.
 };
-_Static_assert(sizeof(struct nova_mm_entry_p) == 8, "size of mm_entry_p is not 8!");
 struct nova_entry_refcount_record {
-	__le32 entrynr;
-	__le32 refcount;
+	__le64 entry_offset;
+	__le64 refcount;
 };
 
 struct nova_bucket {
@@ -119,7 +118,7 @@ static inline bool nova_fp_equal(
 
 struct nova_write_para_base {
 	struct nova_fp fp;
-	long refcount;
+	int64_t refcount;
 };
 struct nova_write_para_normal {
 	// Because C does not support inheritance.
@@ -143,7 +142,7 @@ int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 	const void *addr, struct nova_write_para_rewrite *wp,
 	unsigned long blocknr, size_t offset, size_t bytes);
 int nova_fp_table_upsert_entry(struct nova_mm_table *table,
-	entrynr_t entrynr);
+	struct nova_pmm_entry *pentry);
 
 int nova_table_init(struct super_block *sb, struct nova_mm_table *table);
 int nova_table_recover(struct nova_mm_table *table);

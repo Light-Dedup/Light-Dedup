@@ -250,21 +250,6 @@ static inline void nova_print_curr_epoch_id(struct super_block *sb)
 	nova_dbg("Current epoch id: %llu\n", ret);
 }
 
-// meta.h
-// TODO: Rearrange the headers to prevent this ugly thing
-static inline struct nova_pmm_entry *
-entrynr_to_pentry(struct entry_allocator *allocator, entrynr_t entrynr)
-{
-	const struct nova_meta_table *meta_table = container_of(
-		allocator, struct nova_meta_table, entry_allocator);
-	struct nova_sb_info *sbi = container_of(
-		meta_table, struct nova_sb_info, meta_table);
-	u64 offset;
-	offset = allocator->region_blocknr[entrynr / ENTRY_PER_REGION]
-		* REGION_SIZE
-		+ entrynr % ENTRY_PER_REGION * sizeof(struct nova_pmm_entry);
-	return (struct nova_pmm_entry *)nova_sbi_get_block(sbi, offset);
-}
 
 
 

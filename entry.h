@@ -47,14 +47,12 @@ struct entry_allocator {
 	__le64 *last_region_tail;
 	regionnr_t valid_entry_count_num;
 	__le64 *last_valid_entry_count_block_tail;
-	regionnr_t region_array_cap; // Cap of valid_entry and region_blocknr
-	uint16_t *valid_entry;	// At most ENTRY_PER_REGION
-	unsigned long *region_blocknr;
 	// TODO: Place most free regions in the NVM in a list queue manner.
 	struct nova_queue free_regions; // Region numbers
-	entrynr_t top_entrynr;	// Last allocated entry.
-	entrynr_t last_entrynr;	// Last not flushed entry. If none then -1.
+	struct nova_pmm_entry *top_entry; // Last allocated entry.
+	struct nova_pmm_entry *last_entry; // Last not flushed entry.
 	spinlock_t lock;
+	struct xarray valid_entry; // Key is blocknr of region
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \
 	((PAGE_SIZE - sizeof(__le64)) / sizeof(uint16_t))
@@ -66,11 +64,14 @@ int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
 	unsigned long *bm);
 
-void nova_flush_entry(struct entry_allocator *allocator, entrynr_t entrynr);
-int alloc_entry(struct entry_allocator *allocator, entrynr_t *new_entrynr);
-void write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
-	struct nova_fp fp, __le64 info);
-void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr);
+void nova_flush_entry(struct entry_allocator *allocator,
+	struct nova_pmm_entry *pentry);
+struct nova_pmm_entry *
+alloc_entry(struct entry_allocator *allocator);
+void write_entry(struct entry_allocator *allocator,
+	struct nova_pmm_entry *pentry, struct nova_fp fp, __le64 info);
+void nova_free_entry(struct entry_allocator *allocator,
+	struct nova_pmm_entry *pentry);
 
 void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator);
 
