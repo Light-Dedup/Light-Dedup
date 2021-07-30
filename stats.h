@@ -169,6 +169,8 @@ enum timing_category {
 	incr_ref_t,
 	decr_ref_t,
 	memcpy_data_block_t,
+	new_region_t,
+	alloc_entry_t,
 	write_new_entry_t,
 	mem_bucket_find_t,
 	split_leaf_t,

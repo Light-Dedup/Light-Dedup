@@ -449,6 +449,9 @@ new_region(struct entry_allocator *allocator,
 	unsigned long blocknr;
 	int16_t count;
 	int ret;
+	INIT_TIMING(new_region_time);
+
+	NOVA_START_TIMING(new_region_t, new_region_time);
 	spin_lock(&allocator->lock);
 	if (nova_queue_pop(&allocator->free_regions,
 		new_region_blocknr, sizeof(*new_region_blocknr)) == 0)
@@ -456,6 +459,7 @@ new_region(struct entry_allocator *allocator,
 		ret = alloc_region(allocator);
 		if (ret < 0) {
 			spin_unlock(&allocator->lock);
+			NOVA_END_TIMING(new_region_t, new_region_time);
 			return ret;
 		}
 		BUG_ON(nova_queue_pop(&allocator->free_regions,
@@ -478,6 +482,7 @@ new_region(struct entry_allocator *allocator,
 		// new_region at most once, so it is safe to not update top_entrynr here.
 	}
 	// printk("%s: new_region_blocknr = %lx\n", __func__, *new_region_blocknr);
+	NOVA_END_TIMING(new_region_t, new_region_time);
 	return 0;
 }
 // No need to free until write
@@ -492,20 +497,25 @@ nova_alloc_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry = allocator_cpu->top_entry;
 	unsigned long new_region_blocknr;
 	int ret;
+	INIT_TIMING(alloc_entry_time);
+	NOVA_START_TIMING(alloc_entry_t, alloc_entry_time);
 	do {
 		++pentry;
 		if ((u64)pentry % PAGE_SIZE ==
 			REAL_ENTRY_PER_REGION * sizeof(struct nova_pmm_entry))
 		{
 			ret = new_region(allocator, allocator_cpu, &new_region_blocknr);
-			if (ret < 0)
+			if (ret < 0) {
+				NOVA_END_TIMING(alloc_entry_t, alloc_entry_time);
 				return ERR_PTR(ret);
+			}
 			pentry = nova_sbi_blocknr_to_addr(
 				sbi, new_region_blocknr);
 		}
 	} while (entry_info_pmm_to_mm(pentry->info).flag
 		== NOVA_LEAF_ENTRY_MAGIC);
 	allocator_cpu->top_entry = pentry;
+	NOVA_END_TIMING(alloc_entry_t, alloc_entry_time);
 	return pentry;
 }
 void nova_write_entry(struct entry_allocator *allocator,
