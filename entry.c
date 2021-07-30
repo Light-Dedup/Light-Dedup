@@ -612,6 +612,7 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 					allocator_cpu->top_entry
 				) / PAGE_SIZE,
 				allocator_cpu->allocated);
+			allocator_cpu->allocated = 0;
 		}
 	}
 	nova_unlock_write(sb, &recover_meta->region_num,
