@@ -468,6 +468,7 @@ new_region(struct entry_allocator *allocator,
 			PAGE_SIZE;
 		count = add_valid_count(&allocator->valid_entry, blocknr,
 			allocator_cpu->allocated);
+		allocator_cpu->allocated = 0;
 		if (count <= FREE_THRESHOLD)
 		{
 			BUG_ON(nova_queue_push(&allocator->free_regions,
