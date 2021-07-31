@@ -429,15 +429,20 @@ static int16_t add_valid_count(struct xarray *counts, unsigned long blocknr,
 	int16_t count;
 	void *entry;
 	INIT_TIMING(add_valid_count_time);
+
+	// printk("%s: blocknr = %lu, delta = %d\n", __func__, blocknr, delta);
 	NOVA_START_TIMING(add_valid_count_t, add_valid_count_time);
 	entry = xa_load(counts, blocknr);
 	do {
-		count = xa_to_value(entry);
-		entry = xa_cmpxchg(counts, blocknr, xa_mk_value(count),
-			xa_mk_value(count + delta), GFP_ATOMIC);
+		count = (int16_t)xa_to_value(entry);
+		// printk("count = %d\n", count);
+		entry = xa_cmpxchg(counts, blocknr,
+			xa_mk_value((uint16_t)count),
+			xa_mk_value((uint16_t)(count + delta)),
+			GFP_ATOMIC);
 		// Actually won't allocate
 		BUG_ON(xa_is_err(entry)); // TODO: Is this safe?
-	} while (xa_to_value(entry) != count);
+	} while ((int16_t)xa_to_value(entry) != count);
 	NOVA_END_TIMING(add_valid_count_t, add_valid_count_time);
 	return count + delta;
 }
