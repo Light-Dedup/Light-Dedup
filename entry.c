@@ -427,7 +427,10 @@ static int16_t add_valid_count(struct xarray *counts, unsigned long blocknr,
 	int16_t delta)
 {
 	int16_t count;
-	void *entry = xa_load(counts, blocknr);
+	void *entry;
+	INIT_TIMING(add_valid_count_time);
+	NOVA_START_TIMING(add_valid_count_t, add_valid_count_time);
+	entry = xa_load(counts, blocknr);
 	do {
 		count = xa_to_value(entry);
 		entry = xa_cmpxchg(counts, blocknr, xa_mk_value(count),
@@ -435,6 +438,7 @@ static int16_t add_valid_count(struct xarray *counts, unsigned long blocknr,
 		// Actually won't allocate
 		BUG_ON(xa_is_err(entry)); // TODO: Is this safe?
 	} while (xa_to_value(entry) != count);
+	NOVA_END_TIMING(add_valid_count_t, add_valid_count_time);
 	return count + delta;
 }
 static int
