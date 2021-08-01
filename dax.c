@@ -827,7 +827,6 @@ static int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 	u64 epoch_id;
 	int inplace = 0;
 	int locked = 0;
-	int check_next = 1;
 	int ret = 0;
 	unsigned long irq_flags = 0;
 	INIT_TIMING(get_block_time);
@@ -842,9 +841,6 @@ static int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 
 	epoch_id = nova_get_epoch_id(sb);
 
-	if (taking_lock)
-		check_next = 0;
-
 again:
 	nova_check_existing_entry(sb, inode,
 					iblock, &entry, &entry_copy,
@@ -854,15 +850,13 @@ again:
 
 	if (entry) {
 		if (create == 0 || inplace) {
+			// create == 0 means read-only access
 			nvmm = get_nvmm(sb, sih, entryc, iblock);
 			nova_dbgv("%s: found pgoff %llu, block %lu\n",
 					__func__, (u64)iblock, nvmm);
 			ret = 1;
 			goto out;
 		}
-	} else if (!check_next) {
-		ret = -EINVAL; // TODO: Is this correct?
-		goto out;
 	}
 
 	if (create == 0) {
@@ -874,7 +868,6 @@ again:
 		inode_lock(inode);
 		locked = 1;
 		/* Check again incase someone has done it for us */
-		check_next = 1;
 		goto again;
 	}
 
@@ -955,12 +948,16 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	u32 bno;
 	int ret;
 
+	BUG_ON(flags != IOMAP_FAULT && // Read only
+		flags != (IOMAP_WRITE | IOMAP_FAULT) // Write new area once
+	);
 	ret = nova_dax_get_blocks(inode, first_block, max_blocks, &bno, &new,
 				  &boundary, flags & IOMAP_WRITE, taking_lock);
 	if (ret < 0) {
 		nova_dbgv("%s: nova_dax_get_blocks failed %d", __func__, ret);
 		return ret;
 	}
+	BUG_ON((flags & IOMAP_WRITE) && !new); // TODO
 
 	iomap->flags = 0;
 	iomap->bdev = inode->i_sb->s_bdev;
