@@ -345,7 +345,7 @@ static int bucket_upsert_base(
 		} else {
 			if (blocknr != wp->blocknr) {
 				// Collision happened. Just free it.
-				printk("A collision happened. blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+				printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
 				wp->base.refcount = 0;
 				return 0;
 			}
@@ -365,7 +365,7 @@ static int bucket_upsert_base(
 	}
 	if (delta < 0) {
 		// Collision happened. Just free it.
-		printk("A collision happened. Block %ld can not be found in the hash table.", wp->blocknr);
+		printk("Block %ld can not be found in the hash table.", wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}
@@ -408,7 +408,7 @@ static int bucket_upsert_decr1(
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	if (leaf_index == NOVA_TABLE_LEAF_SIZE) {
 		// Collision happened. Just free it.
-		printk("A collision happened. Block %ld can not be found in the hash table.", wp->blocknr);
+		printk("Block %ld can not be found in the hash table.", wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}
@@ -418,7 +418,7 @@ static int bucket_upsert_decr1(
 	blocknr = pentry_info.blocknr;
 	if (blocknr != wp->blocknr) {
 		// Collision happened. Just free it.
-		printk("A collision happened. blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+		printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}

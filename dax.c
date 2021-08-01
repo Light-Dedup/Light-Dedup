@@ -946,8 +946,11 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	unsigned long max_blocks = (length + (1 << blkbits) - 1) >> blkbits;
 	bool new = false, boundary = false;
 	u32 bno;
+	long refcount;
 	int ret;
 
+	// if (flags != 0x8)
+	// 	printk("%s: %x\n", __func__, flags);
 	BUG_ON(flags != IOMAP_FAULT && // Read only
 		flags != (IOMAP_WRITE | IOMAP_FAULT) // Write new area once
 	);
@@ -957,7 +960,6 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 		nova_dbgv("%s: nova_dax_get_blocks failed %d", __func__, ret);
 		return ret;
 	}
-	BUG_ON((flags & IOMAP_WRITE) && !new); // TODO
 
 	iomap->flags = 0;
 	iomap->bdev = inode->i_sb->s_bdev;
@@ -968,15 +970,36 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 		iomap->type = IOMAP_HOLE;
 		iomap->addr = IOMAP_NULL_ADDR;
 		iomap->length = 1 << blkbits;
-	} else {
-		iomap->type = IOMAP_MAPPED;
-		iomap->addr = (u64)bno << blkbits;
-		iomap->length = (u64)ret << blkbits;
-		iomap->flags |= IOMAP_F_MERGED;
+		return 0;
 	}
+	iomap->type = IOMAP_MAPPED;
+	iomap->addr = (u64)bno << blkbits;
+	iomap->length = (u64)ret << blkbits;
+	iomap->flags |= IOMAP_F_MERGED;
 
 	if (new)
 		iomap->flags |= IOMAP_F_NEW;
+	if (flags & IOMAP_WRITE) {
+		if (new)
+			return 0;
+		refcount = nova_meta_table_decr1(
+			&sbi->meta_table,
+			nova_sbi_blocknr_to_addr(sbi, bno),
+			bno);
+		if (refcount < 0)
+			return refcount;
+		if (refcount == 0)
+			// A block without dedup now.
+			// Could do inplace write freely.
+			return 0;
+		printk("TODO: CoW, and update read mapping");
+	} else {
+		BUG_ON(flags & IOMAP_ZERO); // TODO
+		BUG_ON(flags & IOMAP_REPORT); // TODO
+		// Ignore IOMAP_DIRECT and IOMAP_NOWAIT
+		// TODO: Maybe the mapping of read should be recorded for
+		// future update?
+	}
 	return 0;
 }
 
