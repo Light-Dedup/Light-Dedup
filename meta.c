@@ -4,10 +4,8 @@
 
 int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int ret;
 	table->sblock = sb;
-	table->pentries = nova_sbi_blocknr_to_addr(sbi, sbi->entry_table_start);
 	ret = nova_fp_strong_ctx_init(&table->fp_ctx);
 	if (ret < 0)
 		goto err_out0;
@@ -57,15 +55,17 @@ int nova_meta_table_restore(struct nova_meta_table *table, struct super_block *s
 	ret = nova_meta_table_alloc(table, sb);
 	if (ret < 0)
 		goto err_out0;
+	ret = nova_entry_allocator_recover(sbi, &table->entry_allocator);
+	if (ret < 0)
+		goto err_out1;
 	NOVA_START_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
 	ret = nova_table_recover(&table->metas);
 	NOVA_END_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
 	if (ret < 0)
-		goto err_out1;
-	ret = nova_entry_allocator_recover(sbi, &table->entry_allocator);
-	if (ret < 0)
-		goto err_out1;
+		goto err_out2;
 	return 0;
+err_out2:
+	nova_free_entry_allocator(&table->entry_allocator);
 err_out1:
 	nova_meta_table_free(table);
 err_out0:
@@ -74,11 +74,15 @@ err_out0:
 void nova_meta_table_save(struct nova_meta_table *table)
 {
 	struct super_block *sb = table->sblock;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	table->sblock = NULL;
 	nova_fp_strong_ctx_free(&table->fp_ctx);
 	kmem_cache_destroy(table->kbuf_cache);
 	nova_table_save(&table->metas);
 	nova_save_entry_allocator(sb, &table->entry_allocator);
+	nova_unlock_write(sb, &recover_meta->saved,
+		NOVA_RECOVER_META_FLAG_COMPLETE, true);
 }
 
 long nova_meta_table_decr_refcount(struct nova_meta_table *table,
