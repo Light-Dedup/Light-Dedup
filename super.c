@@ -165,21 +165,6 @@ static int nova_get_nvmm_info(struct super_block *sb,
 
 	sbi->nr_tablets = 1 << WHICH_TABLET_BIT_NUM;
 
-	sbi->region_start = sbi->block_start;
-	sbi->block_start += VALID_ENTRY_COUNTER_PER_BLOCK;
-
-	// TODO: Make it a list
-	sbi->region_blocknr_start = sbi->block_start;
-	sbi->block_start +=
-		((sbi->num_blocks * sizeof(__le64) - 1) >> PAGE_SHIFT) + 1;
-
-	sbi->region_valid_count_start = sbi->block_start;
-	sbi->block_start += 1;
-
-	sbi->entry_refcount_record_start = sbi->block_start;
-	// The number of valid entries is at most sbi->num_blocks.
-	sbi->block_start += ((sbi->num_blocks * sizeof(struct nova_entry_refcount_record) - 1) >> PAGE_SHIFT) + 1;
-
 	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
 		"num_blocks %lu, block_start %lu, block_end %lu\n",
 		__func__, sbi->s_bdev->bd_disk->disk_name,
@@ -404,27 +389,6 @@ static inline void nova_update_mount_time(struct super_block *sb)
 	nova_sync_super(sb);
 }
 
-static void init_regions(struct nova_sb_info *sbi)
-{
-	int i;
-	size_t offset = nova_get_blocknr_off(sbi->region_start) + PAGE_SIZE;
-	__le64 *p = nova_sbi_get_block(sbi, offset - sizeof(__le64));
-	memset_nt(
-		nova_sbi_blocknr_to_addr(sbi, sbi->region_start),
-		0,
-		VALID_ENTRY_COUNTER_PER_BLOCK * PAGE_SIZE
-	);
-	for (i = 1; i < VALID_ENTRY_COUNTER_PER_BLOCK; ++i) {
-		*p = cpu_to_le64(offset);
-		p += PAGE_SIZE / sizeof(__le64);
-		offset += PAGE_SIZE;
-	}
-	// *p = 0;
-	p = nova_sbi_blocknr_to_addr(sbi, sbi->region_blocknr_start);
-	for (i = 0; i < VALID_ENTRY_COUNTER_PER_BLOCK; ++i)
-		p[i] = cpu_to_le64(sbi->region_start + i);
-}
-
 static struct nova_inode *nova_init(struct super_block *sb,
 				      unsigned long size)
 {
@@ -518,16 +482,6 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	epoch_id = nova_get_epoch_id(sb);
 	nova_append_dir_init_entries(sb, root_i, NOVA_ROOT_INO,
 					NOVA_ROOT_INO, epoch_id);
-
-	nova_memunlock(sb, &irq_flags); // TODO
-	init_regions(sbi);
-	memset_nt(
-		nova_sbi_blocknr_to_addr(sbi,
-			sbi->region_valid_count_start),
-		0,
-		PAGE_SIZE
-	);
-	nova_memlock(sb, &irq_flags);
 
 	PERSISTENT_MARK();
 	PERSISTENT_BARRIER();

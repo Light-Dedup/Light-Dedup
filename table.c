@@ -791,11 +791,6 @@ int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
 }
-// Insert entry to rebuild the hash table during normal recovery
-static int nova_table_insert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_insert_entry);
-}
 // Rebuild the hash table during failure recovery
 static int nova_table_upsert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
 {
@@ -858,6 +853,7 @@ int nova_fp_table_upsert_entry(struct nova_mm_table *table,
 	return ret;
 }
 
+#if 0
 static void __save_bucket(struct nova_mm_table *table,
 	struct nova_bucket *bucket, atomic64_t *saved)
 {
@@ -887,11 +883,10 @@ static void __save_bucket(struct nova_mm_table *table,
 	nova_flush_buffer(rec + head, len, false);
 	BUG_ON(top != head + bucket->size);
 }
+#endif
 static void save_bucket(struct nova_mm_table *table,
 	struct nova_bucket *bucket, atomic64_t *saved)
 {
-	if (saved)
-		__save_bucket(table, bucket, saved);
 	free_bucket(table, bucket);
 }
 static void __nova_table_rescursive_save(
@@ -1118,6 +1113,7 @@ err_out:
 	return retval;
 }
 
+#if 0
 struct table_recover_para {
 	struct completion entered;
 	struct nova_mm_table *table;
@@ -1161,8 +1157,10 @@ static int table_recover_func(void *__para)
 	}
 	return ret;
 }
+#endif
 int nova_table_recover(struct nova_mm_table *table)
 {
+#if 0
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
@@ -1216,6 +1214,8 @@ out:
 	if (tasks)
 		kfree(tasks);
 	return ret;
+#endif
+	BUG();
 }
 
 

@@ -51,8 +51,6 @@ DECLARE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);
 struct entry_allocator {
 	regionnr_t region_num;
 	__le64 *last_region_tail;
-	regionnr_t valid_entry_count_num;
-	__le64 *last_valid_entry_count_block_tail;
 	// TODO: Place most free regions in the NVM in a list queue manner.
 	struct nova_queue free_regions; // Region numbers
 	spinlock_t lock;

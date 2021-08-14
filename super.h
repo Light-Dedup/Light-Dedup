@@ -191,10 +191,6 @@ struct nova_sb_info {
 	unsigned long	block_end;
 
 	uint32_t nr_tablets;
-	unsigned long region_start;
-	unsigned long region_blocknr_start;
-	unsigned long region_valid_count_start;
-	unsigned long entry_refcount_record_start;
 
 	struct nova_meta_table meta_table;
 };
