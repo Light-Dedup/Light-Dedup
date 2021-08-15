@@ -15,13 +15,11 @@ DEFINE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);
 
 static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
-	size_t region_num = allocator->region_num;
 	int cpu;
 	struct entry_allocator_cpu *allocator_cpu;
 	int ret;
 	xa_init(&allocator->valid_entry);
-	ret = nova_queue_init(&allocator->free_regions,
-		(1UL << ceil_log_2(region_num)) * sizeof(unsigned long));
+	ret = nova_queue_init(&allocator->free_regions, GFP_KERNEL);
 	if (ret)
 		return ret;
 	for_each_possible_cpu(cpu) {
@@ -56,9 +54,9 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 		ret = xa_err(xa_store(&allocator->valid_entry, blocknr,
 			xa_mk_value(0), GFP_KERNEL));
 		BUG_ON(ret < 0); // TODO: Handle it
-		BUG_ON(nova_queue_push(
-			&allocator->free_regions, &blocknr, sizeof(blocknr)
-		) < 0);
+		BUG_ON(nova_queue_push_ul(
+			&allocator->free_regions, blocknr, GFP_KERNEL
+		) < 0); // TODO: Handle it
 	}
 	return 0;
 }
@@ -72,10 +70,10 @@ static void rebuild_free_regions(struct nova_sb_info *sbi,
 	xa_for_each(&allocator->valid_entry, blocknr, entry) {
 		count = xa_to_value(entry);
 		if (count <= FREE_THRESHOLD) {
-			BUG_ON(nova_queue_push(
+			BUG_ON(nova_queue_push_ul(
 				&allocator->free_regions,
-				&blocknr,
-				sizeof(blocknr)
+				blocknr,
+				GFP_KERNEL
 			) < 0);
 		}
 	}
@@ -386,8 +384,7 @@ alloc_region(struct entry_allocator *allocator)
 		xa_mk_value(0), GFP_ATOMIC));
 	if (ret < 0)
 		goto err_out2;
-	ret = nova_queue_push(&allocator->free_regions, &region_blocknr,
-		sizeof(region_blocknr));
+	ret = nova_queue_push_ul(&allocator->free_regions, region_blocknr, GFP_ATOMIC);
 	if (ret < 0)
 		goto err_out3;
 	region_blocknrs[allocator->region_num] = cpu_to_le64(region_blocknr);
@@ -462,8 +459,7 @@ new_region(struct entry_allocator *allocator,
 
 	NOVA_START_TIMING(new_region_t, new_region_time);
 	spin_lock(&allocator->lock);
-	if (nova_queue_pop(&allocator->free_regions,
-		new_region_blocknr, sizeof(*new_region_blocknr)) == 0)
+	if (nova_queue_is_empty(&allocator->free_regions))
 	{
 		ret = alloc_region(allocator);
 		if (ret < 0) {
@@ -471,10 +467,8 @@ new_region(struct entry_allocator *allocator,
 			NOVA_END_TIMING(new_region_t, new_region_time);
 			return ret;
 		}
-		BUG_ON(nova_queue_pop(&allocator->free_regions,
-			new_region_blocknr, sizeof(*new_region_blocknr)
-		) != sizeof(*new_region_blocknr));
 	}
+	*new_region_blocknr = nova_queue_pop_ul(&allocator->free_regions);
 	spin_unlock(&allocator->lock);
 	if (allocator_cpu->top_entry != NULL_PENTRY) {
 		blocknr = nova_get_addr_off(sbi, allocator_cpu->top_entry) /
@@ -484,8 +478,8 @@ new_region(struct entry_allocator *allocator,
 		allocator_cpu->allocated = 0;
 		if (count <= FREE_THRESHOLD)
 		{
-			BUG_ON(nova_queue_push(&allocator->free_regions,
-				&blocknr, sizeof(blocknr)
+			BUG_ON(nova_queue_push_ul(&allocator->free_regions,
+				blocknr, GFP_ATOMIC
 			) < 0);
 		}
 		// new_region at most once, so it is safe to not update top_entrynr here.
@@ -568,10 +562,10 @@ void nova_free_entry(struct entry_allocator *allocator,
 		 */
 		spin_lock(&allocator->lock);
 		// TODO: Handle it
-		BUG_ON(nova_queue_push(
+		BUG_ON(nova_queue_push_ul(
 			&allocator->free_regions,
-			&blocknr,
-			sizeof(blocknr)
+			blocknr,
+			GFP_ATOMIC
 		) < 0);
 		spin_unlock(&allocator->lock);
 	}
