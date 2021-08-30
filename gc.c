@@ -62,7 +62,7 @@ static bool curr_log_entry_invalid(struct super_block *sb,
 		break;
 	case FILE_WRITE:
 		entry = (struct nova_file_write_entry *) entryc;
-		if (!entry->invalid)
+		if (!(entry->flags & NOVA_WENTRY_INVALID))
 			ret = false;
 		*length = sizeof(struct nova_file_write_entry);
 		break;

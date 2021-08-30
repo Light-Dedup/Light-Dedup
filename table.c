@@ -340,8 +340,6 @@ static int bucket_upsert_base(
 				// 	*(uint64_t *)addr, entry->fp_strong.u64s[0], entry->fp_strong.u64s[1], entry->fp_strong.u64s[2], entry->fp_strong.u64s[3]);
 			}
 			wp->blocknr = blocknr;// retrieval block info
-			// Make sure that all entries with refcount > 1 is persistent.
-			nova_flush_entry(table->entry_allocator, entry_p->pentry);
 		} else {
 			if (blocknr != wp->blocknr) {
 				// Collision happened. Just free it.
