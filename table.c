@@ -357,7 +357,6 @@ static int bucket_upsert_base(
 		refcount += delta;
 		wp->base.refcount = refcount;
 		pentry->refcount = cpu_to_le64(refcount);
-		nova_flush_entry(table->entry_allocator, pentry);
 		// printk(KERN_WARNING " found at %d, ref %llu\n", leaf_index, refcount);
 		return 0;
 	}
@@ -473,7 +472,6 @@ static int bucket_upsert_entry(
 	// There should not be two entries which have the same fingerprint.
 	BUG_ON(pentry != wp->pentry);
 	le64_add_cpu(&pentry->refcount, 1);
-	nova_flush_entry(table->entry_allocator, pentry);
 	return 0;
 }
 

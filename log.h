@@ -71,7 +71,7 @@ struct nova_file_write_entry {	// TODO: Compress it.
 	u8	entry_type;
 	u8	reassigned;	/* Data is not latest */
 	u8	updating;	/* Data is being written */
-	u8	invalid;
+	u8	flags;
 	__le32 __padding0;
 	__le64	block;          /* offset of block in this write */
 	__le64	pgoff;          /* file offset at the beginning of this write */
@@ -85,6 +85,9 @@ struct nova_file_write_entry {	// TODO: Compress it.
 	__le32	csum;
 } __attribute((__packed__));
 _Static_assert(sizeof(struct nova_file_write_entry) == 64, "!!!");
+
+#define NOVA_WENTRY_INVALID 1
+#define NOVA_WENTRY_DEDUP 2
 
 #define WENTRY(entry)	((struct nova_file_write_entry *) entry)
 

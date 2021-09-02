@@ -353,7 +353,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 
 		entry_size = cpu_to_le64(inode->i_size);
 
-		nova_init_file_write_entry(sb, sih, &entry_data,
+		nova_init_file_write_entry(sb, sih, &entry_data, false, // TODO: Is this correct?
 					epoch_id, entry_pgoff,
 					blocknr, time, entry_size);
 

@@ -875,6 +875,14 @@ static void free_all_failure_recovery_info(struct nova_sb_info *sbi, struct fail
 	nova_free_entry_allocator(allocator);
 }
 
+static int incr_blocknr_refcount(struct nova_mm_table *fp_table,
+	unsigned long blocknr)
+{
+	struct nova_write_para_normal wp;
+	void *xmem = nova_blocknr_to_addr(fp_table->sblock, blocknr);
+	// TODO: Compare the blocknr instead of the content
+	return nova_fp_table_incr(fp_table, xmem, &wp);
+}
 static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *info)
 {
 	struct xatable *xat = &info->map_blocknr_pentry;
@@ -882,15 +890,19 @@ static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *i
 	struct nova_pmm_entry *pentry =
 		(struct nova_pmm_entry *)xatable_load(xat, blocknr);
 	if (pentry == NULL)
-		return 0;
-	return nova_fp_table_upsert_entry(fp_table, pentry);
+		return incr_blocknr_refcount(fp_table, blocknr);
+	else
+		return nova_fp_table_upsert_entry(fp_table, pentry);
 }
 static int
-set_bm(unsigned long blocknr, struct failure_recovery_info *info, int cpuid)
+set_bm(unsigned long blocknr, bool dedup, struct failure_recovery_info *info, int cpuid)
 {
 	struct scan_bitmap *bm = info->global_bm + cpuid;
+	int ret = 0;
 	set_bit(blocknr, bm->bitmap);
-	return upsert_blocknr(blocknr, info);
+	if (dedup)
+		ret = upsert_blocknr(blocknr, info);
+	return ret;
 }
 
 /************************** NOVA recovery ****************************/
@@ -919,7 +931,7 @@ static int nova_traverse_inode_log(struct super_block *sb,
 		return 0;
 
 	BUG_ON(curr_p & (PAGE_SIZE - 1));
-	ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+	ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 	if (ret < 0)
 		return ret;
 
@@ -927,7 +939,7 @@ static int nova_traverse_inode_log(struct super_block *sb,
 	while (next > 0) {
 		curr_p = next;
 		BUG_ON(curr_p & (PAGE_SIZE - 1));
-		ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+		ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 		if (ret < 0)
 			return ret;
 		next = next_log_page(sb, curr_p);
@@ -985,7 +997,8 @@ static int nova_check_old_entry(struct super_block *sb,
 		return ret;
 
 	if (old_nvmm) {
-		ret = set_bm(old_nvmm, info, cpuid);
+		ret = set_bm(old_nvmm, entryc->flags & NOVA_WENTRY_DEDUP, info,
+			cpuid);
 		if (ret < 0)
 			return ret;
 	}
@@ -1029,7 +1042,8 @@ static int nova_set_file_bm(struct super_block *sb,
 		entry = xa_untag_pointer(xa_erase(&ring->entry_array, pgoff));
 		if (entry) {
 			nvmm = get_nvmm(sb, sih, entry, pgoff);
-			ret = set_bm(nvmm, info, cpuid);
+			ret = set_bm(nvmm, entry->flags & NOVA_WENTRY_DEDUP,
+				info, cpuid);
 			if (ret < 0)
 				return ret;
 		}
@@ -1090,7 +1104,7 @@ static long nova_traverse_file_write_entry(struct super_block *sb,
 	int ret;
 	sih->i_size = entryc->size;
 
-	if (!entryc->invalid) {
+	if (!(entryc->flags & NOVA_WENTRY_INVALID)) {
 		max_blocknr = entryc->pgoff;
 		ret = nova_set_ring_array(sb, sih, entry, entryc,
 					ring, info, cpuid);
@@ -1141,7 +1155,7 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 
 
 	BUG_ON(curr_p & (PAGE_SIZE - 1));
-	ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+	ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 	if (ret < 0)
 		return ret;
 
@@ -1149,7 +1163,7 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 		if (goto_next_page(sb, curr_p)) {
 			curr_p = next_log_page(sb, curr_p);
 			BUG_ON(curr_p & (PAGE_SIZE - 1));
-			ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+			ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 			if (ret < 0)
 				return ret;
 		}
@@ -1206,7 +1220,7 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 	while (next > 0) {
 		curr_p = next;
 		BUG_ON(curr_p & (PAGE_SIZE - 1));
-		ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+		ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 		if (ret < 0)
 			return ret;
 		next = next_log_page(sb, curr_p);
@@ -1354,7 +1368,7 @@ static int __failure_thread_func(struct super_block *sb,
 		 * granularity, but not aligned on 2MB boundary.
 		 */
 		for (i = 0; i < 512; i++) {
-			ret = set_bm((curr >> PAGE_SHIFT) + i,
+			ret = set_bm((curr >> PAGE_SHIFT) + i, false,
 					info, cpuid);
 			if (ret < 0)
 				return ret;
@@ -1362,7 +1376,7 @@ static int __failure_thread_func(struct super_block *sb,
 
 		if (metadata_csum) {
 			for (i = 0; i < 512; i++) {
-				ret = set_bm((curr1 >> PAGE_SHIFT) + i,
+				ret = set_bm((curr1 >> PAGE_SHIFT) + i, false,
 					info, cpuid);
 				if (ret < 0)
 					return ret;
@@ -1582,7 +1596,7 @@ static int nova_failure_recovery(struct super_block *sb)
 	for (i = 0; i < sbi->cpus; i++) {
 		pair = nova_get_journal_pointers(sb, i);
 
-		ret = set_bm(pair->journal_head >> PAGE_SHIFT, &info, i);
+		ret = set_bm(pair->journal_head >> PAGE_SHIFT, false, &info, i);
 		if (ret < 0)
 			goto err_out1;
 	}
