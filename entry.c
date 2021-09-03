@@ -347,6 +347,12 @@ static inline bool in_the_same_cacheline(
 	return (unsigned long)a / ENTRY_PER_CACHELINE ==
 		(unsigned long)b / ENTRY_PER_CACHELINE;
 }
+void nova_flush_entry(struct entry_allocator *allocator,
+	struct nova_pmm_entry *pentry)
+{
+	// TODO: Is flushing a not dirty cache line expensive?
+	nova_flush_cacheline(pentry, false);
+}
 static int
 alloc_region(struct entry_allocator *allocator)
 {
