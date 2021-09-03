@@ -316,6 +316,7 @@ static int bucket_upsert_base(
 	unsigned long blocknr;
 	int64_t refcount;
 	long delta = wp->base.refcount;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(mem_bucket_find_time);
 
 	BUG_ON(delta == 0);
@@ -356,7 +357,11 @@ static int bucket_upsert_base(
 		}
 		refcount += delta;
 		wp->base.refcount = refcount;
+		nova_memunlock_range(sb, &pentry->refcount,
+			sizeof(pentry->refcount), &irq_flags);
 		pentry->refcount = cpu_to_le64(refcount);
+		nova_memlock_range(sb, &pentry->refcount,
+			sizeof(pentry->refcount), &irq_flags);
 		nova_flush_entry(table->entry_allocator, pentry);
 		// printk(KERN_WARNING " found at %d, ref %llu\n", leaf_index, refcount);
 		return 0;
@@ -460,10 +465,12 @@ static int bucket_upsert_entry(
 	size_t used_hash_bit,
 	struct nova_write_para_base *__wp)
 {
+	struct super_block *sb = table->sblock;
 	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
 	size_t i;
 	struct nova_mm_entry_p *entry_p;
 	struct nova_pmm_entry *pentry;
+	unsigned long irq_flags = 0;
 
 	i = nova_table_leaf_find(table->entry_allocator, bucket, &wp->base.fp);
 	if (i == NOVA_TABLE_LEAF_SIZE)
@@ -472,7 +479,11 @@ static int bucket_upsert_entry(
 	pentry = entry_p->pentry;
 	// There should not be two entries which have the same fingerprint.
 	BUG_ON(pentry != wp->pentry);
+	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
 	le64_add_cpu(&pentry->refcount, 1);
+	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
 	nova_flush_entry(table->entry_allocator, pentry);
 	return 0;
 }
