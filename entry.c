@@ -26,6 +26,7 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 		allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 		// The first allocation will trigger a new_region request.
 		allocator_cpu->top_entry = NULL_PENTRY;
+		allocator_cpu->last_entry = NULL_PENTRY;
 		allocator_cpu->allocated = 0;
 	}
 	spin_lock_init(&allocator->lock);
@@ -333,6 +334,19 @@ err_out:
 	return ret;
 }
 
+static inline void flush_last_entry(struct entry_allocator_cpu *allocator_cpu)
+{
+	// TODO: Does flush need memunlock?
+	if (allocator_cpu->last_entry != NULL_PENTRY)
+		nova_flush_cacheline(allocator_cpu->last_entry, false);
+}
+static inline bool in_the_same_cacheline(
+	struct nova_pmm_entry *a,
+	struct nova_pmm_entry *b)
+{
+	return (unsigned long)a / ENTRY_PER_CACHELINE ==
+		(unsigned long)b / ENTRY_PER_CACHELINE;
+}
 static int
 alloc_region(struct entry_allocator *allocator)
 {
@@ -515,6 +529,9 @@ void nova_write_entry(struct entry_allocator *allocator,
 	pentry->refcount = cpu_to_le64(refcount);
 	wmb();
 	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
+	if (!in_the_same_cacheline(allocator_cpu->last_entry, pentry))
+		flush_last_entry(allocator_cpu);
+	allocator_cpu->last_entry = pentry;
 	++allocator_cpu->allocated; // Commit the allocation
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock(sb, &irq_flags);

@@ -29,6 +29,7 @@ struct nova_pmm_entry {
 
 struct entry_allocator_cpu {
 	struct nova_pmm_entry *top_entry; // Last allocated entry.
+	struct nova_pmm_entry *last_entry; // Last not flushed entry.
 	int16_t allocated;
 };
 DECLARE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);
