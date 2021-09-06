@@ -19,14 +19,10 @@ _Static_assert(INDEX_BIT_NUM % NOVA_TABLE_INNER_BITS == 0, "INDEX_BIT_NUM % NOVA
 #define NOVA_TABLE_MERGE_THRESHOLD (NOVA_TABLE_LEAF_SIZE / 2)
 
 struct nova_mm_entry_p {
-	// entrynr_t entrynr: 48;
-	// uint16_t refcount: 16;
 	struct nova_pmm_entry *pentry;
-	uint64_t refcount; // TODO: Place it in NVM.
 };
 struct nova_entry_refcount_record {
 	__le64 entry_offset;
-	__le64 refcount;
 };
 
 struct nova_bucket {
