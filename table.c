@@ -216,7 +216,6 @@ static int nova_table_leaf_insert(
 	int cpu;
 	struct entry_allocator_cpu *allocator_cpu;
 	struct nova_pmm_entry *pentry;
-	struct nova_mm_entry_info info;
 	struct nova_mm_entry_p entry_p;
 	int ret;
 
@@ -236,13 +235,10 @@ static int nova_table_leaf_insert(
 		put_cpu();
 		return ret;
 	}
-	info.blocknr = wp->blocknr;
-	info.flag = NOVA_LEAF_ENTRY_MAGIC;
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
-		cpu_to_le64(info.value));
+		wp->blocknr, wp->base.refcount);
 	put_cpu();
 	entry_p.pentry = pentry;
-	entry_p.refcount = wp->base.refcount;
 	assign_entry(bucket, i, entry_p, fp, used_hash_bit);
 	return 0;
 }
@@ -288,13 +284,16 @@ static int bucket_upsert_base(
 	struct nova_write_para_normal *wp,
 	int (*get_new_block)(struct super_block *, struct nova_write_para_normal *))
 {
+	struct super_block *sb = table->sblock;
 	struct entry_allocator *allocator = table->entry_allocator;
 	size_t leaf_index;
 	// struct nova_pmm_node *pnode;
 	struct nova_mm_entry_p *entry_p;
-	struct nova_mm_entry_info pentry_info;
+	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
+	int64_t refcount;
 	long delta = wp->base.refcount;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(mem_bucket_find_time);
 
 	BUG_ON(delta == 0);
@@ -303,13 +302,12 @@ static int bucket_upsert_base(
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	if (leaf_index != NOVA_TABLE_LEAF_SIZE) {
 		entry_p = bucket->entry_p + leaf_index;
-		pentry_info = entry_info_pmm_to_mm(entry_p->pentry->info);
-		BUG_ON(pentry_info.flag != NOVA_LEAF_ENTRY_MAGIC);
-		blocknr = pentry_info.blocknr;
+		pentry = entry_p->pentry;
+		BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
+		blocknr = le64_to_cpu(pentry->blocknr);
+		refcount = le64_to_cpu(pentry->refcount);
 		if (delta > 0) {
 			wp->blocknr = blocknr;// retrieval block info
-			// Make sure that all entries with refcount > 1 is persistent.
-			nova_flush_entry(table->entry_allocator, entry_p->pentry);
 		} else {
 			if (blocknr != wp->blocknr) {
 				// Collision happened. Just free it.
@@ -317,8 +315,8 @@ static int bucket_upsert_base(
 				wp->base.refcount = 0;
 				return 0;
 			}
-			BUG_ON(entry_p->refcount < -delta);
-			if (entry_p->refcount == -delta) {
+			BUG_ON(refcount < -delta);
+			if (refcount == -delta) {
 				// printk("Before nova_table_leaf_delete");
 				nova_table_leaf_delete(table, bucket, leaf_index);
 				// printk("nova_table_leaf_delete return");
@@ -326,8 +324,14 @@ static int bucket_upsert_base(
 				return NOVA_DELETE_ENTRY;
 			}
 		}
-		entry_p->refcount += delta;
-		wp->base.refcount = entry_p->refcount;
+		refcount += delta;
+		wp->base.refcount = refcount;
+		nova_memunlock_range(sb, &pentry->refcount,
+			sizeof(pentry->refcount), &irq_flags);
+		pentry->refcount = cpu_to_le64(refcount);
+		nova_memlock_range(sb, &pentry->refcount,
+			sizeof(pentry->refcount), &irq_flags);
+		nova_flush_entry(table->entry_allocator, pentry);
 		// printk(KERN_WARNING " found at %d, ref %llu\n", leaf_index, refcount);
 		return 0;
 	}
@@ -366,8 +370,9 @@ static int bucket_upsert_decr1(
 	struct entry_allocator *allocator = table->entry_allocator;
 	size_t leaf_index;
 	struct nova_mm_entry_p *entry_p;
-	struct nova_mm_entry_info pentry_info;
+	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
+	int64_t refcount;
 	struct nova_write_para_normal *wp = (struct nova_write_para_normal *)__wp;
 	INIT_TIMING(mem_bucket_find_time);
 
@@ -381,17 +386,18 @@ static int bucket_upsert_decr1(
 		return 0;
 	}
 	entry_p = bucket->entry_p + leaf_index;
-	pentry_info = entry_info_pmm_to_mm(entry_p->pentry->info);
-	BUG_ON(pentry_info.flag != NOVA_LEAF_ENTRY_MAGIC);
-	blocknr = pentry_info.blocknr;
+	pentry = entry_p->pentry;
+	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
+	blocknr = le64_to_cpu(pentry->blocknr);
 	if (blocknr != wp->blocknr) {
 		// Collision happened. Just free it.
 		printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}
-	BUG_ON(entry_p->refcount == 0);
-	if (entry_p->refcount == 1) {
+	refcount = le64_to_cpu(pentry->refcount);
+	BUG_ON(refcount == 0);
+	if (refcount == 1) {
 		// printk("Before nova_table_leaf_delete");
 		nova_table_leaf_delete(table, bucket, leaf_index);
 		// printk("nova_table_leaf_delete return");
@@ -399,7 +405,7 @@ static int bucket_upsert_decr1(
 		return NOVA_DELETE_ENTRY;
 	}
 	// refcount >= 2. So we do not decrease refcount.
-	wp->base.refcount = entry_p->refcount;
+	wp->base.refcount = refcount;
 	// printk(KERN_WARNING " found at %d, ref %llu\n", leaf_index, refcount);
 	return 0;
 }
@@ -418,7 +424,6 @@ static int bucket_insert_entry(
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
 	entry_p.pentry = wp->pentry;
-	entry_p.refcount = wp->base.refcount;
 	assign_entry(bucket, i, entry_p, &wp->base.fp, used_hash_bit);
 	return 0;
 }
@@ -429,17 +434,26 @@ static int bucket_upsert_entry(
 	size_t used_hash_bit,
 	struct nova_write_para_base *__wp)
 {
+	struct super_block *sb = table->sblock;
 	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
 	size_t i;
 	struct nova_mm_entry_p *entry_p;
+	struct nova_pmm_entry *pentry;
+	unsigned long irq_flags = 0;
 
 	i = nova_table_leaf_find(table->entry_allocator, bucket, &wp->base.fp);
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return bucket_insert_entry(table, bucket, used_hash_bit, __wp);
 	entry_p = bucket->entry_p + i;
+	pentry = entry_p->pentry;
 	// There should not be two entries which have the same fingerprint.
-	BUG_ON(entry_p->pentry != wp->pentry);
-	entry_p->refcount += wp->base.refcount;
+	BUG_ON(pentry != wp->pentry);
+	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
+	le64_add_cpu(&pentry->refcount, 1);
+	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
+	nova_flush_entry(table->entry_allocator, pentry);
 	return 0;
 }
 
@@ -853,7 +867,6 @@ static void __save_bucket(struct nova_mm_table *table,
 			entry_p = bucket->entry_p + j;
 			rec[top].entry_offset = cpu_to_le64(
 				nova_get_addr_off(sbi, entry_p->pentry));
-			rec[top].refcount = cpu_to_le64(entry_p->refcount);
 			++top;
 		}
 	}
@@ -1111,7 +1124,6 @@ static int __table_recover_func(struct nova_mm_table *table,
 	for (i = entry_start; i < entry_end; ++i) {
 		wp.pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
 			le64_to_cpu(rec[i].entry_offset));
-		wp.base.refcount = le64_to_cpu(rec[i].refcount);
 		wp.base.fp = wp.pentry->fp;
 		ret = nova_table_insert_entry(table, &wp);
 		if (ret < 0)

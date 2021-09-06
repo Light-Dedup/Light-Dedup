@@ -8,26 +8,19 @@
 #include "xatable.h"
 #include "queue.h"
 
-#define NOVA_LEAF_ENTRY_MAGIC (0x3f3f)
+#define NOVA_LEAF_ENTRY_MAGIC (0x66ccff2020ffcc66)
 
 struct nova_sb_info;
 
 typedef uint64_t entrynr_t;
 typedef uint32_t regionnr_t;
 
-struct nova_mm_entry_info {
-	union {
-		struct {
-			uint16_t flag: 16;
-			uint64_t blocknr: 48;
-		};
-		uint64_t value;
-	};
-};
 struct nova_pmm_entry {
-	__le64 info;
 	struct nova_fp fp;	// TODO: cpu_to_le64?
-	__le64 padding[3];
+	__le64 blocknr;
+	__le64 refcount;
+	__le64 flag;
+	__le64 padding;
 } ____cacheline_aligned_in_smp;
 
 _Static_assert(sizeof(struct nova_pmm_entry) == 64, "Meta Data Entry not 64B!");
@@ -36,13 +29,6 @@ _Static_assert(sizeof(struct nova_pmm_entry) == 64, "Meta Data Entry not 64B!");
 #define ENTRY_PER_REGION (REGION_SIZE / sizeof(struct nova_pmm_entry))
 #define REAL_ENTRY_PER_REGION \
 	((REGION_SIZE - sizeof(__le64)) / sizeof(struct nova_pmm_entry))
-
-static inline struct nova_mm_entry_info
-entry_info_pmm_to_mm(__le64 info) {
-	struct nova_mm_entry_info entry_info;
-	entry_info.value = le64_to_cpu(info);
-	return entry_info;
-}
 
 struct entry_allocator_cpu {
 	struct nova_pmm_entry *top_entry; // Last allocated entry.
@@ -82,7 +68,8 @@ nova_alloc_entry_abort(struct entry_allocator_cpu *allocator_cpu)
 }
 void nova_write_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu,
-	struct nova_pmm_entry *pentry, const struct nova_fp *fp, __le64 info);
+	struct nova_pmm_entry *pentry, const struct nova_fp *fp,
+	unsigned long blocknr, int64_t refcount);
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry);
 
