@@ -32,7 +32,6 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 
 void nova_free_entry_allocator(struct entry_allocator *allocator)
 {
-	BUG();
 	return;
 }
 
