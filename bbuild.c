@@ -80,6 +80,7 @@ static inline int get_block_cpuid(struct nova_sb_info *sbi,
 	return blocknr / sbi->per_list_blocks;
 }
 
+#if 0
 static int nova_failure_insert_inodetree(struct super_block *sb,
 	unsigned long ino_low, unsigned long ino_high)
 {
@@ -345,6 +346,7 @@ out:
 	nova_free_inode_log(sb, pi, &sih);
 	return ret;
 }
+#endif
 
 static u64 nova_append_range_node_entry(struct super_block *sb,
 	struct nova_range_node *curr, u64 tail, unsigned long cpuid)
@@ -524,6 +526,7 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 		  pi->log_head, pi->log_tail);
 }
 
+#if 0
 static int nova_insert_blocknode_map(struct super_block *sb,
 	int cpuid, unsigned long low, unsigned long high)
 {
@@ -614,50 +617,47 @@ static int __nova_build_blocknode_map(struct super_block *sb,
 struct failure_recovery_info {
 	struct scan_bitmap *global_bm;
 	struct nova_mm_table *fp_table;
-	struct xatable map_blocknr_entrynr;
+	struct xatable map_blocknr_pentry;
 };
 
 struct invalidate_unused_fp_entry_para {
 	struct completion entered;
 	struct nova_sb_info *sbi;
 	struct scan_bitmap *final_bm;
-	struct xatable *map_blocknr_entrynr;
+	struct xatable *map_blocknr_pentry;
 	atomic64_t *cur_xa;
 };
 static void __invalidate_unused_fp_entry_xa(
 	struct nova_sb_info *sbi,
 	struct scan_bitmap *final_bm,
-	struct xatable *map_blocknr_entrynr,
+	struct xatable *map_blocknr_pentry,
 	unsigned long i)
 {
 	struct entry_allocator *allocator = &sbi->meta_table.entry_allocator;
 	unsigned long index, blocknr;
-	void *entry;
-	entrynr_t entrynr;
+	struct nova_pmm_entry *pentry;
 
-	xa_for_each(map_blocknr_entrynr->xa + i, index, entry) {
-		blocknr = (index << map_blocknr_entrynr->num_bit) + i;
+	xa_for_each(map_blocknr_pentry->xa + i, index, pentry) {
+		blocknr = (index << map_blocknr_pentry->num_bit) + i;
 		BUG_ON(blocknr >= sbi->num_blocks);
 		if (test_bit(blocknr, final_bm->bitmap))
 			continue;
 		// Unused. Invalidate the fp_entry.
-		entrynr = xa_to_value(entry);
-		nova_dbg("%s: Free entrynr %llu\n", __func__, entrynr);
-		nova_free_entry(allocator, entrynr);
+		nova_free_entry(allocator, pentry);
 	}
 }
 static void __invalidate_unused_fp_entry_func(
 	struct nova_sb_info *sbi,
 	struct scan_bitmap *final_bm,
-	struct xatable *map_blocknr_entrynr,
+	struct xatable *map_blocknr_pentry,
 	atomic64_t *cur_xa)
 {
 	u64 i;
 	while (1) {
 		i = atomic64_add_return(1, cur_xa);
-		if (i >= (1UL << map_blocknr_entrynr->num_bit))
+		if (i >= (1UL << map_blocknr_pentry->num_bit))
 			break;
-		__invalidate_unused_fp_entry_xa(sbi, final_bm, map_blocknr_entrynr, i);
+		__invalidate_unused_fp_entry_xa(sbi, final_bm, map_blocknr_pentry, i);
 	}
 }
 static int invalidate_unused_fp_entry_func(void *__para)
@@ -667,7 +667,7 @@ static int invalidate_unused_fp_entry_func(void *__para)
 	// printk("%s\n", __func__);
 	complete(&para->entered);
 	__invalidate_unused_fp_entry_func(para->sbi,
-		para->final_bm, para->map_blocknr_entrynr, para->cur_xa);
+		para->final_bm, para->map_blocknr_pentry, para->cur_xa);
 	// printk("%s waiting for kthread_stop\n", __func__);
 	/* Wait for kthread_stop */
 	set_current_state(TASK_INTERRUPTIBLE);
@@ -679,7 +679,7 @@ static int invalidate_unused_fp_entry_func(void *__para)
 }
 static int invalidate_unused_fp_entry(
 	struct super_block *sb,
-	struct xatable *map_blocknr_entrynr,
+	struct xatable *map_blocknr_pentry,
 	struct scan_bitmap *final_bm)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -706,7 +706,7 @@ static int invalidate_unused_fp_entry(
 		init_completion(&para[i].entered);
 		para[i].sbi = sbi;
 		para[i].final_bm = final_bm;
-		para[i].map_blocknr_entrynr = map_blocknr_entrynr;
+		para[i].map_blocknr_pentry = map_blocknr_pentry;
 		para[i].cur_xa = &cur_xa;
 		tasks[i] = kthread_create(invalidate_unused_fp_entry_func, para + i,
 			"%s_%lu", __func__, i);
@@ -774,29 +774,12 @@ static int nova_build_blocknode_map(struct super_block *sb,
 			final_bm->bitmap_size * 8, PAGE_SHIFT - 12);
 	if (ret < 0)
 		goto out;
-	ret = invalidate_unused_fp_entry(sb, &info->map_blocknr_entrynr, final_bm);
+	ret = invalidate_unused_fp_entry(sb, &info->map_blocknr_pentry, final_bm);
 out:
 	kvfree(final_bm->bitmap);
 	kfree(final_bm);
 
 	return ret;
-}
-
-static void free_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
-{
-	int i;
-	xatable_destroy(&info->map_blocknr_entrynr);
-	for (i = 0; i < sbi->cpus; i++)
-		kvfree(info->global_bm[i].bitmap);
-	kfree(info->global_bm);
-}
-static void free_all_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
-{
-	struct nova_meta_table *table = &sbi->meta_table;
-	struct entry_allocator *allocator = &table->entry_allocator;
-	free_failure_recovery_info(sbi, info);
-	nova_meta_table_free(table);
-	nova_free_entry_allocator(allocator);
 }
 
 static struct scan_bitmap *
@@ -831,13 +814,22 @@ alloc_bm(struct nova_sb_info *sbi)
 	}
 	return global_bm;
 }
+static inline void free_bm(struct nova_sb_info *sbi,
+	struct scan_bitmap *global_bm)
+{
+	int i;
+	for (i = 0; i < sbi->cpus; i++)
+		kvfree(global_bm[i].bitmap);
+	kfree(global_bm);
+}
+
 static int alloc_failure_recovery_info(struct super_block *sb,
 	struct failure_recovery_info *info)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_meta_table *table = &sbi->meta_table;
 	struct entry_allocator *allocator = &table->entry_allocator;
-	struct xatable *xat = &info->map_blocknr_entrynr;
+	struct xatable *xat = &info->map_blocknr_pentry;
 	int ret;
 	INIT_TIMING(scan_fp_entry_table_time);
 
@@ -847,20 +839,23 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 	ret = nova_meta_table_alloc(table, sb);
 	if (ret < 0)
 		goto err_out1;
-	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
-	ret = nova_scan_entry_table(sb, allocator, xat);
-	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
-	if (ret < 0)
-		goto err_out2;
+
 	info->global_bm = alloc_bm(sbi);
 	if (IS_ERR(info->global_bm)) {
 		ret = PTR_ERR(info->global_bm);
-		goto err_out3;
+		goto err_out2;
 	}
 	info->fp_table = &table->metas;
+
+	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
+	ret = nova_scan_entry_table(sb, allocator, xat,
+		info->global_bm[0].bitmap);
+	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
+	if (ret < 0)
+		goto err_out3;
 	return 0;
 err_out3:
-	nova_free_entry_allocator(allocator);
+	free_bm(sbi, info->global_bm);
 err_out2:
 	nova_meta_table_free(table);
 err_out1:
@@ -868,23 +863,49 @@ err_out1:
 err_out0:
 	return ret;
 }
+
+static void free_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
+{
+	xatable_destroy(&info->map_blocknr_pentry);
+	free_bm(sbi, info->global_bm);
+}
+static void free_all_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
+{
+	struct nova_meta_table *table = &sbi->meta_table;
+	struct entry_allocator *allocator = &table->entry_allocator;
+	free_failure_recovery_info(sbi, info);
+	nova_meta_table_free(table);
+	nova_free_entry_allocator(allocator);
+}
+
+static int incr_blocknr_refcount(struct nova_mm_table *fp_table,
+	unsigned long blocknr)
+{
+	struct nova_write_para_normal wp;
+	void *xmem = nova_blocknr_to_addr(fp_table->sblock, blocknr);
+	// TODO: Compare the blocknr instead of the content
+	return nova_fp_table_incr(fp_table, xmem, &wp);
+}
 static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *info)
 {
-	struct xatable *xat = &info->map_blocknr_entrynr;
+	struct xatable *xat = &info->map_blocknr_pentry;
 	struct nova_mm_table *fp_table = info->fp_table;
-	void *entry = xatable_load(xat, blocknr);
-	entrynr_t entrynr;
-	if (entry == NULL)
-		return 0;
-	entrynr = xa_to_value(entry);
-	return nova_fp_table_upsert_entry(fp_table, entrynr);
+	struct nova_pmm_entry *pentry =
+		(struct nova_pmm_entry *)xatable_load(xat, blocknr);
+	if (pentry == NULL)
+		return incr_blocknr_refcount(fp_table, blocknr);
+	else
+		return nova_fp_table_upsert_entry(fp_table, pentry);
 }
 static int
-set_bm(unsigned long blocknr, struct failure_recovery_info *info, int cpuid)
+set_bm(unsigned long blocknr, bool dedup, struct failure_recovery_info *info, int cpuid)
 {
 	struct scan_bitmap *bm = info->global_bm + cpuid;
+	int ret = 0;
 	set_bit(blocknr, bm->bitmap);
-	return upsert_blocknr(blocknr, info);
+	if (dedup)
+		ret = upsert_blocknr(blocknr, info);
+	return ret;
 }
 
 /************************** NOVA recovery ****************************/
@@ -913,7 +934,7 @@ static int nova_traverse_inode_log(struct super_block *sb,
 		return 0;
 
 	BUG_ON(curr_p & (PAGE_SIZE - 1));
-	ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+	ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 	if (ret < 0)
 		return ret;
 
@@ -921,7 +942,7 @@ static int nova_traverse_inode_log(struct super_block *sb,
 	while (next > 0) {
 		curr_p = next;
 		BUG_ON(curr_p & (PAGE_SIZE - 1));
-		ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+		ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 		if (ret < 0)
 			return ret;
 		next = next_log_page(sb, curr_p);
@@ -979,7 +1000,8 @@ static int nova_check_old_entry(struct super_block *sb,
 		return ret;
 
 	if (old_nvmm) {
-		ret = set_bm(old_nvmm, info, cpuid);
+		ret = set_bm(old_nvmm, entryc->flags & NOVA_WENTRY_DEDUP, info,
+			cpuid);
 		if (ret < 0)
 			return ret;
 	}
@@ -1023,7 +1045,8 @@ static int nova_set_file_bm(struct super_block *sb,
 		entry = xa_untag_pointer(xa_erase(&ring->entry_array, pgoff));
 		if (entry) {
 			nvmm = get_nvmm(sb, sih, entry, pgoff);
-			ret = set_bm(nvmm, info, cpuid);
+			ret = set_bm(nvmm, entry->flags & NOVA_WENTRY_DEDUP,
+				info, cpuid);
 			if (ret < 0)
 				return ret;
 		}
@@ -1084,7 +1107,7 @@ static long nova_traverse_file_write_entry(struct super_block *sb,
 	int ret;
 	sih->i_size = entryc->size;
 
-	if (!entryc->invalid) {
+	if (!(entryc->flags & NOVA_WENTRY_INVALID)) {
 		max_blocknr = entryc->pgoff;
 		ret = nova_set_ring_array(sb, sih, entry, entryc,
 					ring, info, cpuid);
@@ -1135,7 +1158,7 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 
 
 	BUG_ON(curr_p & (PAGE_SIZE - 1));
-	ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+	ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 	if (ret < 0)
 		return ret;
 
@@ -1143,7 +1166,7 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 		if (goto_next_page(sb, curr_p)) {
 			curr_p = next_log_page(sb, curr_p);
 			BUG_ON(curr_p & (PAGE_SIZE - 1));
-			ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+			ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 			if (ret < 0)
 				return ret;
 		}
@@ -1200,7 +1223,7 @@ static int nova_traverse_file_inode_log(struct super_block *sb,
 	while (next > 0) {
 		curr_p = next;
 		BUG_ON(curr_p & (PAGE_SIZE - 1));
-		ret = set_bm(curr_p >> PAGE_SHIFT, info, cpuid);
+		ret = set_bm(curr_p >> PAGE_SHIFT, false, info, cpuid);
 		if (ret < 0)
 			return ret;
 		next = next_log_page(sb, curr_p);
@@ -1348,7 +1371,7 @@ static int __failure_thread_func(struct super_block *sb,
 		 * granularity, but not aligned on 2MB boundary.
 		 */
 		for (i = 0; i < 512; i++) {
-			ret = set_bm((curr >> PAGE_SHIFT) + i,
+			ret = set_bm((curr >> PAGE_SHIFT) + i, false,
 					info, cpuid);
 			if (ret < 0)
 				return ret;
@@ -1356,7 +1379,7 @@ static int __failure_thread_func(struct super_block *sb,
 
 		if (metadata_csum) {
 			for (i = 0; i < 512; i++) {
-				ret = set_bm((curr1 >> PAGE_SHIFT) + i,
+				ret = set_bm((curr1 >> PAGE_SHIFT) + i, false,
 					info, cpuid);
 				if (ret < 0)
 					return ret;
@@ -1576,7 +1599,7 @@ static int nova_failure_recovery(struct super_block *sb)
 	for (i = 0; i < sbi->cpus; i++) {
 		pair = nova_get_journal_pointers(sb, i);
 
-		ret = set_bm(pair->journal_head >> PAGE_SHIFT, &info, i);
+		ret = set_bm(pair->journal_head >> PAGE_SHIFT, false, &info, i);
 		if (ret < 0)
 			goto err_out1;
 	}
@@ -1631,8 +1654,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 	struct nova_meta_table *table = &sbi->meta_table;
 	int ret;
 
-	if (recover_meta->region_valid_entry_count_saved != NOVA_RECOVER_META_FLAG_COMPLETE ||
-		recover_meta->refcount_saved != NOVA_RECOVER_META_FLAG_COMPLETE)
+	if (recover_meta->saved != NOVA_RECOVER_META_FLAG_COMPLETE)
 		return false;
 	if (pi->log_head == 0 || pi->log_tail == 0)
 		return false;
@@ -1664,11 +1686,11 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 		nova_err(sb, "Restore meta table failed, fall back to failure recovery\n");
 		return false;
 	}
-	recover_meta->region_valid_entry_count_saved = 0;
-	recover_meta->refcount_saved = 0;
+	recover_meta->saved = 0;
 
 	return true;
 }
+#endif
 
 /*
  * Recovery routine has three tasks:
@@ -1678,6 +1700,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
  */
 int nova_recovery(struct super_block *sb)
 {
+#if 0
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *super = sbi->nova_sb;
 	bool value = false;
@@ -1728,4 +1751,6 @@ out:
 
 	sbi->s_epoch_id = le64_to_cpu(super->s_epoch_id);
 	return ret;
+#endif
+	BUG();
 }

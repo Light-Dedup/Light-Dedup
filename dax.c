@@ -233,7 +233,9 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 }
 
 void nova_init_file_write_entry(struct super_block *sb,
-	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
+	struct nova_inode_info_header *sih,
+	struct nova_file_write_entry *entry,
+	bool dedup,
 	u64 epoch_id, u64 pgoff, u64 blocknr, u32 time,
 	u64 file_size)
 {
@@ -244,7 +246,7 @@ void nova_init_file_write_entry(struct super_block *sb,
 	entry->epoch_id = epoch_id;
 	entry->trans_id = sih->trans_id;
 	entry->pgoff = cpu_to_le64(pgoff);
-	entry->invalid = 0;
+	entry->flags = dedup ? NOVA_WENTRY_DEDUP : 0;
 	entry->block = cpu_to_le64(nova_get_block_off(sb, blocknr,
 							sih->i_blk_type));
 	entry->mtime = cpu_to_le32(time);
@@ -472,14 +474,13 @@ out:
  * 		=0: Do COW.
  * 		>0: New blocknr(protected).
  */
-static long try_inplace_file_write(struct super_block *sb,
+static int try_inplace_file_write(struct super_block *sb,
 	unsigned long old_blocknr, char *kbuf, const char __user *buf,
-	size_t offset, size_t bytes,
-	struct inode *inode, loff_t pos)
+	size_t offset, size_t bytes, struct inode *inode, loff_t pos,
+	struct nova_write_para_rewrite *wp)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_meta_table *table = &sbi->meta_table;
-	struct nova_write_para_rewrite wp;
 	long ret = nova_meta_table_decr1(table, kbuf, old_blocknr);
 	if (ret < 0)
 		return ret;
@@ -489,18 +490,18 @@ static long try_inplace_file_write(struct super_block *sb,
 	if (copy_from_user(kbuf + offset, buf, bytes))
 		return -EFAULT;
 	ret = nova_fp_table_rewrite_on_insert(
-		&table->metas, kbuf, &wp, old_blocknr, offset, bytes);
+		&table->metas, kbuf, wp, old_blocknr, offset, bytes);
 	if (ret < 0)
 		return ret;	// No need to free old blocknr or reinsert it into table.
-	if (wp.normal.base.refcount == 1) {
+	if (wp->normal.base.refcount == 1) {
 		if (data_csum > 0 || data_parity > 0) {
 			ret = nova_protect_file_data(sb, inode, pos, bytes,
-						buf, wp.normal.blocknr, true);
+						buf, wp->normal.blocknr, true);
 			if (ret)
 				return ret;
 		}
 	} // Else an existing block found. Already protected.
-	return wp.normal.blocknr;
+	return 0;
 }
 /*
  * Do an inplace write.  This function assumes that the lock on the inode is
@@ -528,6 +529,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	unsigned long total_blocks;
 	unsigned long new_blocks = 0;
 	unsigned long old_blocknr = 0, new_blocknr = 0;
+	long new_refcount;
 	unsigned int data_bits;
 	int inplace = 0;
 	bool hole_fill;
@@ -542,7 +544,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	u32 time;
 	ssize_t ret;
 	char *kbuf = NULL;
-	struct nova_write_para_normal wp;
+	struct nova_write_para_rewrite wp;
 	unsigned long irq_flags = 0;
 
 	// printk("%s\n", __func__);
@@ -618,11 +620,12 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			xmem = nova_blocknr_to_addr(sb, old_blocknr);
 			memcpy(kbuf, xmem, PAGE_SIZE);
 			ret = try_inplace_file_write(sb, old_blocknr, kbuf, buf,
-				offset, bytes, inode, pos);
+				offset, bytes, inode, pos, &wp);
 			if (ret < 0)
 				goto out;
-			if (ret > 0) {
-				new_blocknr = ret;
+			if (wp.normal.blocknr > 0) {
+				new_blocknr = wp.normal.blocknr;
+				new_refcount = wp.normal.base.refcount;
 				hole_fill = false;
 				goto protected;
 			} // Else fall back to COW.
@@ -638,10 +641,11 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			ret = -EFAULT;
 			goto out;
 		}
-		ret = nova_fp_table_incr(&table->metas, kbuf, &wp);
+		ret = nova_fp_table_incr(&table->metas, kbuf, &wp.normal);
 		if (ret < 0)
 			goto out;
-		new_blocknr = wp.blocknr;
+		new_blocknr = wp.normal.blocknr;
+		new_refcount = wp.normal.base.refcount;
 		if (data_csum > 0 || data_parity > 0) {
 			ret = nova_protect_file_data(sb, inode, pos, bytes,
 						buf, new_blocknr, false);
@@ -658,6 +662,7 @@ protected:
 
 		if (hole_fill) {
 			nova_init_file_write_entry(sb, sih, &entry_data,
+						new_refcount > 0,
 						epoch_id, start_blk,
 						new_blocknr, time, file_size);
 
@@ -827,7 +832,6 @@ static int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 	u64 epoch_id;
 	int inplace = 0;
 	int locked = 0;
-	int check_next = 1;
 	int ret = 0;
 	unsigned long irq_flags = 0;
 	INIT_TIMING(get_block_time);
@@ -842,9 +846,6 @@ static int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 
 	epoch_id = nova_get_epoch_id(sb);
 
-	if (taking_lock)
-		check_next = 0;
-
 again:
 	nova_check_existing_entry(sb, inode,
 					iblock, &entry, &entry_copy,
@@ -854,15 +855,13 @@ again:
 
 	if (entry) {
 		if (create == 0 || inplace) {
+			// create == 0 means read-only access
 			nvmm = get_nvmm(sb, sih, entryc, iblock);
 			nova_dbgv("%s: found pgoff %llu, block %lu\n",
 					__func__, (u64)iblock, nvmm);
 			ret = 1;
 			goto out;
 		}
-	} else if (!check_next) {
-		ret = -EINVAL; // TODO: Is this correct?
-		goto out;
 	}
 
 	if (create == 0) {
@@ -874,7 +873,6 @@ again:
 		inode_lock(inode);
 		locked = 1;
 		/* Check again incase someone has done it for us */
-		check_next = 1;
 		goto again;
 	}
 
@@ -893,7 +891,7 @@ again:
 	}
 
 	/* Do not extend file size */
-	nova_init_file_write_entry(sb, sih, &entry_data,
+	nova_init_file_write_entry(sb, sih, &entry_data, false,
 					epoch_id, iblock,
 					blocknr, time, inode->i_size);
 
@@ -953,8 +951,14 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	unsigned long max_blocks = (length + (1 << blkbits) - 1) >> blkbits;
 	bool new = false, boundary = false;
 	u32 bno;
+	long refcount;
 	int ret;
 
+	// if (flags != 0x8)
+	// 	printk("%s: %x\n", __func__, flags);
+	BUG_ON(flags != IOMAP_FAULT && // Read only
+		flags != (IOMAP_WRITE | IOMAP_FAULT) // Write new area once
+	);
 	ret = nova_dax_get_blocks(inode, first_block, max_blocks, &bno, &new,
 				  &boundary, flags & IOMAP_WRITE, taking_lock);
 	if (ret < 0) {
@@ -971,15 +975,36 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 		iomap->type = IOMAP_HOLE;
 		iomap->addr = IOMAP_NULL_ADDR;
 		iomap->length = 1 << blkbits;
-	} else {
-		iomap->type = IOMAP_MAPPED;
-		iomap->addr = (u64)bno << blkbits;
-		iomap->length = (u64)ret << blkbits;
-		iomap->flags |= IOMAP_F_MERGED;
+		return 0;
 	}
+	iomap->type = IOMAP_MAPPED;
+	iomap->addr = (u64)bno << blkbits;
+	iomap->length = (u64)ret << blkbits;
+	iomap->flags |= IOMAP_F_MERGED;
 
 	if (new)
 		iomap->flags |= IOMAP_F_NEW;
+	if (flags & IOMAP_WRITE) {
+		if (new)
+			return 0;
+		refcount = nova_meta_table_decr1(
+			&sbi->meta_table,
+			nova_sbi_blocknr_to_addr(sbi, bno),
+			bno);
+		if (refcount < 0)
+			return refcount;
+		if (refcount == 0)
+			// A block without dedup now.
+			// Could do inplace write freely.
+			return 0;
+		printk("TODO: CoW, and update read mapping");
+	} else {
+		BUG_ON(flags & IOMAP_ZERO); // TODO
+		BUG_ON(flags & IOMAP_REPORT); // TODO
+		// Ignore IOMAP_DIRECT and IOMAP_NOWAIT
+		// TODO: Maybe the mapping of read should be recorded for
+		// future update?
+	}
 	return 0;
 }
 

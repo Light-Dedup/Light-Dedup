@@ -165,6 +165,9 @@ const char *Timingstring[TIMING_NUM] = {
 	"incr_ref",
 	"decr_ref",
 	"memcpy_data_block",
+	"add_valid_count",
+	"new_region",
+	"alloc_entry",
 	"write_new_entry",
 	"mem_bucket_find",
 	"split_leaf",
@@ -398,12 +401,12 @@ void nova_print_inode(struct nova_inode *pi)
 static inline void nova_print_file_write_entry(struct super_block *sb,
 	u64 curr, struct nova_file_write_entry *entry)
 {
-	nova_dbg("file write entry @ 0x%llx: epoch %llu, trans %llu, pgoff %llu, blocknr %llu, reassigned %u, updating %u, invalid count %u, size %llu, mtime %u\n",
+	nova_dbg("file write entry @ 0x%llx: epoch %llu, trans %llu, pgoff %llu, blocknr %llu, reassigned %u, updating %u, flags %x, size %llu, mtime %u\n",
 			curr, entry->epoch_id, entry->trans_id,
 			entry->pgoff,
 			entry->block >> PAGE_SHIFT,
 			entry->reassigned, entry->updating,
-			entry->invalid, entry->size, entry->mtime);
+			entry->flags, entry->size, entry->mtime);
 }
 
 static inline void nova_print_set_attr_entry(struct super_block *sb,

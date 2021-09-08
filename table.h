@@ -8,8 +8,7 @@
 _Static_assert(sizeof(unsigned long) == sizeof(uint64_t), "You should make all blocknr 64 bit");
 
 struct nova_entry_refcount_record {
-	__le32 entrynr;
-	__le32 refcount;
+	__le64 entry_offset;
 };
 struct nova_mm_table {
 	struct super_block    *sblock;
@@ -26,7 +25,7 @@ static inline bool nova_fp_equal(
 
 struct nova_write_para_base {
 	struct nova_fp fp;
-	long refcount;
+	int64_t refcount;
 };
 struct nova_write_para_normal {
 	// Because C does not support inheritance.
@@ -50,7 +49,7 @@ int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 	const void *addr, struct nova_write_para_rewrite *wp,
 	unsigned long blocknr, size_t offset, size_t bytes);
 int nova_fp_table_upsert_entry(struct nova_mm_table *table,
-	entrynr_t entrynr);
+	struct nova_pmm_entry *pentry);
 
 int nova_table_init(struct super_block *sb, struct nova_mm_table *table);
 int nova_table_recover(struct nova_mm_table *table);

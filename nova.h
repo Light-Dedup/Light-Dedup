@@ -250,6 +250,10 @@ static inline void nova_print_curr_epoch_id(struct super_block *sb)
 	nova_dbg("Current epoch id: %llu\n", ret);
 }
 
+
+
+
+
 #include "inode.h"
 static inline int nova_get_head_tail(struct super_block *sb,
 	struct nova_inode *pi, struct nova_inode_info_header *sih)
@@ -831,7 +835,7 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 	u64 begin_tail, u64 end_tail);
 void nova_init_file_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
-	u64 epoch_id, u64 pgoff, u64 blocknr, u32 time,
+	bool dedup, u64 epoch_id, u64 pgoff, u64 blocknr, u32 time,
 	u64 file_size);
 int nova_reassign_file_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, u64 begin_tail);
@@ -917,8 +921,8 @@ extern int nova_dax_mem_protect(struct super_block *sb,
 				 void *vaddr, unsigned long size, int rw);
 bool nova_get_vma_overlap_range(struct vm_area_struct *vma,
 	unsigned long entry_pgoff);
-int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
-	unsigned long address);
+// int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
+// 	unsigned long address);
 bool nova_find_pgoff_in_vma(struct inode *inode, unsigned long pgoff);
 int nova_set_vmas_readonly(struct super_block *sb);
 

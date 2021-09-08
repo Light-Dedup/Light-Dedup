@@ -1,7 +1,6 @@
 #include <linux/atomic.h>
 #include <linux/string.h>
 
-#include "table.h"
 #include "nova.h"
 #include "faststr.h"
 #include "arithmetic.h"
@@ -18,7 +17,7 @@
 
 struct nova_write_para_entry {
 	struct nova_write_para_base base;
-	entrynr_t entrynr;
+	struct nova_pmm_entry *pentry;
 };
 
 static uint64_t nova_table_leaf_find(
@@ -32,7 +31,7 @@ static uint64_t nova_table_leaf_find(
 	entrynr_t i = offset;
 	do {
 		index = base + i;
-		if (pentries[index].blocknr != 0)
+		if (pentries[index].flag == NOVA_LEAF_ENTRY_MAGIC)
 			if (nova_fp_equal(fp, &pentries[index].fp))
 				return index;
 		++i;
@@ -166,6 +165,7 @@ static int bucket_upsert_base(
 	// struct nova_pmm_node *pnode;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
+	int64_t refcount;
 	long delta = wp->base.refcount;
 	unsigned long irq_flags = 0;
 	INIT_TIMING(mem_bucket_find_time);
@@ -176,8 +176,9 @@ static int bucket_upsert_base(
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	if (leaf_index != NOVA_TABLE_NOT_FOUND) {
 		pentry = pentries + leaf_index;
-		BUG_ON(pentry->blocknr == 0);
-		blocknr = pentry->blocknr;
+		BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
+		blocknr = le64_to_cpu(pentry->blocknr);
+		refcount = le64_to_cpu(pentry->refcount);
 		if (delta > 0) {
 			if (cmp_content(sb, blocknr, wp->addr)) {
 				printk("Collision, just write it.");
@@ -191,12 +192,12 @@ static int bucket_upsert_base(
 		} else {
 			if (blocknr != wp->blocknr) {
 				// Collision happened. Just free it.
-				printk("A collision happened. blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+				printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
 				wp->base.refcount = 0;
 				return 0;
 			}
-
-			if (pentry->refcount == -delta) {
+			BUG_ON(refcount < -delta);
+			if (refcount == -delta) {
 				// printk("Before nova_table_leaf_delete");
 				nova_table_leaf_delete(table, leaf_index);
 				// printk("nova_table_leaf_delete return");
@@ -204,17 +205,20 @@ static int bucket_upsert_base(
 				return NOVA_DELETE_ENTRY;
 			}
 		}
-		nova_memunlock_range(sb,pentry,sizeof(pentry),&irq_flags);
-		pentry->refcount += delta;
-		nova_memlock_range(sb,pentry,sizeof(pentry),&irq_flags);
-		nova_flush_buffer(pentry,sizeof(pentry),true);
-		wp->base.refcount = pentry->refcount;
+		refcount += delta;
+		wp->base.refcount = refcount;
+		nova_memunlock_range(sb, &pentry->refcount,
+			sizeof(pentry->refcount), &irq_flags);
+		pentry->refcount = cpu_to_le64(refcount);
+		nova_memlock_range(sb, &pentry->refcount,
+			sizeof(pentry->refcount), &irq_flags);
+		nova_flush_cacheline(pentry, false);
 		// printk(KERN_WARNING " found at %d, ref %llu\n", leaf_index, refcount);
 		return 0;
 	}
 	if (delta < 0) {
 		// Collision happened. Just free it.
-		printk("A collision happened. Block %ld can not be found in the hash table.", wp->blocknr);
+		printk("Block %ld can not be found in the hash table.", wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}
@@ -245,6 +249,7 @@ static int bucket_upsert_decr1(
 	uint64_t leaf_index;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
+	int64_t refcount;
 	struct nova_write_para_normal *wp = (struct nova_write_para_normal *)__wp;
 	INIT_TIMING(mem_bucket_find_time);
 
@@ -253,21 +258,22 @@ static int bucket_upsert_decr1(
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	if (leaf_index == NOVA_TABLE_NOT_FOUND) {
 		// Collision happened. Just free it.
-		printk("A collision happened. Block %ld can not be found in the hash table.", wp->blocknr);
+		printk("Block %ld can not be found in the hash table.", wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}
 	pentry = pentries + leaf_index;
-	BUG_ON(pentry->blocknr == 0);
-	blocknr = pentry->blocknr;
+	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
+	blocknr = le64_to_cpu(pentry->blocknr);
 	if (blocknr != wp->blocknr) {
 		// Collision happened. Just free it.
-		printk("A collision happened. blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+		printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}
-	BUG_ON(pentry->refcount == 0);
-	if (pentry->refcount == 1) {
+	refcount = le64_to_cpu(pentry->refcount);
+	BUG_ON(refcount == 0);
+	if (refcount == 1) {
 		// printk("Before nova_table_leaf_delete");
 		nova_table_leaf_delete(table, leaf_index);
 		// printk("nova_table_leaf_delete return");
@@ -275,7 +281,7 @@ static int bucket_upsert_decr1(
 		return NOVA_DELETE_ENTRY;
 	}
 	// refcount >= 2. So we do not decrease refcount.
-	wp->base.refcount = pentry->refcount;
+	wp->base.refcount = refcount;
 	// printk(KERN_WARNING " found at %d, ref %llu\n", leaf_index, refcount);
 	return 0;
 }
@@ -284,6 +290,7 @@ static int bucket_insert_entry(
 	struct nova_mm_table *table,
 	struct nova_write_para_base *__wp)
 {
+	BUG();
 	return 0;
 }
 
@@ -291,12 +298,16 @@ static int bucket_upsert_entry(
 	struct nova_mm_table *table,
 	struct nova_write_para_base *__wp)
 {
+#if 0
+	struct super_block *sb = table->sblock;
 	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
 	uint64_t i;
 
 	i = nova_table_leaf_find(table,table->pentries, &wp->base.fp);
 	if (i == NOVA_TABLE_NOT_FOUND)
 		return bucket_insert_entry(table, __wp);
+#endif
+	BUG();
 	return 0;
 }
 
@@ -324,11 +335,13 @@ int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
 }
+#if 0
 // Insert entry to rebuild the hash table during normal recovery
 static int nova_table_insert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_insert_entry);
 }
+#endif
 // Rebuild the hash table during failure recovery
 static int nova_table_upsert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
 {
@@ -376,17 +389,16 @@ int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 }
 
 int nova_fp_table_upsert_entry(struct nova_mm_table *table,
-	entrynr_t entrynr)
+	struct nova_pmm_entry *pentry)
 {
-	struct nova_pmm_entry *pentries = table->pentries;
 	struct nova_write_para_entry wp;
 	INIT_TIMING(upsert_fp_entry_time);
 	int ret;
 
 	NOVA_START_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
-	wp.base.fp = pentries[entrynr].fp;
+	wp.base.fp = pentry->fp;
 	wp.base.refcount = 1;
-	wp.entrynr = entrynr;
+	wp.pentry = pentry;
 	ret = nova_table_upsert_entry(table, &wp);
 	NOVA_END_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
 	return ret;
@@ -425,7 +437,6 @@ struct table_recover_para {
 	struct nova_mm_table *table;
 	entrynr_t entry_start, entry_end;
 };
-
 int nova_table_recover(struct nova_mm_table *table)
 {
 	return 0;
