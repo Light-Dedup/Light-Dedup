@@ -338,7 +338,7 @@ static inline void flush_last_entry(struct entry_allocator_cpu *allocator_cpu)
 {
 	// TODO: Does flush need memunlock?
 	if (allocator_cpu->last_entry != NULL_PENTRY)
-		nova_flush_cacheline(allocator_cpu->last_entry, false);
+		nova_flush_cacheline(allocator_cpu->last_entry, true);
 }
 static inline bool in_the_same_cacheline(
 	struct nova_pmm_entry *a,
@@ -358,6 +358,7 @@ void nova_flush_entry(struct entry_allocator *allocator,
 		flush_last_entry(allocator_cpu);
 	put_cpu();
 }
+
 static int
 alloc_region(struct entry_allocator *allocator)
 {
@@ -577,17 +578,6 @@ void nova_free_entry(struct entry_allocator *allocator,
 }
 
 static inline void
-flush_fpentries(struct nova_sb_info *sbi)
-{
-	struct nova_pmm_entry *addr =
-		nova_sbi_blocknr_to_addr(sbi, sbi->region_start);
-	while (addr) {
-		clflush_cache_range(addr, PAGE_SIZE);
-		addr = nova_sbi_get_block(sbi,
-			le64_to_cpu(*(__le64 *)(addr + REAL_ENTRY_PER_REGION)));
-	}
-}
-static inline void
 __save_valid_entry_counts(struct super_block *sb, __le16 *dst, __le64 *blocknrs,
 	struct xarray *blocknr_count, size_t len)
 {
@@ -631,9 +621,9 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 	INIT_TIMING(save_entry_allocator_time);
 
 	NOVA_START_TIMING(save_entry_allocator_t, save_entry_allocator_time);
-	flush_fpentries(sbi);
 	for_each_possible_cpu(cpu) {
 		allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
+		flush_last_entry(allocator_cpu);
 		if (allocator_cpu->top_entry != NULL_PENTRY) {
 			add_valid_count(&allocator->valid_entry,
 				nova_get_addr_off(
