@@ -224,7 +224,7 @@ static int nova_reset_data_csum_parity(struct super_block *sb,
 	if (data_csum == 0 && data_parity == 0)
 		goto out;
 
-	if (entryc->flags & NOVA_WENTRY_INVALID)
+	if (entryc->invalid)
 		/* Dead entry */
 		goto out;
 
@@ -360,7 +360,7 @@ static void nova_rebuild_handle_write_entry(struct super_block *sb,
 	struct nova_file_write_entry *entry,
 	struct nova_file_write_entry *entryc)
 {
-	if (!(entryc->flags & NOVA_WENTRY_INVALID)) {
+	if (!entryc->invalid) {
 		/*
 		 * The overlaped blocks are already freed.
 		 * Don't double free them, just re-assign the pointers.
