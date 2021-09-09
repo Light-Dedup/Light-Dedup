@@ -233,9 +233,7 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 }
 
 void nova_init_file_write_entry(struct super_block *sb,
-	struct nova_inode_info_header *sih,
-	struct nova_file_write_entry *entry,
-	bool dedup,
+	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
 	u64 epoch_id, u64 pgoff, u64 blocknr, u32 time,
 	u64 file_size)
 {
@@ -246,7 +244,7 @@ void nova_init_file_write_entry(struct super_block *sb,
 	entry->epoch_id = epoch_id;
 	entry->trans_id = sih->trans_id;
 	entry->pgoff = cpu_to_le64(pgoff);
-	entry->flags = dedup ? NOVA_WENTRY_DEDUP : 0;
+	entry->invalid = 0;
 	entry->block = cpu_to_le64(nova_get_block_off(sb, blocknr,
 							sih->i_blk_type));
 	entry->mtime = cpu_to_le32(time);
@@ -474,13 +472,14 @@ out:
  * 		=0: Do COW.
  * 		>0: New blocknr(protected).
  */
-static int try_inplace_file_write(struct super_block *sb,
+static long try_inplace_file_write(struct super_block *sb,
 	unsigned long old_blocknr, char *kbuf, const char __user *buf,
-	size_t offset, size_t bytes, struct inode *inode, loff_t pos,
-	struct nova_write_para_rewrite *wp)
+	size_t offset, size_t bytes,
+	struct inode *inode, loff_t pos)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_meta_table *table = &sbi->meta_table;
+	struct nova_write_para_rewrite wp;
 	long ret = nova_meta_table_decr1(table, kbuf, old_blocknr);
 	if (ret < 0)
 		return ret;
@@ -490,18 +489,18 @@ static int try_inplace_file_write(struct super_block *sb,
 	if (copy_from_user(kbuf + offset, buf, bytes))
 		return -EFAULT;
 	ret = nova_fp_table_rewrite_on_insert(
-		&table->metas, kbuf, wp, old_blocknr, offset, bytes);
+		&table->metas, kbuf, &wp, old_blocknr, offset, bytes);
 	if (ret < 0)
 		return ret;	// No need to free old blocknr or reinsert it into table.
-	if (wp->normal.base.refcount == 1) {
+	if (wp.normal.base.refcount == 1) {
 		if (data_csum > 0 || data_parity > 0) {
 			ret = nova_protect_file_data(sb, inode, pos, bytes,
-						buf, wp->normal.blocknr, true);
+						buf, wp.normal.blocknr, true);
 			if (ret)
 				return ret;
 		}
 	} // Else an existing block found. Already protected.
-	return 0;
+	return wp.normal.blocknr;
 }
 /*
  * Do an inplace write.  This function assumes that the lock on the inode is
@@ -529,7 +528,6 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	unsigned long total_blocks;
 	unsigned long new_blocks = 0;
 	unsigned long old_blocknr = 0, new_blocknr = 0;
-	long new_refcount;
 	unsigned int data_bits;
 	int inplace = 0;
 	bool hole_fill;
@@ -544,7 +542,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	u32 time;
 	ssize_t ret;
 	char *kbuf = NULL;
-	struct nova_write_para_rewrite wp;
+	struct nova_write_para_normal wp;
 	unsigned long irq_flags = 0;
 
 	// printk("%s\n", __func__);
@@ -620,12 +618,11 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			xmem = nova_blocknr_to_addr(sb, old_blocknr);
 			memcpy(kbuf, xmem, PAGE_SIZE);
 			ret = try_inplace_file_write(sb, old_blocknr, kbuf, buf,
-				offset, bytes, inode, pos, &wp);
+				offset, bytes, inode, pos);
 			if (ret < 0)
 				goto out;
-			if (wp.normal.blocknr > 0) {
-				new_blocknr = wp.normal.blocknr;
-				new_refcount = wp.normal.base.refcount;
+			if (ret > 0) {
+				new_blocknr = ret;
 				hole_fill = false;
 				goto protected;
 			} // Else fall back to COW.
@@ -641,11 +638,10 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			ret = -EFAULT;
 			goto out;
 		}
-		ret = nova_fp_table_incr(&table->metas, kbuf, &wp.normal);
+		ret = nova_fp_table_incr(&table->metas, kbuf, &wp);
 		if (ret < 0)
 			goto out;
-		new_blocknr = wp.normal.blocknr;
-		new_refcount = wp.normal.base.refcount;
+		new_blocknr = wp.blocknr;
 		if (data_csum > 0 || data_parity > 0) {
 			ret = nova_protect_file_data(sb, inode, pos, bytes,
 						buf, new_blocknr, false);
@@ -662,7 +658,6 @@ protected:
 
 		if (hole_fill) {
 			nova_init_file_write_entry(sb, sih, &entry_data,
-						new_refcount > 0,
 						epoch_id, start_blk,
 						new_blocknr, time, file_size);
 
@@ -891,7 +886,7 @@ again:
 	}
 
 	/* Do not extend file size */
-	nova_init_file_write_entry(sb, sih, &entry_data, false,
+	nova_init_file_write_entry(sb, sih, &entry_data,
 					epoch_id, iblock,
 					blocknr, time, inode->i_size);
 

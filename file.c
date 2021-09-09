@@ -653,9 +653,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		else
 			file_size = cpu_to_le64(inode->i_size);
 
-		nova_init_file_write_entry(sb, sih, &entry_data,
-					wp.base.refcount > 0,
-					epoch_id, start_blk, blocknr, time,
+		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
+					start_blk, blocknr, time,
 					file_size);
 
 		ret = nova_append_file_write_entry(sb, pi, inode,

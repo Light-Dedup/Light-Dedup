@@ -286,14 +286,6 @@ static int bucket_upsert_decr1(
 	return 0;
 }
 
-static int bucket_insert_entry(
-	struct nova_mm_table *table,
-	struct nova_write_para_base *__wp)
-{
-	BUG();
-	return 0;
-}
-
 static int bucket_upsert_entry(
 	struct nova_mm_table *table,
 	struct nova_write_para_base *__wp)

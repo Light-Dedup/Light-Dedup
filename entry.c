@@ -88,7 +88,7 @@ write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	pentry->refcount = cpu_to_le64(refcount);
 	wmb();
 	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
-	nova_flush_buffer(pentry, sizeof(*pentry), false);
+	nova_flush_buffer(pentry, sizeof(*pentry), true);
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
 }

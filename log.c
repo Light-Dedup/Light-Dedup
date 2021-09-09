@@ -33,8 +33,8 @@ static int nova_execute_invalidate_reassign_logentry(struct super_block *sb,
 		if (reassign)
 			fw_entry->reassigned = 1;
 		if (free)
-			fw_entry->flags |= NOVA_WENTRY_INVALID;
-		if (fw_entry->flags & NOVA_WENTRY_INVALID)
+			fw_entry->invalid = true;
+		if (fw_entry->invalid)
 			invalid = 1;
 		break;
 	case DIR_LOG:
