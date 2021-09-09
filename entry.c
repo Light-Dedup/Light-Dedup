@@ -350,8 +350,13 @@ static inline bool in_the_same_cacheline(
 void nova_flush_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
+	int cpu = get_cpu();
+	struct entry_allocator_cpu *allocator_cpu =
+		&per_cpu(entry_allocator_per_cpu, cpu);
 	// TODO: Is flushing a not dirty cache line expensive?
-	nova_flush_cacheline(pentry, false);
+	if (!in_the_same_cacheline(allocator_cpu->last_entry, pentry))
+		flush_last_entry(allocator_cpu);
+	put_cpu();
 }
 static int
 alloc_region(struct entry_allocator *allocator)
