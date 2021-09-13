@@ -354,8 +354,8 @@ static inline bool in_the_same_cacheline(
 	struct nova_pmm_entry *a,
 	struct nova_pmm_entry *b)
 {
-	return (unsigned long)a / ENTRY_PER_CACHELINE ==
-		(unsigned long)b / ENTRY_PER_CACHELINE;
+	return (unsigned long)a / CACHELINE_SIZE ==
+		(unsigned long)b / CACHELINE_SIZE;
 }
 void nova_flush_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
