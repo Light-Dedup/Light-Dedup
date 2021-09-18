@@ -35,29 +35,25 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 
 int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
-	regionnr_t i;
 	char *regions;
 	int ret;
-	// __get_free_pages could allocate at most 2^10 pages at once.
-	allocator->region_num = (1 << 10);
+	allocator->region_num = 1;
 	ret = entry_allocator_alloc(sbi, allocator);
 	if (ret < 0)
 		return ret;
-	regions = (char *)__get_free_pages(
-		GFP_KERNEL | __GFP_ZERO, ceil_log_2(allocator->region_num));
+	regions = (char *)get_zeroed_page(GFP_KERNEL);
 	BUG_ON(regions == NULL);
-	for (i = 0; i < allocator->region_num; ++i, regions += PAGE_SIZE) {
-		ret = xa_err(xa_store(&allocator->valid_entry, (unsigned long)regions,
-			xa_mk_value(0), GFP_KERNEL));
-		BUG_ON(ret < 0); // TODO: Handle it
-		BUG_ON(nova_queue_push_ul(
-			&allocator->free_regions,
-			(unsigned long)regions,
-			GFP_KERNEL
-		) < 0);
-	}
+	ret = xa_err(xa_store(&allocator->valid_entry, (unsigned long)regions,
+		xa_mk_value(0), GFP_KERNEL));
+	BUG_ON(ret < 0); // TODO: Handle it
+	BUG_ON(nova_queue_push_ul(
+		&allocator->free_regions,
+		(unsigned long)regions,
+		GFP_KERNEL
+	) < 0);
+	allocator->first_region = regions;
 	allocator->last_region_tail = (__le64 *)(regions + PAGE_SIZE - sizeof(__le64));
-	
+
 	return 0;
 }
 
@@ -158,8 +154,15 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 
 void nova_free_entry_allocator(struct entry_allocator *allocator)
 {
+	char *region = allocator->first_region;
+	char *next;
 	xa_destroy(&allocator->valid_entry);
 	nova_queue_destroy(&allocator->free_regions);
+	while (region != NULL) {
+		next = (char *)*(__le64 *)(region + PAGE_SIZE - sizeof(__le64));
+		free_page((unsigned long)region);
+		region = next;
+	}
 }
 
 #if 0

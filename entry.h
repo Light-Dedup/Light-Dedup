@@ -41,6 +41,7 @@ struct entry_allocator {
 	struct nova_queue free_regions; // Region numbers
 	spinlock_t lock;
 	struct xarray valid_entry; // Key is blocknr of region
+	void *first_region; // To free regions.
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \
 	((PAGE_SIZE - sizeof(__le64)) / sizeof(uint16_t))
