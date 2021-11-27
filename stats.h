@@ -233,22 +233,35 @@ typedef struct timespec timing_t;
 
 #define	INIT_TIMING(X)	timing_t X = {0}
 
-#define NOVA_START_TIMING(name, start) \
-	{if (measure_timing) getrawmonotonic(&start); }
+#define NOVA_STRINGIFY(x) #x
+#define __NOVA_TIMER_DISABLED(name_disabled) \
+	(sizeof NOVA_STRINGIFY(name_disabled) == 2)
+#define NOVA_TIMER_DISABLED(name) __NOVA_TIMER_DISABLED(name ## _disabled)
 
-#define NOVA_END_TIMING(name, start) \
-	{if (measure_timing) { \
-		INIT_TIMING(end); \
-		getrawmonotonic(&end); \
-		__this_cpu_add(Timingstats_percpu[name], \
-			(end.tv_sec - start.tv_sec) * 1000000000 + \
-			(end.tv_nsec - start.tv_nsec)); \
-	} \
-	__this_cpu_add(Countstats_percpu[name], 1); \
-	}
+// For example
+// #define mem_bucket_find_t_disabled 1
+// _Static_assert(NOVA_TIMER_DISABLED(mem_bucket_find_t),
+// 	"mem_bucket_find_t not disabled!");
 
-#define NOVA_STATS_ADD(name, value) \
-	{__this_cpu_add(IOstats_percpu[name], value); }
+#define NOVA_START_TIMING(name, start)	do { 			\
+	if (measure_timing && !NOVA_TIMER_DISABLED(name))	\
+		getrawmonotonic(&start);			\
+} while (0)
+
+#define NOVA_END_TIMING(name, start)	do { 				\
+	if (measure_timing && !NOVA_TIMER_DISABLED(name)) { 		\
+		INIT_TIMING(end); 					\
+		getrawmonotonic(&end); 					\
+		__this_cpu_add(Timingstats_percpu[name], 		\
+			(end.tv_sec - start.tv_sec) * 1000000000 + 	\
+			(end.tv_nsec - start.tv_nsec)); 		\
+	} 								\
+	__this_cpu_add(Countstats_percpu[name], 1); 			\
+} while (0)
+
+#define NOVA_STATS_ADD(name, value)	do {		\
+	__this_cpu_add(IOstats_percpu[name], value);	\
+} while (0)
 
 
 
