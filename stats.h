@@ -233,22 +233,26 @@ typedef struct timespec timing_t;
 
 #define	INIT_TIMING(X)	timing_t X = {0}
 
-#define NOVA_START_TIMING(name, start) \
-	{if (measure_timing) getrawmonotonic(&start); }
+#define NOVA_START_TIMING(name, start)	do { 	\
+						\
+	if (measure_timing)			\
+		getrawmonotonic(&start);	\
+} while (0)
 
-#define NOVA_END_TIMING(name, start) \
-	{if (measure_timing) { \
-		INIT_TIMING(end); \
-		getrawmonotonic(&end); \
-		__this_cpu_add(Timingstats_percpu[name], \
-			(end.tv_sec - start.tv_sec) * 1000000000 + \
-			(end.tv_nsec - start.tv_nsec)); \
-	} \
-	__this_cpu_add(Countstats_percpu[name], 1); \
-	}
+#define NOVA_END_TIMING(name, start)	do { 				\
+	if (measure_timing) { 						\
+		INIT_TIMING(end); 					\
+		getrawmonotonic(&end); 					\
+		__this_cpu_add(Timingstats_percpu[name], 		\
+			(end.tv_sec - start.tv_sec) * 1000000000 + 	\
+			(end.tv_nsec - start.tv_nsec)); 		\
+	} 								\
+	__this_cpu_add(Countstats_percpu[name], 1); 			\
+} while (0)
 
-#define NOVA_STATS_ADD(name, value) \
-	{__this_cpu_add(IOstats_percpu[name], value); }
+#define NOVA_STATS_ADD(name, value)	do {		\
+	__this_cpu_add(IOstats_percpu[name], value);	\
+} while (0)
 
 
 
