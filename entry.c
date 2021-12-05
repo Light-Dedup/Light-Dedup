@@ -454,12 +454,15 @@ new_region(struct entry_allocator *allocator,
 	int16_t count;
 	int ret;
 	INIT_TIMING(new_region_time);
+	INIT_TIMING(alloc_region_time);
 
 	NOVA_START_TIMING(new_region_t, new_region_time);
 	spin_lock(&allocator->lock);
 	if (nova_queue_is_empty(&allocator->free_regions))
 	{
+		NOVA_START_TIMING(alloc_region_t, alloc_region_time);
 		ret = alloc_region(allocator);
+		NOVA_END_TIMING(alloc_region_t, alloc_region_time);
 		if (ret < 0) {
 			spin_unlock(&allocator->lock);
 			NOVA_END_TIMING(new_region_t, new_region_time);
