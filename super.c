@@ -1270,7 +1270,7 @@ static int __init init_nova_fs(void)
 
 	rc = init_rangenode_cache();
 	if (rc)
-		return rc;
+		goto out0;
 
 	rc = init_inodecache();
 	if (rc)
@@ -1293,6 +1293,8 @@ out2:
 	destroy_inodecache();
 out1:
 	destroy_rangenode_cache();
+out0:
+	NOVA_END_TIMING(init_t, init_time);
 	return rc;
 }
 
