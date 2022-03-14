@@ -92,16 +92,16 @@ static size_t nova_table_leaf_find(
 	const struct nova_fp *fp)
 {
 	size_t i;
-	uint64_t index = fp->indicator;
-	uint8_t tag = (uint8_t)(fp->tag % 0xff + 1);
+	uint8_t tag = nova_fp_get_tag(fp);
+	uint64_t index = nova_fp_get_indicator(fp);
 	for (i = index; i < NOVA_TABLE_LEAF_SIZE; i++) {
-		if (bucket->tags[i] == tag && bucket->indicators[i] == fp->indicator &&
+		if (bucket->tags[i] == tag &&
 			fp_matches(allocator, bucket, i, fp)) {
 			return i;
 		}
 	}
 	for (i = 0; i < index; i++) {
-		if (bucket->tags[i] == tag && bucket->indicators[i] == fp->indicator &&
+		if (bucket->tags[i] == tag &&
 			fp_matches(allocator, bucket, i, fp)) {
 			return i;
 		}
@@ -190,8 +190,7 @@ static void assign_entry(
 	size_t used_hash_bit)
 {
 	size_t disbase;
-	bucket->tags[i] = (uint8_t)((fp->tag % 0xff) + 1); // non zero
-	bucket->indicators[i] = fp->indicator;
+	bucket->tags[i] = nova_fp_get_tag(fp);
 	if (used_hash_bit == 0) {
 		// The bucket is the root of tablet, disbyte will not be used.
 		bucket->disbyte[i] = 0;
@@ -219,7 +218,7 @@ static int nova_table_leaf_insert(
 	struct nova_mm_entry_p entry_p;
 	int ret;
 
-	i = find_free_slot_in_bucket(bucket, fp->indicator);
+	i = find_free_slot_in_bucket(bucket, nova_fp_get_indicator(fp));
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
 	cpu = get_cpu();
@@ -267,11 +266,11 @@ static int nova_table_leaf_mm_insert(
 {
 	size_t i;
 	// print_bucket_entry(table, src, index);
-	i = find_free_slot_in_bucket(bucket, src->indicators[index]);
+	i = find_free_slot_in_bucket(bucket,
+		src->tags[index] % NOVA_TABLE_LEAF_SIZE);
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
 	bucket->tags[i] = src->tags[index];
-	bucket->indicators[i] = src->indicators[index];
 	bucket->disbyte[i] = disbyte;
 	bucket->entry_p[i] = src->entry_p[index];
 	++bucket->size;
@@ -420,7 +419,8 @@ static int bucket_insert_entry(
 	size_t i;
 	struct nova_mm_entry_p entry_p;
 
-	i = find_free_slot_in_bucket(bucket, wp->base.fp.indicator);
+	i = find_free_slot_in_bucket(bucket,
+		nova_fp_get_indicator(&wp->base.fp));
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
 	entry_p.pentry = wp->pentry;

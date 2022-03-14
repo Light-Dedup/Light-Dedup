@@ -96,8 +96,8 @@ struct nova_recover_meta {
 	// __le64 free_entrynr_list_tail;
 	__le64 region_num;
 	__le64 last_region_tail;
-	__le64 valid_entry_count_num;
-	__le64 last_valid_entry_count_block_tail_offset;
+	__le64 max_region_num;
+	__le64 last_counter_block_tail_offset;
 	__le64 refcount_record_num;
 };
 _Static_assert(sizeof(struct nova_recover_meta) <= PAGE_SIZE, "struct nova_recover_meta too large!");
@@ -193,7 +193,7 @@ struct nova_sb_info {
 	uint32_t nr_tablets;
 	unsigned long region_start;
 	unsigned long region_blocknr_start;
-	unsigned long region_valid_count_start;
+	unsigned long first_counter_block_start;
 	unsigned long entry_refcount_record_start;
 
 	struct nova_meta_table meta_table;

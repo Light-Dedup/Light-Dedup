@@ -173,7 +173,7 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	sbi->block_start +=
 		((sbi->num_blocks * sizeof(__le64) - 1) >> PAGE_SHIFT) + 1;
 
-	sbi->region_valid_count_start = sbi->block_start;
+	sbi->first_counter_block_start = sbi->block_start;
 	sbi->block_start += 1;
 
 	sbi->entry_refcount_record_start = sbi->block_start;
@@ -523,7 +523,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	init_regions(sbi);
 	memset_nt(
 		nova_sbi_blocknr_to_addr(sbi,
-			sbi->region_valid_count_start),
+			sbi->first_counter_block_start),
 		0,
 		PAGE_SIZE
 	);
@@ -1270,7 +1270,7 @@ static int __init init_nova_fs(void)
 
 	rc = init_rangenode_cache();
 	if (rc)
-		return rc;
+		goto out0;
 
 	rc = init_inodecache();
 	if (rc)
@@ -1293,6 +1293,8 @@ out2:
 	destroy_inodecache();
 out1:
 	destroy_rangenode_cache();
+out0:
+	NOVA_END_TIMING(init_t, init_time);
 	return rc;
 }
 
