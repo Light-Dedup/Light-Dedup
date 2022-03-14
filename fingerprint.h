@@ -17,7 +17,7 @@ struct nova_fp {
 		struct {
 			uint64_t which_tablet: WHICH_TABLET_BIT_NUM;
 			uint64_t index: INDEX_BIT_NUM;
-			// The least significant 5 bits servers as indicator
+			// (tag % 255 + 1) % 32 serves as indicator
 			uint64_t tag: TAG_BIT_NUM;
 		};
 		uint64_t value;

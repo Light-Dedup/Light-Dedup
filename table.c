@@ -92,8 +92,8 @@ static size_t nova_table_leaf_find(
 	const struct nova_fp *fp)
 {
 	size_t i;
-	uint64_t index = fp->tag % NOVA_TABLE_LEAF_SIZE;
 	uint8_t tag = (uint8_t)(fp->tag % 0xff + 1);
+	uint64_t index = tag % NOVA_TABLE_LEAF_SIZE;
 	for (i = index; i < NOVA_TABLE_LEAF_SIZE; i++) {
 		if (bucket->tags[i] == tag &&
 			fp_matches(allocator, bucket, i, fp)) {
