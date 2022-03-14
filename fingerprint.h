@@ -17,12 +17,24 @@ struct nova_fp {
 		struct {
 			uint64_t which_tablet: WHICH_TABLET_BIT_NUM;
 			uint64_t index: INDEX_BIT_NUM;
-			// (tag % 255 + 1) % 32 serves as indicator
-			uint64_t tag: TAG_BIT_NUM;
+			// (fp.tag % 255 + 1) % 32 serves as indicator
+			uint64_t _tag: TAG_BIT_NUM;
 		};
 		uint64_t value;
 	};
 };
+
+// non zero
+static inline uint8_t nova_fp_get_tag(const struct nova_fp *fp)
+{
+	return fp->_tag % 0xff + 1;
+}
+
+static inline uint8_t nova_fp_get_indicator(const struct nova_fp *fp)
+{
+	return nova_fp_get_tag(fp) % (1 << INDICATOR_BIT_NUM);
+}
+
 _Static_assert(INDICATOR_BIT_NUM <= TAG_BIT_NUM, "INDICATOR_BIT_NUM > TAG_BIT_NUM!");
 _Static_assert(sizeof(struct nova_fp) == 8, "Fingerprint not 8B!");
 

@@ -92,8 +92,8 @@ static size_t nova_table_leaf_find(
 	const struct nova_fp *fp)
 {
 	size_t i;
-	uint8_t tag = (uint8_t)(fp->tag % 0xff + 1);
-	uint64_t index = tag % NOVA_TABLE_LEAF_SIZE;
+	uint8_t tag = nova_fp_get_tag(fp);
+	uint64_t index = nova_fp_get_indicator(fp);
 	for (i = index; i < NOVA_TABLE_LEAF_SIZE; i++) {
 		if (bucket->tags[i] == tag &&
 			fp_matches(allocator, bucket, i, fp)) {
@@ -197,7 +197,7 @@ static void assign_entry(
 	size_t used_hash_bit)
 {
 	size_t disbase;
-	bucket->tags[i] = (uint8_t)((fp.tag % 0xff) + 1); // non zero
+	bucket->tags[i] = nova_fp_get_tag(&fp);
 	if (used_hash_bit == 0) {
 		// The bucket is the root of tablet, disbyte will not be used.
 		bucket->disbyte[i] = 0;
@@ -225,7 +225,7 @@ static int nova_table_leaf_insert(
 	struct nova_mm_entry_p entry_p;
 	int ret;
 
-	i = find_free_slot_in_bucket(bucket, fp.tag % NOVA_TABLE_LEAF_SIZE);
+	i = find_free_slot_in_bucket(bucket, nova_fp_get_indicator(&fp));
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
 	cpu = get_cpu();
@@ -451,7 +451,7 @@ static int bucket_insert_entry(
 	struct nova_mm_entry_p entry_p;
 
 	i = find_free_slot_in_bucket(bucket,
-		wp->base.fp.tag % NOVA_TABLE_LEAF_SIZE);
+		nova_fp_get_indicator(&wp->base.fp));
 	if (i == NOVA_TABLE_LEAF_SIZE)
 		return NOVA_FULL;
 	entry_p.pentry = wp->pentry;
