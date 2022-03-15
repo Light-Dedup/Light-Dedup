@@ -391,7 +391,7 @@ static inline void check_eof_blocks(struct super_block *sb,
 /*
  * Free data blocks from inode in the range start <=> end
  */
-static void nova_truncate_file_blocks(struct inode *inode, loff_t start,
+void nova_truncate_file_blocks(struct inode *inode, loff_t start,
 				    loff_t end, u64 epoch_id)
 {
 	struct super_block *sb = inode->i_sb;
