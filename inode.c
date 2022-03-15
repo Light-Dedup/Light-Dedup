@@ -321,7 +321,7 @@ int nova_delete_file_tree(struct super_block *sb,
 			pgoff++;
 			pgoff = pgoff > entryc->pgoff ? pgoff : entryc->pgoff;
 		}
-	} while (1);
+	} while (pgoff <= last_pgoff);
 
 	nova_dbgv("Inode %lu: delete file tree from pgoff %lu to %lu, %d blocks freed\n",
 			sih->ino, start_pgoff, last_pgoff, freed);
