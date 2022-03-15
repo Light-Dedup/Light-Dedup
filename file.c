@@ -194,8 +194,10 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	 * but we still support it for DAX-mmap purpose.
 	 */
 
-	/* We only support the FALLOC_FL_KEEP_SIZE mode */
-	if (mode & ~FALLOC_FL_KEEP_SIZE)
+	/* We only support the FALLOC_FL_KEEP_SIZE and FALLOC_FL_PUNCH_HOLE
+	 * mode
+	 */
+	if (mode & ~(FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE))
 		return -EOPNOTSUPP;
 
 	if (S_ISDIR(inode->i_mode))
@@ -222,6 +224,18 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 		goto out;
 	}
 
+	epoch_id = nova_get_epoch_id(sb);
+	if (mode & FALLOC_FL_PUNCH_HOLE) {
+		if (offset % PAGE_SIZE != 0 || len != PAGE_SIZE) {
+			printk("offset %lld, len %lld\n", offset, len);
+			ret = -EOPNOTSUPP;
+			goto out;
+		}
+		// TODO: truncate_pagecache?
+		nova_truncate_file_blocks(inode, offset, offset + len,
+			epoch_id);
+	}
+
 	inode->i_mtime = inode->i_ctime = current_time(inode);
 	time = current_time(inode).tv_sec;
 
@@ -230,7 +244,6 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 	blockoff = offset & blocksize_mask;
 	num_blocks = (blockoff + len + blocksize_mask) >> sb->s_blocksize_bits;
 
-	epoch_id = nova_get_epoch_id(sb);
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
 
