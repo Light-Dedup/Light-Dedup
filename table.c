@@ -324,7 +324,7 @@ static int bucket_upsert_decr1(
 
 // Used in entry.c
 int nova_rhashtable_insert_entry(struct rhashtable *rht,
-	struct rhashtable_params params, struct nova_fp fp,
+	const struct rhashtable_params params, struct nova_fp fp,
 	struct nova_pmm_entry *pentry)
 {
 	struct nova_rht_entry *entry = nova_rht_entry_alloc();
@@ -333,9 +333,17 @@ int nova_rhashtable_insert_entry(struct rhashtable *rht,
 	if (entry == NULL)
 		return -ENOMEM;
 	assign_entry(entry, pentry, fp);
-	ret = rhashtable_insert_fast(rht, &entry->node, params);
-	if (ret < 0)
+	while(1) {
+		ret = rhashtable_insert_fast(rht, &entry->node, params);
+		if (ret != -EBUSY)
+			break;
+		schedule();
+	};
+	if (ret < 0) {
+		printk("%s: rhashtable_insert_fast returns %d\n",
+			__func__, ret);
 		nova_rht_entry_free(entry, NULL);
+	}
 	return ret;
 }
 static int bucket_insert_entry(
@@ -566,6 +574,7 @@ static int __table_recover_func(struct nova_mm_table *table,
 			continue;
 		wp.pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
 			le64_to_cpu(rec[i].entry_offset));
+		BUG_ON(wp.pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
 		wp.base.fp = wp.pentry->fp;
 		ret = nova_table_insert_entry(table, &wp);
 		if (ret < 0)
