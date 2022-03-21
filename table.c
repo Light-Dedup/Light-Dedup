@@ -7,7 +7,7 @@
 #include "multithread.h"
 #include "rhashtable-ext.h"
 
-#define static _Static_assert(1, "2333");
+// #define static _Static_assert(1, "2333");
 
 struct nova_rht_entry {
 	struct rhash_head node;
