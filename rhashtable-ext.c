@@ -3,7 +3,7 @@
 
 #include <linux/slab.h>
 
-#define static _Static_assert(1, "2333");
+// #define static _Static_assert(1, "2333");
 
 static void rhashtable_operate_one(struct rhashtable *ht, struct rhash_head *obj,
 	void (*fn)(void *ptr, void *arg), void *arg)
