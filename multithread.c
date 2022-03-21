@@ -1,12 +1,11 @@
 #include "multithread.h"
-#include "nova.h"
 
 // static inline struct completion *
 // get_completion(void *para, size_t para_len, unsigned long i)
 // {
 //     return (struct completion *)((char *)para + para_len * i);
 // }
-int __run_and_stop_kthreads(struct super_block *sb,
+int __run_and_stop_kthreads(
 	struct task_struct **tasks, void *__para, size_t para_len,
 	size_t entered_offset,
 	unsigned long thread_num, unsigned long created)
@@ -25,7 +24,7 @@ int __run_and_stop_kthreads(struct super_block *sb,
 			wait_for_completion((struct completion *)para);
 			ret2 = kthread_stop(tasks[i]);
 			if (ret2 < 0) {
-				nova_err(sb, "kthread_stop %lu return %d\n", i, ret2);
+				printk("kthread_stop %lu return %d\n", i, ret2);
 				ret = ret2;
 			}
 		}
@@ -34,7 +33,7 @@ int __run_and_stop_kthreads(struct super_block *sb,
 		for (i = 0; i < thread_num; ++i) {
 			ret2 = kthread_stop(tasks[i]);
 			if (ret2 < 0 && ret2 != -EINTR) {
-				nova_err(sb, "kthread_stop %lu return %d\n", i, ret2);
+				printk("kthread_stop %lu return %d\n", i, ret2);
 				ret = ret2;
 			}
 		}

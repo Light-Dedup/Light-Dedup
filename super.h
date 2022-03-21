@@ -190,7 +190,6 @@ struct nova_sb_info {
 	unsigned long	block_start;
 	unsigned long	block_end;
 
-	uint32_t nr_tablets;
 	unsigned long region_start;
 	unsigned long region_blocknr_start;
 	unsigned long first_counter_block_start;

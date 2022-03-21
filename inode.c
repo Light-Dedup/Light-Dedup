@@ -321,7 +321,7 @@ int nova_delete_file_tree(struct super_block *sb,
 			pgoff++;
 			pgoff = pgoff > entryc->pgoff ? pgoff : entryc->pgoff;
 		}
-	} while (1);
+	} while (pgoff <= last_pgoff);
 
 	nova_dbgv("Inode %lu: delete file tree from pgoff %lu to %lu, %d blocks freed\n",
 			sih->ino, start_pgoff, last_pgoff, freed);
@@ -373,7 +373,7 @@ static inline void check_eof_blocks(struct super_block *sb,
 /*
  * Free data blocks from inode in the range start <=> end
  */
-static void nova_truncate_file_blocks(struct inode *inode, loff_t start,
+void nova_truncate_file_blocks(struct inode *inode, loff_t start,
 				    loff_t end, u64 epoch_id)
 {
 	struct super_block *sb = inode->i_sb;
