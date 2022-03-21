@@ -270,7 +270,7 @@ static int scan_entry_table(struct super_block *sb,
 		}
 		cur_start += region_per_thread;
 	}
-	ret2 = run_and_stop_kthreads(sb, tasks, para, thread_num, i);
+	ret2 = run_and_stop_kthreads(tasks, para, thread_num, i);
 	if (ret2 < 0)
 		ret = ret2;
 out:
@@ -536,7 +536,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
 	pentry->blocknr = cpu_to_le64(blocknr);
-	pentry->refcount = cpu_to_le64(refcount);
+	atomic64_set(&pentry->refcount, refcount);
 	wmb();
 	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
 	if (!in_the_same_cacheline(allocator_cpu->last_entry, pentry))

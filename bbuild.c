@@ -714,7 +714,7 @@ static int invalidate_unused_fp_entry(
 			break;
 		}
 	}
-	ret2 = run_and_stop_kthreads(sb, tasks, para, thread_num, i);
+	ret2 = run_and_stop_kthreads(tasks, para, thread_num, i);
 	if (ret2 < 0)
 		ret = ret2;
 out:
@@ -1465,7 +1465,7 @@ static int failure_recovery_multithread(
 		}
 		kthread_bind(tasks[i], i);
 	}
-	ret2 = run_and_stop_kthreads(sb, tasks, para, thread_num, i);
+	ret2 = run_and_stop_kthreads(tasks, para, thread_num, i);
 	if (ret2 < 0)
 		ret = ret2;
 out:

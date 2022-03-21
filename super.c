@@ -163,8 +163,6 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	sbi->replica_reserved_inodes_addr = (char *)sbi->replica_sb_addr - PAGE_SIZE;
 	sbi->block_end = sbi->num_blocks - 2;
 
-	sbi->nr_tablets = 1 << WHICH_TABLET_BIT_NUM;
-
 	sbi->region_start = sbi->block_start;
 	sbi->block_start += VALID_ENTRY_COUNTER_PER_BLOCK;
 
@@ -176,6 +174,7 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	sbi->first_counter_block_start = sbi->block_start;
 	sbi->block_start += 1;
 
+	// TODO: Make it a list
 	sbi->entry_refcount_record_start = sbi->block_start;
 	// The number of valid entries is at most sbi->num_blocks.
 	sbi->block_start += ((sbi->num_blocks * sizeof(struct nova_entry_refcount_record) - 1) >> PAGE_SHIFT) + 1;

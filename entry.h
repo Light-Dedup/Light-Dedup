@@ -18,7 +18,7 @@ typedef uint32_t regionnr_t;
 struct nova_pmm_entry {
 	struct nova_fp fp;	// TODO: cpu_to_le64?
 	__le64 blocknr;
-	__le64 refcount;
+	atomic64_t refcount;
 	__le64 flag;
 };
 
