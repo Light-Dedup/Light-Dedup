@@ -322,47 +322,30 @@ static int bucket_upsert_decr1(
 	return 0;
 }
 
+// Used in entry.c
+int nova_rhashtable_insert_entry(struct rhashtable *rht,
+	struct rhashtable_params params, struct nova_fp fp,
+	struct nova_pmm_entry *pentry)
+{
+	struct nova_rht_entry *entry = nova_rht_entry_alloc();
+	int ret;
+
+	if (entry == NULL)
+		return -ENOMEM;
+	assign_entry(entry, pentry, fp);
+	ret = rhashtable_insert_fast(rht, &entry->node, params);
+	if (ret < 0)
+		nova_rht_entry_free(entry, NULL);
+	return ret;
+}
 static int bucket_insert_entry(
 	struct nova_mm_table *table,
 	struct rhashtable *rht,
 	struct nova_write_para_base *__wp)
 {
 	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
-	struct nova_rht_entry *entry = nova_rht_entry_alloc();
-	int ret;
-
-	BUG_ON(entry == NULL); // TODO
-	assign_entry(entry, wp->pentry, wp->base.fp);
-	ret = rhashtable_insert_fast(rht, &entry->node, table->rht_param);
-	if (ret < 0)
-		nova_rht_entry_free(entry, NULL);
-	return ret;
-}
-
-static int bucket_upsert_entry(
-	struct nova_mm_table *table,
-	struct rhashtable *rht,
-	struct nova_write_para_base *__wp)
-{
-	struct super_block *sb = table->sblock;
-	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
-	struct nova_rht_entry *entry;
-	struct nova_pmm_entry *pentry;
-	unsigned long irq_flags = 0;
-
-	entry = rhashtable_lookup_fast(rht, &wp->base.fp, table->rht_param);
-	if (!entry)
-		return bucket_insert_entry(table, rht, __wp);
-	pentry = entry->pentry;
-	// There should not be two entries which have the same fingerprint.
-	BUG_ON(pentry != wp->pentry);
-	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
-		&irq_flags);
-	atomic64_add_return(1, &pentry->refcount);
-	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
-		&irq_flags);
-	nova_flush_entry(table->entry_allocator, pentry);
-	return 0;
+	return nova_rhashtable_insert_entry(&table->rht, table->rht_param,
+		wp->base.fp, wp->pentry);
 }
 
 typedef int (*bucket_upsert_func)(struct nova_mm_table *,
@@ -394,11 +377,6 @@ int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_
 static int nova_table_insert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_insert_entry);
-}
-// Rebuild the hash table during failure recovery
-static int nova_table_upsert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_entry);
 }
 
 static void init_normal_wp_incr(struct nova_sb_info *sbi,
@@ -438,22 +416,6 @@ int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 	wp->len = bytes;
 	ret = nova_table_upsert_rewrite(table, wp);
 	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
-	return ret;
-}
-
-int nova_fp_table_upsert_entry(struct nova_mm_table *table,
-	struct nova_pmm_entry *pentry)
-{
-	struct nova_write_para_entry wp;
-	INIT_TIMING(upsert_fp_entry_time);
-	int ret;
-
-	NOVA_START_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
-	wp.base.fp = pentry->fp;
-	wp.base.refcount = 1;
-	wp.pentry = pentry;
-	ret = nova_table_upsert_entry(table, &wp);
-	NOVA_END_TIMING(upsert_fp_entry_t, upsert_fp_entry_time);
 	return ret;
 }
 
