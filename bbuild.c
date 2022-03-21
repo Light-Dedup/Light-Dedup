@@ -1677,7 +1677,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 
 	ret = nova_meta_table_restore(table, sb);
 	if (ret < 0) {
-		nova_err(sb, "Restore meta table failed, fall back to failure recovery\n");
+		nova_err(sb, "Restore meta table failed with return code %d, fall back to failure recovery\n", ret);
 		return false;
 	}
 	recover_meta->saved = 0;

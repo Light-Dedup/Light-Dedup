@@ -167,7 +167,7 @@ struct scan_para {
 	regionnr_t end;
 };
 int nova_rhashtable_insert_entry(struct rhashtable *rht,
-	struct rhashtable_params params, struct nova_fp fp,
+	const struct rhashtable_params params, struct nova_fp fp,
 	struct nova_pmm_entry *pentry);
 static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
 	struct rhashtable *rht, const struct rhashtable_params params,
