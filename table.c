@@ -130,26 +130,24 @@ static int nova_table_leaf_insert(
 	struct nova_rht_entry *entry;
 	struct nova_fp fp = wp->base.fp;
 	int cpu;
-	struct entry_allocator_cpu *allocator_cpu;
 	struct nova_pmm_entry *pentry;
 	int ret;
 
 	entry = nova_rht_entry_alloc();
 	BUG_ON(entry == NULL); // TODO
 	cpu = get_cpu();
-	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
-	pentry = nova_alloc_entry(table->entry_allocator, allocator_cpu);
+	pentry = nova_alloc_entry(table->entry_allocator);
 	if (IS_ERR(pentry)) {
 		put_cpu();
 		return PTR_ERR(pentry);
 	}
 	ret = get_new_block(sb, wp);
 	if (ret < 0) {
-		nova_alloc_entry_abort(allocator_cpu);
+		nova_alloc_entry_abort();
 		put_cpu();
 		return ret;
 	}
-	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
+	nova_write_entry(table->entry_allocator, pentry, fp,
 		wp->blocknr, wp->base.refcount);
 	put_cpu();
 	assign_entry(entry, pentry, fp);
