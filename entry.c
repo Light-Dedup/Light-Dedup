@@ -39,11 +39,14 @@ struct scan_para {
 	struct completion entered;
 	struct nova_sb_info *sbi;
 	struct xatable *xat;
+	struct rhashtable *rht;
+	struct rhashtable_params params;
 	regionnr_t start;
 	regionnr_t end;
 };
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
+	struct rhashtable *rht, const struct rhashtable_params params,
 	unsigned long *bm)
 {
 	int ret = 0;
@@ -85,7 +88,7 @@ write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
 	pentry->blocknr = cpu_to_le64(blocknr);
-	pentry->refcount = cpu_to_le64(refcount);
+	atomic64_set(&pentry->refcount, refcount);
 	wmb();
 	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
 	nova_flush_buffer(pentry, sizeof(*pentry), true);

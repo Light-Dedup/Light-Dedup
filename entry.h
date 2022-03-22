@@ -18,7 +18,7 @@ typedef uint32_t regionnr_t;
 struct nova_pmm_entry {
 	struct nova_fp fp;	// TODO: cpu_to_le64?
 	__le64 blocknr;
-	__le64 refcount;
+	atomic64_t refcount;
 	__le64 flag;
 };
 
@@ -41,6 +41,7 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 void nova_free_entry_allocator(struct entry_allocator *allocator);
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
+	struct rhashtable *rht, const struct rhashtable_params params,
 	unsigned long *bm);
 
 void nova_alloc_and_write_entry(struct entry_allocator *allocator, struct nova_fp fp, __le32 blocknr, __le32 refcount);

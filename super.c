@@ -174,17 +174,12 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	sbi->block_end = sbi->num_blocks - 2;
 
 	sbi->entry_table_start = sbi->block_start;
-	sbi->nr_tablets = 1 << WHICH_TABLET_BIT_NUM;
 	sbi->nr_regions = number_of_region_needed(sbi->num_blocks);
 	sbi->nr_entries = (entrynr_t)sbi->nr_regions * ENTRY_PER_REGION;
 	sbi->block_start += ((sbi->nr_entries * sizeof(struct nova_pmm_entry) - 1) >> PAGE_SHIFT) + 1;
 
 	sbi->region_valid_entry_count_start = sbi->block_start;
 	sbi->block_start += ((sbi->nr_regions * sizeof(__le16) - 1) >> PAGE_SHIFT) + 1;
-
-	sbi->entry_refcount_record_start = sbi->block_start;
-	// The number of valid entries is at most sbi->num_blocks.
-	sbi->block_start += ((sbi->num_blocks * sizeof(struct nova_entry_refcount_record) - 1) >> PAGE_SHIFT) + 1;
 
 	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
 		"num_blocks %lu, block_start %lu, block_end %lu, nr_regions %lu\n",
@@ -1245,7 +1240,7 @@ static int __init init_nova_fs(void)
 
 	rc = init_rangenode_cache();
 	if (rc)
-		return rc;
+		goto out0;
 
 	rc = init_inodecache();
 	if (rc)
@@ -1268,6 +1263,8 @@ out2:
 	destroy_inodecache();
 out1:
 	destroy_rangenode_cache();
+out0:
+	NOVA_END_TIMING(init_t, init_time);
 	return rc;
 }
 
