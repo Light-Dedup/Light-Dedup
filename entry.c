@@ -100,24 +100,23 @@ static inline int
 scan_valid_entry_counts(struct nova_sb_info *sbi, struct xarray *blocknr_count,
 	size_t len)
 {
-	const size_t elem_per_page =
-		(PAGE_SIZE - sizeof(__le64)) / sizeof(__le16);
 	__le64 *blocknrs = nova_sbi_blocknr_to_addr(
 		sbi, sbi->region_blocknr_start);
 	__le16 *counts = nova_sbi_blocknr_to_addr(
 		sbi, sbi->first_counter_block_start);
 	u64 offset;
 	int ret;
-	while (len >= elem_per_page) {
-		ret = __scan_valid_entry_counts(blocknr_count, blocknrs, counts, elem_per_page);
+	while (len >= VALID_ENTRY_COUNTER_PER_BLOCK) {
+		ret = __scan_valid_entry_counts(blocknr_count, blocknrs, counts,
+			VALID_ENTRY_COUNTER_PER_BLOCK);
 		if (ret < 0)
 			return ret;
-		blocknrs += elem_per_page;
+		blocknrs += VALID_ENTRY_COUNTER_PER_BLOCK;
 		offset = le64_to_cpu(
 			*(__le64 *)((u64)counts + PAGE_SIZE - sizeof(__le64))
 		);
 		counts = (__le16 *)nova_sbi_get_block(sbi, offset);
-		len -= elem_per_page;
+		len -= VALID_ENTRY_COUNTER_PER_BLOCK;
 	}
 	return __scan_valid_entry_counts(blocknr_count, blocknrs, counts, len);
 }
@@ -602,6 +601,8 @@ __save_valid_entry_counts(struct super_block *sb, __le16 *dst, __le64 *blocknrs,
 	__le16 *d = dst;
 	int16_t count;
 	unsigned long irq_flags = 0;
+	if (len == 0)
+		return;
 	nova_memunlock_range(sb, dst, len * sizeof(__le16), &irq_flags);
 	while (d != end) {
 		count = xa_to_value(xa_load(blocknr_count, *blocknrs++));
@@ -615,17 +616,15 @@ save_valid_entry_counts(struct super_block *sb, __le16 *dst, __le64 *blocknrs,
 	struct xarray *blocknr_count, size_t len)
 {
 	u64 offset;
-	const size_t elem_per_page =
-		(PAGE_SIZE - sizeof(__le64)) / sizeof(__le16);
-	while (len >= elem_per_page) {
+	while (len >= VALID_ENTRY_COUNTER_PER_BLOCK) {
 		__save_valid_entry_counts(sb, dst, blocknrs, blocknr_count,
-			elem_per_page);
-		blocknrs += elem_per_page;
+			VALID_ENTRY_COUNTER_PER_BLOCK);
+		blocknrs += VALID_ENTRY_COUNTER_PER_BLOCK;
 		offset = le64_to_cpu(
 			*(__le64 *)((u64)dst + PAGE_SIZE - sizeof(__le64))
 		);
 		dst = (__le16 *)nova_get_block(sb, offset);
-		len -= elem_per_page;
+		len -= VALID_ENTRY_COUNTER_PER_BLOCK;
 	}
 	__save_valid_entry_counts(sb, dst, blocknrs, blocknr_count, len);
 }
