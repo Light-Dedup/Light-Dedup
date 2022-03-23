@@ -23,7 +23,6 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 	return ret;
 }
 
-
 int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
 	BUG();
