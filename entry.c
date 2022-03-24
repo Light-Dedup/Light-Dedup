@@ -366,6 +366,9 @@ alloc_region(struct entry_allocator *allocator)
 	struct nova_pmm_entry *pentry;
 	size_t i;
 	int ret;
+	INIT_TIMING(alloc_region_time);
+
+	NOVA_START_TIMING(alloc_region_t, alloc_region_time);
 	if (region_blocknr == 0) {
 		ret = -ENOSPC;
 		goto err_out0;
@@ -389,11 +392,13 @@ alloc_region(struct entry_allocator *allocator)
 	// printk("%s: regionnr = %u, region_blocknr = %lu\n",
 	// 	__func__, allocator->region_num, region_blocknr);
 	++allocator->region_num;
+	NOVA_END_TIMING(alloc_region_t, alloc_region_time);
 	return 0;
 err_out1:
 	BUG(); // TODO
 	nova_free_log_block(sb, region_blocknr);
 err_out0:
+	NOVA_END_TIMING(alloc_region_t, alloc_region_time);
 	return ret;
 }
 // No need to free until write
