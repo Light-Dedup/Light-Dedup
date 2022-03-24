@@ -38,14 +38,11 @@ struct scan_para {
 	struct completion entered;
 	struct nova_sb_info *sbi;
 	struct xatable *xat;
-	struct rhashtable *rht;
-	struct rhashtable_params params;
 	regionnr_t start;
 	regionnr_t end;
 };
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
-	struct rhashtable *rht, const struct rhashtable_params params,
 	unsigned long *bm)
 {
 	int ret = 0;
