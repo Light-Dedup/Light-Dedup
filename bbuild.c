@@ -714,7 +714,7 @@ static int invalidate_unused_fp_entry(
 			break;
 		}
 	}
-	ret2 = run_and_stop_kthreads(sb, tasks, para, thread_num, i);
+	ret2 = run_and_stop_kthreads(tasks, para, thread_num, i);
 	if (ret2 < 0)
 		ret = ret2;
 out:
@@ -846,6 +846,7 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 
 	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	ret = nova_scan_entry_table(sb, allocator, xat,
+		&table->metas.rht, table->metas.rht_param,
 		info->global_bm[0].bitmap);
 	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	if (ret < 0)
@@ -879,11 +880,20 @@ static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *i
 {
 	struct xatable *xat = &info->map_blocknr_pentry;
 	struct nova_mm_table *fp_table = info->fp_table;
-	struct nova_pmm_entry *pentry =
-		(struct nova_pmm_entry *)xatable_load(xat, blocknr);
+	struct super_block *sb = fp_table->sblock;
+	struct nova_pmm_entry *pentry;
+	unsigned long irq_flags = 0;
+
+	pentry = (struct nova_pmm_entry *)xatable_load(xat, blocknr);
 	if (pentry == NULL)
 		return 0;
-	return nova_fp_table_upsert_entry(fp_table, pentry);
+	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
+	atomic64_add_return(1, &pentry->refcount);
+	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
+	nova_flush_entry(fp_table->entry_allocator, pentry);
+	return 0;
 }
 static int
 set_bm(unsigned long blocknr, struct failure_recovery_info *info, int cpuid)
@@ -1465,7 +1475,7 @@ static int failure_recovery_multithread(
 		}
 		kthread_bind(tasks[i], i);
 	}
-	ret2 = run_and_stop_kthreads(sb, tasks, para, thread_num, i);
+	ret2 = run_and_stop_kthreads(tasks, para, thread_num, i);
 	if (ret2 < 0)
 		ret = ret2;
 out:
@@ -1666,7 +1676,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 
 	ret = nova_meta_table_restore(table, sb);
 	if (ret < 0) {
-		nova_err(sb, "Restore meta table failed, fall back to failure recovery\n");
+		nova_err(sb, "Restore meta table failed with return code %d, fall back to failure recovery\n", ret);
 		return false;
 	}
 	recover_meta->saved = 0;

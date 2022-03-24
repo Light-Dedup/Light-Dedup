@@ -163,8 +163,6 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	sbi->replica_reserved_inodes_addr = (char *)sbi->replica_sb_addr - PAGE_SIZE;
 	sbi->block_end = sbi->num_blocks - 2;
 
-	sbi->nr_tablets = 1 << WHICH_TABLET_BIT_NUM;
-
 	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
 		"num_blocks %lu, block_start %lu, block_end %lu\n",
 		__func__, sbi->s_bdev->bd_disk->disk_name,
@@ -1224,7 +1222,7 @@ static int __init init_nova_fs(void)
 
 	rc = init_rangenode_cache();
 	if (rc)
-		return rc;
+		goto out0;
 
 	rc = init_inodecache();
 	if (rc)
@@ -1247,6 +1245,8 @@ out2:
 	destroy_inodecache();
 out1:
 	destroy_rangenode_cache();
+out0:
+	NOVA_END_TIMING(init_t, init_time);
 	return rc;
 }
 

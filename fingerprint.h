@@ -7,22 +7,13 @@
 
 struct nova_fp_strong_ctx {};
 
-#define WHICH_TABLET_BIT_NUM 15
-#define INDICATOR_BIT_NUM 5
-#define TAG_BIT_NUM 8
-#define INDEX_BIT_NUM 36
-_Static_assert(INDICATOR_BIT_NUM + WHICH_TABLET_BIT_NUM + TAG_BIT_NUM + INDEX_BIT_NUM == 64, "Fingerprint not 8 bytes!");
 struct nova_fp {
 	union {
-		struct {
-			uint64_t which_tablet: WHICH_TABLET_BIT_NUM;
-			uint64_t index: INDEX_BIT_NUM;
-			uint64_t indicator: INDICATOR_BIT_NUM;	// Indicate where the entry is.
-			uint64_t tag: TAG_BIT_NUM;
-		};
+		u32 index;
 		uint64_t value;
 	};
 };
+
 _Static_assert(sizeof(struct nova_fp) == 8, "Fingerprint not 8B!");
 
 static inline int nova_fp_strong_ctx_init(struct nova_fp_strong_ctx *ctx) {

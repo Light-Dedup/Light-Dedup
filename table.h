@@ -7,50 +7,9 @@
 
 _Static_assert(sizeof(unsigned long) == sizeof(uint64_t), "You should make all blocknr 64 bit");
 
-// 4096 / 8 = 512 = 2^9
-#define NOVA_TABLE_INNER_BITS (9)
-#define NOVA_TABLE_INNER_MASK (0x1ff)
-#define NOVA_TABLE_INNER_SIZE (1 << NOVA_TABLE_INNER_BITS)
-_Static_assert(INDEX_BIT_NUM % NOVA_TABLE_INNER_BITS == 0, "INDEX_BIT_NUM % NOVA_TABLE_INNER_BITS != 0 !!!");
-#define NOVA_TABLE_MAX_DEPTH (INDEX_BIT_NUM / NOVA_TABLE_INNER_BITS)
-
-#define NOVA_TABLE_LEAF_SIZE (1 << INDICATOR_BIT_NUM)
-// If the sum of the sizes of two buckets <= NOVA_TABLE_MERGE_THRESHOLD, then we say that the two buckets are mergable.
-#define NOVA_TABLE_MERGE_THRESHOLD (NOVA_TABLE_LEAF_SIZE / 2)
-
-struct nova_mm_entry_p {
-	struct nova_pmm_entry *pentry;
-};
 struct nova_entry_refcount_record {
 	__le64 entry_offset;
 };
-
-struct nova_bucket {
-	struct {
-		// At most 9. Bucket bits. The number of bits the bucket used.
-		uint16_t disbits: 4;
-		// At most 64. The number of valid entries in the bucket.
-		uint16_t size: 7;
-	};
-	uint8_t tags[NOVA_TABLE_LEAF_SIZE];
-	uint8_t indicators[NOVA_TABLE_LEAF_SIZE];
-	uint8_t disbyte[NOVA_TABLE_LEAF_SIZE];
-	struct nova_mm_entry_p entry_p[NOVA_TABLE_LEAF_SIZE];
-};
-_Static_assert((1 << INDICATOR_BIT_NUM) == NOVA_TABLE_LEAF_SIZE, "(1 << INDICATOR_BIT_NUM) != NOVA_TABLE_LEAF_SIZE!");
-_Static_assert(INDICATOR_BIT_NUM <= sizeof(uint8_t) * 8, "Type of indicators too small!");
-_Static_assert(NOVA_TABLE_INNER_BITS <= 1 + sizeof(uint8_t) * 8, "Type of disbyte too small!");
-
-struct nova_inner {
-	struct {
-		uint32_t bits: 4;	// At most 9.
-		uint32_t merged: 9;	// At most 256.	If merged == 1 << (bits - 1), then shrink, and --bits.
-	};
-	unsigned long node_p[0];	// If (node_p[i] & 1) != 0, then it is an inner node, else it is a bucket.
-};
-// If we set .align argument to 2, then the size of the inner_cache2 will be doubled. WHY???
-// #define NOVA_INNER_ALIGN 2
-#define NOVA_INNER_ALIGN 0
 
 _Static_assert(sizeof(unsigned long) == sizeof(void *), "sizeof unsigned long != sizeof void * !!!");
 
@@ -92,25 +51,12 @@ nova_inner_to_node_p(struct nova_inner *inner) {
 	return (unsigned long)inner | 1;
 }
 
-struct nova_mm_tablet {
-	struct spinlock           lock;
-	unsigned long   node_p;
-};
-
 struct nova_mm_table {
 	struct super_block    *sblock;
-	struct kmem_cache *bucket_cache;
 	struct entry_allocator *entry_allocator;
-	uint64_t               nr_tablets;
-	struct nova_mm_tablet  *tablets;
+	struct rhashtable	rht;
+	struct rhashtable_params rht_param;
 };
-
-static inline bool nova_fp_equal(
-	const struct nova_fp* left, 
-	const struct nova_fp* right) 
-{
-	return left->value == right->value;
-}
 
 struct nova_write_para_base {
 	struct nova_fp fp;
@@ -137,8 +83,6 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 	const void *addr, struct nova_write_para_rewrite *wp,
 	unsigned long blocknr, size_t offset, size_t bytes);
-int nova_fp_table_upsert_entry(struct nova_mm_table *table,
-	struct nova_pmm_entry *pentry);
 
 int nova_table_init(struct super_block *sb, struct nova_mm_table *table);
 int nova_table_recover(struct nova_mm_table *table);
