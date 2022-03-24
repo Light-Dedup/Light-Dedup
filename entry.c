@@ -178,7 +178,6 @@ int nova_rhashtable_insert_entry(struct rhashtable *rht,
 	const struct rhashtable_params params, struct nova_fp fp,
 	struct nova_pmm_entry *pentry);
 static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
-	struct rhashtable *rht, const struct rhashtable_params params,
 	void *region_start)
 {
 	struct nova_pmm_entry *pentry = (struct nova_pmm_entry *)region_start;
@@ -193,10 +192,6 @@ static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
 		++count;
 		ret = xa_err(xatable_store(
 			xat, le64_to_cpu(pentry->blocknr), pentry, GFP_KERNEL));
-		if (ret < 0)
-			return ret;
-		ret = nova_rhashtable_insert_entry(
-			rht, params, pentry->fp, pentry);
 		if (ret < 0)
 			return ret;
 		atomic64_set(&pentry->refcount, 0);
