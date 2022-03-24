@@ -846,7 +846,6 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 
 	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	ret = nova_scan_entry_table(sb, allocator, xat,
-		&table->metas.rht, table->metas.rht_param,
 		info->global_bm[0].bitmap);
 	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	if (ret < 0)
@@ -882,17 +881,25 @@ static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *i
 	struct nova_mm_table *fp_table = info->fp_table;
 	struct super_block *sb = fp_table->sblock;
 	struct nova_pmm_entry *pentry;
+	uint64_t refcount;
 	unsigned long irq_flags = 0;
+	int ret;
 
 	pentry = (struct nova_pmm_entry *)xatable_load(xat, blocknr);
 	if (pentry == NULL)
 		return 0;
 	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
 		&irq_flags);
-	atomic64_add_return(1, &pentry->refcount);
+	refcount = atomic64_add_return(1, &pentry->refcount);
 	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
 		&irq_flags);
 	nova_flush_entry(fp_table->entry_allocator, pentry);
+	if (refcount == 1) {
+		ret = nova_rhashtable_insert_entry(&fp_table->rht,
+			fp_table->rht_param, &pentry->fp, pentry);
+		if (ret < 0)
+			return ret;
+	}
 	return 0;
 }
 static int

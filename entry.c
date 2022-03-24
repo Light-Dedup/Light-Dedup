@@ -160,16 +160,10 @@ struct scan_para {
 	struct completion entered;
 	struct nova_sb_info *sbi;
 	struct xatable *xat;
-	struct rhashtable *rht;
-	struct rhashtable_params params;
 	regionnr_t start;
 	regionnr_t end;
 };
-int nova_rhashtable_insert_entry(struct rhashtable *rht,
-	const struct rhashtable_params params, struct nova_fp *fp,
-	struct nova_pmm_entry *pentry);
 static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
-	struct rhashtable *rht, const struct rhashtable_params params,
 	void *region_start)
 {
 	struct nova_pmm_entry *pentry = (struct nova_pmm_entry *)region_start;
@@ -186,10 +180,6 @@ static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
 			xat, le64_to_cpu(pentry->blocknr), pentry, GFP_KERNEL));
 		if (ret < 0)
 			return ret;
-		ret = nova_rhashtable_insert_entry(
-			rht, params, &pentry->fp, pentry);
-		if (ret < 0)
-			return ret;
 		atomic64_set(&pentry->refcount, 0);
 	}
 	nova_flush_buffer(region_start, REGION_SIZE, true);
@@ -199,8 +189,6 @@ static int __scan_worker(struct scan_para *para)
 {
 	struct nova_sb_info *sbi = para->sbi;
 	struct xatable *xat = para->xat;
-	struct rhashtable *rht = para->rht;
-	const struct rhashtable_params params = para->params;
 	struct nova_meta_table *meta_table = &sbi->meta_table;
 	struct entry_allocator *allocator = &meta_table->entry_allocator;
 	regionnr_t i = para->start;
@@ -212,7 +200,7 @@ static int __scan_worker(struct scan_para *para)
 
 	for (; i < region_end; ++i) {
 		blocknr = blocknrs[i];
-		ret = scan_region(allocator, xat, rht, params,
+		ret = scan_region(allocator, xat,
 			nova_sbi_blocknr_to_addr(sbi, blocknr));
 		if (ret < 0)
 			return ret;
@@ -241,8 +229,7 @@ static int scan_worker(void *__para) {
 	return ret;
 }
 static int scan_entry_table(struct super_block *sb,
-	struct entry_allocator *allocator, struct xatable *xat,
-	struct rhashtable *rht, const struct rhashtable_params params)
+	struct entry_allocator *allocator, struct xatable *xat)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	regionnr_t region_per_thread;
@@ -272,8 +259,6 @@ static int scan_entry_table(struct super_block *sb,
 		init_completion(&para[i].entered);
 		para[i].sbi = sbi;
 		para[i].xat = xat;
-		para[i].rht = rht;
-		para[i].params = params;
 		para[i].start = cur_start;
 		para[i].end = min_u32(cur_start + region_per_thread,
 			allocator->region_num);
@@ -331,7 +316,6 @@ static void scan_valid_entry_count_block_tails(struct nova_sb_info *sbi,
 }
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
-	struct rhashtable *rht, const struct rhashtable_params params,
 	unsigned long *bm)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -341,7 +325,7 @@ int nova_scan_entry_table(struct super_block *sb,
 	ret = entry_allocator_alloc(sbi, allocator);
 	if (ret < 0)
 		return ret;
-	ret = scan_entry_table(sb, allocator, xat, rht, params);
+	ret = scan_entry_table(sb, allocator, xat);
 	if (ret < 0)
 		goto err_out;
 	rebuild_free_regions(sbi, allocator);

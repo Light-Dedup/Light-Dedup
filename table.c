@@ -150,8 +150,10 @@ static int nova_table_leaf_insert(
 	put_cpu();
 	assign_entry(entry, pentry, fp);
 	ret = rhashtable_insert_fast(rht, &entry->node, table->rht_param);
-	if (ret < 0)
+	if (ret < 0) {
+		nova_free_data_block(sb, pentry->blocknr);
 		nova_free_entry(table->entry_allocator, pentry);
+	}
 	// if (ret == 0)
 	// 	printk("Block %lu with fp %llx inserted into rhashtable %p\n",
 	// 		wp->blocknr, fp.value, rht);
@@ -171,9 +173,11 @@ static int bucket_upsert_base(
 	unsigned long blocknr;
 	long delta = wp->base.refcount;
 	unsigned long irq_flags = 0;
+	int ret;
 	INIT_TIMING(mem_bucket_find_time);
 
 	BUG_ON(delta == 0);
+retry:
 	rcu_read_lock();
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	entry = rhashtable_lookup(rht, &wp->base.fp, table->rht_param);
@@ -223,7 +227,10 @@ static int bucket_upsert_base(
 		wp->base.refcount = 0;
 		return 0;
 	}
-	return nova_table_leaf_insert(table, rht, wp, get_new_block);
+	ret = nova_table_leaf_insert(table, rht, wp, get_new_block);
+	if (ret == -EEXIST)
+		goto retry;
+	return ret;
 }
 static int bucket_upsert_normal(
 	struct nova_mm_table *table,
@@ -292,7 +299,6 @@ static int bucket_upsert_decr1(
 	return 0;
 }
 
-// Used in entry.c
 int nova_rhashtable_insert_entry(struct rhashtable *rht,
 	const struct rhashtable_params params, struct nova_fp *fp,
 	struct nova_pmm_entry *pentry)

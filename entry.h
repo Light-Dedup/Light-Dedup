@@ -55,7 +55,6 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 void nova_free_entry_allocator(struct entry_allocator *allocator);
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
-	struct rhashtable *rht, const struct rhashtable_params params,
 	unsigned long *bm);
 
 void nova_flush_entry(struct entry_allocator *allocator,
