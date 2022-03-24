@@ -8,12 +8,16 @@
 // If the number of free entries in a region is greater or equal to FREE_THRESHOLD, then the region is regarded as free.
 #define FREE_THRESHOLD (REAL_ENTRY_PER_REGION / 2)
 
+#define NULL_PENTRY ((struct nova_pmm_entry *)( \
+	(REAL_ENTRY_PER_REGION - 1) * sizeof(struct nova_pmm_entry)))
+
 static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
 	int ret;
 	ret = nova_queue_init(&allocator->free_entries, GFP_KERNEL);
 	if (ret)
 		return ret;
+	allocator->last_entry = NULL_PENTRY;
 	spin_lock_init(&allocator->lock);
 	return 0;
 }
@@ -346,6 +350,19 @@ err_out:
 	BUG();
 }
 
+static inline void flush_last_entry(struct entry_allocator *allocator)
+{
+	// TODO: Does flush need memunlock?
+	if (allocator->last_entry != NULL_PENTRY)
+		nova_flush_cacheline(allocator->last_entry, true);
+}
+static inline bool in_the_same_cacheline(
+	struct nova_pmm_entry *a,
+	struct nova_pmm_entry *b)
+{
+	return (unsigned long)a / CACHELINE_SIZE ==
+		(unsigned long)b / CACHELINE_SIZE;
+}
 void nova_flush_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
@@ -416,7 +433,10 @@ nova_alloc_entry(struct entry_allocator *allocator)
 	}
 	pentry = (struct nova_pmm_entry *)nova_queue_pop_ul(
 		&allocator->free_entries);
-	BUG_ON(pentry->flag == NOVA_LEAF_ENTRY_MAGIC);
+	// BUG_ON(pentry->flag == NOVA_LEAF_ENTRY_MAGIC);
+	if (!in_the_same_cacheline(allocator->last_entry, pentry))
+		flush_last_entry(allocator);
+	allocator->last_entry = pentry;
 	spin_unlock(&allocator->lock);
 	NOVA_END_TIMING(alloc_entry_t, alloc_entry_time);
 	return pentry;
@@ -438,7 +458,6 @@ void nova_write_entry(struct entry_allocator *allocator,
 	atomic64_set(&pentry->refcount, refcount);
 	wmb();
 	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
-	nova_flush_entry(allocator, pentry);
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock(sb, &irq_flags);
 }

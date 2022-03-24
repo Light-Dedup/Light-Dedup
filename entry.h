@@ -33,6 +33,7 @@ struct entry_allocator {
 	// Keep this in case we make region blocknrs a list later.
 	regionnr_t max_region_num; // Determined by the number of counter blocks.
 	struct nova_queue free_entries; // Addresses
+	struct nova_pmm_entry *last_entry; // Last not flushed entry.
 	spinlock_t lock;
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \
