@@ -77,6 +77,9 @@ int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp);
 // refcount-- only if refcount == 1
 int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp);
+int nova_rhashtable_insert_entry(struct rhashtable *rht,
+	const struct rhashtable_params params, struct nova_fp fp,
+	struct nova_pmm_entry *pentry);
 
 int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	struct nova_write_para_normal *wp);
