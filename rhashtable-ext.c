@@ -570,7 +570,7 @@ static size_t rounded_hashtable_size_large_nelem_hint(
 	size_t retsize;
 
 	if (nelem_hint)
-		retsize = max(roundup_pow_of_two(nelem_hint),
+		retsize = max(roundup_pow_of_two(nelem_hint * 4 / 3),
 			      (unsigned long)params->min_size);
 	else
 		retsize = max(HASH_DEFAULT_SIZE,
@@ -584,7 +584,6 @@ static u32 rhashtable_jhash2(const void *key, u32 length, u32 seed)
 	return jhash2(key, length, seed);
 }
 
-// nelem_hint is the exact value of the desired size
 int rhashtable_init_large(struct rhashtable *ht, size_t nelem_hint,
 		    const struct rhashtable_params *params)
 {
