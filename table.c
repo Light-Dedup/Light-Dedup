@@ -529,7 +529,9 @@ void nova_table_save(struct nova_mm_table* table)
 	NOVA_END_TIMING(save_refcount_t, save_refcount_time);
 }
 
-int nova_table_init(struct super_block *sb, struct nova_mm_table *table) 
+// nelem_hint: If 0 then use default
+int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
+	size_t nelem_hint)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *psb = (struct nova_super_block *)sbi->virt_addr;
@@ -551,8 +553,8 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table)
 	table->entry_allocator = &sbi->meta_table.entry_allocator;
 	table->rht_param = param; // TODO: A smarter way?
 
-	retval = rhashtable_init(
-		&table->rht, &table->rht_param);
+	retval = rhashtable_init_large(
+		&table->rht, nelem_hint, &table->rht_param);
 	BUG_ON(retval < 0); // TODO
 
 	NOVA_END_TIMING(table_init_t, table_init_time);
