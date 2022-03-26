@@ -180,7 +180,9 @@ static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
 			xat, le64_to_cpu(pentry->blocknr), pentry, GFP_KERNEL));
 		if (ret < 0)
 			return ret;
-		atomic64_set(&pentry->refcount, 0);
+		// atomic64_set(&pentry->refcount, 0);
+		// TODO: A more elegant way
+		*(u64 *)(&pentry->refcount) = 0;
 	}
 	nova_flush_buffer(region_start, REGION_SIZE, true);
 	return count;
