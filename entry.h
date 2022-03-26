@@ -21,6 +21,7 @@ struct nova_pmm_entry {
 	atomic64_t refcount;
 	__le64 flag;
 };
+_Static_assert(sizeof(atomic64_t) == 8, "atomic64_t not 8B!");
 
 #define REGION_SIZE 256
 #define ENTRY_PER_REGION (REGION_SIZE / sizeof(struct nova_pmm_entry))
@@ -41,7 +42,7 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 void nova_free_entry_allocator(struct entry_allocator *allocator);
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
-	unsigned long *bm);
+	unsigned long *bm, size_t *tot);
 
 void nova_alloc_and_write_entry(struct entry_allocator *allocator, struct nova_fp fp, __le32 blocknr, __le32 refcount);
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr);

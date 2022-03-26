@@ -2,7 +2,8 @@
 #include "meta.h"
 #include "config.h"
 
-int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb)
+int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
+	size_t nelem_hint)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int ret;
@@ -17,7 +18,7 @@ int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb)
 		ret = -ENOMEM;
 		goto err_out1;
 	}
-	ret = nova_table_init(sb, &table->metas);
+	ret = nova_table_init(sb, &table->metas, nelem_hint);
 	if (ret < 0)
 		goto err_out2;
 	return 0;
@@ -38,7 +39,7 @@ int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	int ret;
-	ret = nova_meta_table_alloc(table, sb);
+	ret = nova_meta_table_alloc(table, sb, 0);
 	if (ret < 0)
 		return ret;
 	ret = nova_init_entry_allocator(sbi, &table->entry_allocator);
@@ -51,10 +52,12 @@ int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sb)
 int nova_meta_table_restore(struct nova_meta_table *table, struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	int ret;
 	INIT_TIMING(normal_recover_fp_table_time);
 
-	ret = nova_meta_table_alloc(table, sb);
+	ret = nova_meta_table_alloc(table, sb,
+		le64_to_cpu(recover_meta->refcount_record_num));
 	if (ret < 0)
 		goto err_out0;
 	ret = nova_entry_allocator_recover(sbi, &table->entry_allocator);

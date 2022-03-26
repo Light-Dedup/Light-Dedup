@@ -298,13 +298,6 @@ int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
 }
-#if 0
-// Insert entry to rebuild the hash table during normal recovery
-static int nova_table_insert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_insert_entry);
-}
-#endif
 
 static void init_normal_wp_incr(struct nova_sb_info *sbi,
 	struct nova_write_para_normal *wp, const void *addr)
@@ -355,7 +348,9 @@ void nova_table_save(struct nova_mm_table* table)
 	return;
 }
 
-int nova_table_init(struct super_block *sb, struct nova_mm_table *table) 
+// nelem_hint: If 0 then use default
+int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
+	size_t nelem_hint)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *psb = (struct nova_super_block *)sbi->virt_addr;

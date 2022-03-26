@@ -830,34 +830,36 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 	struct nova_meta_table *table = &sbi->meta_table;
 	struct entry_allocator *allocator = &table->entry_allocator;
 	struct xatable *xat = &info->map_blocknr_pentry;
+	size_t tot;
 	int ret;
 	INIT_TIMING(scan_fp_entry_table_time);
 
 	ret = xatable_init(xat, ceil_log_2(sbi->cpus) + 1);
 	if (ret < 0)
 		goto err_out0;
-	ret = nova_meta_table_alloc(table, sb);
-	if (ret < 0)
-		goto err_out1;
 
 	info->global_bm = alloc_bm(sbi);
 	if (IS_ERR(info->global_bm)) {
 		ret = PTR_ERR(info->global_bm);
-		goto err_out2;
+		goto err_out1;
 	}
-	info->fp_table = &table->metas;
 
 	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	ret = nova_scan_entry_table(sb, allocator, xat,
-		info->global_bm[0].bitmap);
+		info->global_bm[0].bitmap, &tot);
 	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	if (ret < 0)
+		goto err_out2;
+
+	ret = nova_meta_table_alloc(table, sb, tot);
+	if (ret < 0)
 		goto err_out3;
+	info->fp_table = &table->metas;
 	return 0;
 err_out3:
-	free_bm(sbi, info->global_bm);
-err_out2:
 	nova_meta_table_free(table);
+err_out2:
+	free_bm(sbi, info->global_bm);
 err_out1:
 	xatable_destroy(xat);
 err_out0:

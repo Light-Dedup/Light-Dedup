@@ -43,7 +43,7 @@ struct scan_para {
 };
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
-	unsigned long *bm)
+	unsigned long *bm, size_t *tot)
 {
 	int ret = 0;
 	return ret;
