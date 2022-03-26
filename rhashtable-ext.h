@@ -9,4 +9,7 @@ int rhashtable_traverse_multithread(struct rhashtable *ht, int thread_num,
         void (*thread_local_arg_recycler)(void *),
         void *arg);
 
+int rhashtable_init_large(struct rhashtable *ht, size_t nelem_hint,
+		    const struct rhashtable_params *params);
+
 #endif // __RHASHTABLE_EXT_H

@@ -51,14 +51,17 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 }
 
 #if 0
-static void rebuild_free_regions(struct nova_sb_info *sbi,
+// Returns the total number of valid entries
+static size_t rebuild_free_regions(struct nova_sb_info *sbi,
 	struct entry_allocator *allocator)
 {
 	unsigned long blocknr;
 	void *entry;
 	int16_t count;
+	size_t tot = 0;
 	xa_for_each(&allocator->valid_entry, blocknr, entry) {
 		count = xa_to_value(entry);
+		tot += count;
 		if (count <= FREE_THRESHOLD) {
 			BUG_ON(nova_queue_push_ul(
 				&allocator->free_regions,
@@ -67,6 +70,7 @@ static void rebuild_free_regions(struct nova_sb_info *sbi,
 			) < 0);
 		}
 	}
+	return tot;
 }
 static inline int
 __scan_valid_entry_counts(struct xarray *blocknr_count, __le64 *blocknrs,
@@ -174,7 +178,9 @@ static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
 			xat, le64_to_cpu(pentry->blocknr), pentry, GFP_KERNEL));
 		if (ret < 0)
 			return ret;
-		atomic64_set(&pentry->refcount, 0);
+		// atomic64_set(&pentry->refcount, 0);
+		// TODO: A more elegant way
+		*(u64 *)(&pentry->refcount) = 0;
 	}
 	nova_flush_buffer(region_start, REGION_SIZE, true);
 	return count;
@@ -311,7 +317,7 @@ static void scan_valid_entry_count_block_tails(struct nova_sb_info *sbi,
 #endif
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
-	unsigned long *bm)
+	unsigned long *bm, size_t *tot)
 {
 #if 0
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -324,7 +330,7 @@ int nova_scan_entry_table(struct super_block *sb,
 	ret = scan_entry_table(sb, allocator, xat);
 	if (ret < 0)
 		goto err_out;
-	rebuild_free_regions(sbi, allocator);
+	*tot = rebuild_free_regions(sbi, allocator);
 	return 0;
 err_out:
 	nova_free_entry_allocator(allocator);
