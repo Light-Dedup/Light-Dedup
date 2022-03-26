@@ -48,11 +48,6 @@ static void nova_rht_entry_free(void *entry, void *arg)
 	kfree(entry);
 }
 
-struct nova_write_para_entry {
-	struct nova_write_para_base base;
-	struct nova_pmm_entry *pentry;
-};
-
 static int nova_table_leaf_delete(
 	struct nova_mm_table *table,
 	struct rhashtable *rht,
@@ -352,15 +347,6 @@ int nova_rhashtable_insert_entry(struct rhashtable *rht,
 	}
 	return ret;
 }
-static int bucket_insert_entry(
-	struct nova_mm_table *table,
-	struct rhashtable *rht,
-	struct nova_write_para_base *__wp)
-{
-	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
-	return nova_rhashtable_insert_entry(&table->rht, table->rht_param,
-		wp->base.fp, wp->pentry);
-}
 
 typedef int (*bucket_upsert_func)(struct nova_mm_table *,
 	struct rhashtable *rht, struct nova_write_para_base *);
@@ -386,11 +372,6 @@ int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_par
 int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
-}
-// Insert entry to rebuild the hash table during normal recovery
-static int nova_table_insert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_insert_entry);
 }
 
 static void init_normal_wp_incr(struct nova_sb_info *sbi,
@@ -573,18 +554,18 @@ static int __table_recover_func(struct nova_mm_table *table,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
 		sbi, sbi->entry_refcount_record_start);
-	struct nova_write_para_entry wp;
+	struct nova_pmm_entry *pentry;
 	entrynr_t i;
 	int ret = 0;
 	// printk("entry_start = %lu, entry_end = %lu\n", (unsigned long)entry_start, (unsigned long)entry_end);
 	for (i = entry_start; i < entry_end; ++i) {
 		if (rec[i].entry_offset == 0)
 			continue;
-		wp.pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
+		pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
 			le64_to_cpu(rec[i].entry_offset));
-		BUG_ON(wp.pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-		wp.base.fp = wp.pentry->fp;
-		ret = nova_table_insert_entry(table, &wp);
+		BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
+		ret = nova_rhashtable_insert_entry(&table->rht, table->rht_param,
+			pentry->fp, pentry);
 		if (ret < 0)
 			break;
 	}
