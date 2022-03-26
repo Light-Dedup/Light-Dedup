@@ -43,18 +43,13 @@ static int nova_rht_key_entry_cmp(
 static struct nova_rht_entry* nova_rht_entry_alloc(void)
 {
 	return (struct nova_rht_entry *)kzalloc(
-		sizeof(struct nova_rht_entry), GFP_ATOMIC);
+		sizeof(struct nova_rht_entry), GFP_KERNEL);
 }
 
 static void nova_rht_entry_free(void *entry, void *arg)
 {
 	kfree(entry);
 }
-
-struct nova_write_para_entry {
-	struct nova_write_para_base base;
-	struct nova_pmm_entry *pentry;
-};
 
 static int nova_table_leaf_delete(
 	struct nova_mm_table *table,
@@ -322,15 +317,6 @@ int nova_rhashtable_insert_entry(struct rhashtable *rht,
 	}
 	return ret;
 }
-static int bucket_insert_entry(
-	struct nova_mm_table *table,
-	struct rhashtable *rht,
-	struct nova_write_para_base *__wp)
-{
-	struct nova_write_para_entry *wp = (struct nova_write_para_entry *)__wp;
-	return nova_rhashtable_insert_entry(&table->rht, table->rht_param,
-		&wp->base.fp, wp->pentry);
-}
 
 typedef int (*bucket_upsert_func)(struct nova_mm_table *,
 	struct rhashtable *rht, struct nova_write_para_base *);
@@ -356,11 +342,6 @@ int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_par
 int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp)
 {
 	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
-}
-// Insert entry to rebuild the hash table during normal recovery
-static int nova_table_insert_entry(struct nova_mm_table *table, struct nova_write_para_entry *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_insert_entry);
 }
 
 static int init_normal_wp_incr(struct nova_sb_info *sbi,
@@ -505,7 +486,9 @@ void nova_table_save(struct nova_mm_table* table)
 	NOVA_END_TIMING(save_refcount_t, save_refcount_time);
 }
 
-int nova_table_init(struct super_block *sb, struct nova_mm_table *table) 
+// nelem_hint: If 0 then use default
+int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
+	size_t nelem_hint)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *psb = (struct nova_super_block *)sbi->virt_addr;
@@ -527,8 +510,8 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table)
 	table->entry_allocator = &sbi->meta_table.entry_allocator;
 	table->rht_param = param; // TODO: A smarter way?
 
-	retval = rhashtable_init(
-		&table->rht, &table->rht_param);
+	retval = rhashtable_init_large(
+		&table->rht, nelem_hint, &table->rht_param);
 	BUG_ON(retval < 0); // TODO
 
 	NOVA_END_TIMING(table_init_t, table_init_time);
@@ -547,18 +530,18 @@ static int __table_recover_func(struct nova_mm_table *table,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
 		sbi, sbi->entry_refcount_record_start);
-	struct nova_write_para_entry wp;
+	struct nova_pmm_entry *pentry;
 	entrynr_t i;
 	int ret = 0;
 	// printk("entry_start = %lu, entry_end = %lu\n", (unsigned long)entry_start, (unsigned long)entry_end);
 	for (i = entry_start; i < entry_end; ++i) {
 		if (rec[i].entry_offset == 0)
 			continue;
-		wp.pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
+		pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
 			le64_to_cpu(rec[i].entry_offset));
-		BUG_ON(wp.pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-		wp.base.fp = wp.pentry->fp;
-		ret = nova_table_insert_entry(table, &wp);
+		BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
+		ret = nova_rhashtable_insert_entry(&table->rht, table->rht_param,
+			&pentry->fp, pentry);
 		if (ret < 0)
 			break;
 	}

@@ -24,6 +24,7 @@ struct nova_pmm_entry {
 } ____cacheline_aligned_in_smp;
 
 _Static_assert(sizeof(struct nova_pmm_entry) == 64, "Meta Data Entry not 64B!");
+_Static_assert(sizeof(atomic64_t) == 8, "atomic64_t not 8B!");
 
 #define REGION_SIZE PAGE_SIZE
 #define ENTRY_PER_REGION (REGION_SIZE / sizeof(struct nova_pmm_entry))
@@ -55,7 +56,7 @@ int nova_entry_allocator_recover(struct nova_sb_info *sbi, struct entry_allocato
 void nova_free_entry_allocator(struct entry_allocator *allocator);
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
-	unsigned long *bm);
+	unsigned long *bm, size_t *tot);
 
 void nova_flush_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry);
