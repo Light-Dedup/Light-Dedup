@@ -40,7 +40,7 @@ static int nova_rht_key_entry_cmp(
 static struct nova_rht_entry* nova_rht_entry_alloc(void)
 {
 	return (struct nova_rht_entry *)kzalloc(
-		sizeof(struct nova_rht_entry), GFP_ATOMIC);
+		sizeof(struct nova_rht_entry), GFP_KERNEL);
 }
 
 static void nova_rht_entry_free(void *entry, void *arg)
