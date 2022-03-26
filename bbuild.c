@@ -1440,6 +1440,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 	struct nova_inode *pi =  nova_get_inode_by_ino(sb, NOVA_BLOCKNODE_INO);
 	int ret;
 
+	return false;
 	if (pi->log_head == 0 || pi->log_tail == 0)
 		return false;
 
