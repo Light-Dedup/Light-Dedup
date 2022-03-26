@@ -833,7 +833,7 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 	ret = xatable_init(xat, ceil_log_2(sbi->cpus) + 1);
 	if (ret < 0)
 		goto err_out0;
-	ret = nova_meta_table_alloc(table, sb);
+	ret = nova_meta_table_alloc(table, sb, 0);
 	if (ret < 0)
 		goto err_out1;
 
