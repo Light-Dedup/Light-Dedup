@@ -216,11 +216,7 @@ retry:
 			}
 			wp->blocknr = blocknr;// retrieval block info
 			BUG_ON(wp->base.refcount < 0);
-			nova_memunlock_range(sb, &pentry->refcount,
-				sizeof(pentry->refcount), &irq_flags);
 			ret = atomic64_add_unless(&pentry->refcount, delta, 0);
-			nova_memlock_range(sb, &pentry->refcount,
-				sizeof(pentry->refcount), &irq_flags);
 			rcu_read_unlock();
 			if (ret == false) {
 				schedule();
