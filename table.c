@@ -154,8 +154,10 @@ static int bucket_upsert_base(
 	unsigned long blocknr;
 	long delta = wp->base.refcount;
 	unsigned long irq_flags = 0;
+	int ret;
 	INIT_TIMING(mem_bucket_find_time);
 
+retry:
 	BUG_ON(delta == 0);
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	leaf_index = nova_table_leaf_find(table, pentries, &wp->base.fp);
