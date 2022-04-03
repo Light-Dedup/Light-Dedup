@@ -174,6 +174,17 @@ static int bucket_upsert_base(
 				// 	*(uint64_t *)addr, entry->fp_strong.u64s[0], entry->fp_strong.u64s[1], entry->fp_strong.u64s[2], entry->fp_strong.u64s[3]);
 			}
 			wp->blocknr = blocknr;// retrieval block info
+			BUG_ON(wp->base.refcount < 0);
+			nova_memunlock_range(sb, &pentry->refcount,
+				sizeof(pentry->refcount), &irq_flags);
+			ret = atomic64_add_unless(&pentry->refcount, delta, 0);
+			nova_memlock_range(sb, &pentry->refcount,
+				sizeof(pentry->refcount), &irq_flags);
+			rcu_read_unlock();
+			if (ret == false) {
+				schedule();
+				goto retry;
+			}
 		} else {
 			if (blocknr != wp->blocknr) {
 				// Collision happened. Just free it.
@@ -181,17 +192,19 @@ static int bucket_upsert_base(
 				wp->base.refcount = 0;
 				return 0;
 			}
-		}
-		nova_memunlock_range(sb, &pentry->refcount,
-			sizeof(pentry->refcount), &irq_flags);
-		wp->base.refcount = atomic64_add_return(
-			delta, &pentry->refcount);
-		nova_memlock_range(sb, &pentry->refcount,
-			sizeof(pentry->refcount), &irq_flags);
-		BUG_ON(wp->base.refcount < 0);
-		if (wp->base.refcount == 0) {
-			nova_table_leaf_delete(table, leaf_index);
-			return 0;
+			nova_memunlock_range(sb, &pentry->refcount,
+				sizeof(pentry->refcount), &irq_flags);
+			wp->base.refcount = atomic64_add_return(
+				delta, &pentry->refcount);
+			nova_memlock_range(sb, &pentry->refcount,
+				sizeof(pentry->refcount), &irq_flags);
+			BUG_ON(wp->base.refcount < 0);
+			if (wp->base.refcount == 0) {
+				// Now only we can free the entry,
+				// because there are no any other deleter.
+				nova_table_leaf_delete(table, leaf_index);
+				return 0;
+			}
 		}
 		nova_flush_cacheline(pentry, false);
 		// printk("Block %lu has refcount %lld now\n",
@@ -260,7 +273,7 @@ static int bucket_upsert_decr1(
 	// The entry won't be freed by others
 	// because we are referencing it.
 	rcu_read_unlock();
-	refcount = atomic64_read(&pentry->refcount);
+	refcount = atomic64_cmpxchg(&pentry->refcount, 1, 0);
 	BUG_ON(refcount == 0);
 	if (refcount == 1) {
 		// printk("Before nova_table_leaf_delete");
