@@ -56,10 +56,11 @@ static int nova_table_leaf_delete(
 	struct rhashtable *rht,
 	struct nova_rht_entry *entry)
 {
-	int ret;
-	nova_free_entry(table->entry_allocator, entry->pentry);
-	ret = rhashtable_remove_fast(rht, &entry->node, table->rht_param);
+	// Remove the entry first to make it invisible to other threads.
+	int ret = rhashtable_remove_fast(rht, &entry->node, table->rht_param);
 	BUG_ON(ret < 0);
+	// TODO: Will there be other threads accessing the pentry?
+	nova_free_entry(table->entry_allocator, entry->pentry);
 	nova_rht_entry_free(entry, NULL);
 	return 0;
 }
@@ -185,6 +186,17 @@ retry:
 		blocknr = le64_to_cpu(pentry->blocknr);
 		if (delta > 0) {
 			wp->blocknr = blocknr;// retrieval block info
+			BUG_ON(wp->base.refcount < 0);
+			nova_memunlock_range(sb, &pentry->refcount,
+				sizeof(pentry->refcount), &irq_flags);
+			ret = atomic64_add_unless(&pentry->refcount, delta, 0);
+			nova_memlock_range(sb, &pentry->refcount,
+				sizeof(pentry->refcount), &irq_flags);
+			rcu_read_unlock();
+			if (ret == false) {
+				schedule();
+				goto retry;
+			}
 		} else {
 			if (blocknr != wp->blocknr) {
 				// Collision happened. Just free it.
@@ -193,20 +205,20 @@ retry:
 				wp->base.refcount = 0;
 				return 0;
 			}
-		}
-		// The entry won't be freed by others
-		// because we are referencing it.
-		rcu_read_unlock();
-		nova_memunlock_range(sb, &pentry->refcount,
+			rcu_read_unlock();
+			nova_memunlock_range(sb, &pentry->refcount,
 			sizeof(pentry->refcount), &irq_flags);
-		wp->base.refcount = atomic64_add_return(
-			delta, &entry->pentry->refcount);
-		nova_memlock_range(sb, &pentry->refcount,
-			sizeof(pentry->refcount), &irq_flags);
-		BUG_ON(wp->base.refcount < 0);
-		if (wp->base.refcount == 0) {
-			nova_table_leaf_delete(table, rht, entry);
-			return 0;
+			wp->base.refcount = atomic64_add_return(
+				delta, &entry->pentry->refcount);
+			nova_memlock_range(sb, &pentry->refcount,
+				sizeof(pentry->refcount), &irq_flags);
+			BUG_ON(wp->base.refcount < 0);
+			if (wp->base.refcount == 0) {
+				// Now only we can free the entry,
+				// because there are no any other deleter.
+				nova_table_leaf_delete(table, rht, entry);
+				return 0;
+			}
 		}
 		nova_flush_entry(table->entry_allocator, pentry);
 		// printk("Block %lu has refcount %lld now\n",
@@ -281,7 +293,7 @@ static int bucket_upsert_decr1(
 	// The entry won't be freed by others
 	// because we are referencing it.
 	rcu_read_unlock();
-	refcount = atomic64_read(&pentry->refcount);
+	refcount = atomic64_cmpxchg(&pentry->refcount, 1, 0);
 	BUG_ON(refcount == 0);
 	if (refcount == 1) {
 		nova_table_leaf_delete(table, rht, entry);
