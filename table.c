@@ -190,7 +190,8 @@ retry:
 		} else {
 			if (blocknr != wp->blocknr) {
 				// Collision happened. Just free it.
-				printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+				rcu_read_unlock();
+				printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n", __func__, blocknr, wp->blocknr);
 				wp->base.refcount = 0;
 				return 0;
 			}
@@ -268,7 +269,8 @@ static int bucket_upsert_decr1(
 	if (blocknr != wp->blocknr) {
 		rcu_read_unlock();
 		// Collision happened. Just free it.
-		printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+		printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n",
+			__func__, blocknr, wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}

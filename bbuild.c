@@ -900,8 +900,8 @@ static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *i
 		&irq_flags);
 	nova_flush_entry(fp_table->entry_allocator, pentry);
 	if (refcount == 1) {
-		ret = nova_rhashtable_insert_entry(&fp_table->rht,
-			fp_table->rht_param, pentry->fp, pentry);
+		ret = nova_rhashtable_insert_entry(&fp_table->rht, pentry->fp,
+			pentry);
 		if (ret < 0)
 			return ret;
 	}
