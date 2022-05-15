@@ -131,34 +131,44 @@ static int nova_table_leaf_insert(
 	int ret;
 
 	entry = nova_rht_entry_alloc();
-	BUG_ON(entry == NULL); // TODO
+	if (entry == NULL) {
+		ret = -ENOMEM;
+		goto fail0;
+	}
 	cpu = get_cpu();
 	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 	pentry = nova_alloc_entry(table->entry_allocator, allocator_cpu);
 	if (IS_ERR(pentry)) {
 		put_cpu();
-		return PTR_ERR(pentry);
+		ret = PTR_ERR(pentry);
+		goto fail1;
 	}
 	ret = get_new_block(sb, wp);
 	if (ret < 0) {
 		nova_alloc_entry_abort(allocator_cpu);
 		put_cpu();
-		return ret;
+		goto fail1;
 	}
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr, wp->base.refcount);
 	put_cpu();
 	assign_entry(entry, pentry, fp);
-	ret = rhashtable_insert_fast(rht, &entry->node, table->rht_param);
+	ret = rhashtable_lookup_insert_key(rht, &fp, &entry->node,
+		table->rht_param);
 	if (ret < 0) {
-		nova_free_data_block(sb, pentry->blocknr);
-		nova_free_entry(table->entry_allocator, pentry);
+		// printk("Block %lu with fp %llx fail to insert into rhashtable "
+		// 	"with error code %d\n", wp->blocknr, fp.value, ret);
+		goto fail2;
 	}
-	// if (ret == 0)
-	// 	printk("Block %lu with fp %llx inserted into rhashtable %p\n",
-	// 		wp->blocknr, fp.value, rht);
-	// else
-	// 	printk("rhashtable_insert_fast returns %d\n", ret);
+	// printk("Block %lu with fp %llx inserted into rhashtable %p\n",
+	// 	wp->blocknr, fp.value, rht);
+	return 0;
+fail2:
+	nova_free_data_block(sb, pentry->blocknr);
+	nova_free_entry(table->entry_allocator, pentry);
+fail1:
+	nova_rht_entry_free(entry, NULL);
+fail0:
 	return ret;
 }
 // True: Not equal. False: Equal
@@ -231,7 +241,7 @@ retry:
 			if (blocknr != wp->blocknr) {
 				// Collision happened. Just free it.
 				rcu_read_unlock();
-				printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+				printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n", __func__, blocknr, wp->blocknr);
 				wp->base.refcount = 0;
 				return 0;
 			}
@@ -316,7 +326,8 @@ static int bucket_upsert_decr1(
 	if (blocknr != wp->blocknr) {
 		rcu_read_unlock();
 		// Collision happened. Just free it.
-		printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+		printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n",
+			__func__, blocknr, wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}
