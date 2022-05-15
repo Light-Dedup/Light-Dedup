@@ -37,6 +37,15 @@ static int nova_rht_key_entry_cmp(
 	return fp->value != entry->fp.value;
 }
 
+const struct rhashtable_params nova_rht_params = {
+	.key_len = sizeof(struct nova_fp),
+	.head_offset = offsetof(struct nova_rht_entry, node),
+	.automatic_shrinking = true,
+	.hashfn = nova_rht_entry_key_hashfn,
+	.obj_hashfn = nova_rht_entry_hashfn,
+	.obj_cmpfn = nova_rht_key_entry_cmp,
+};
+
 static struct nova_rht_entry* nova_rht_entry_alloc(void)
 {
 	return (struct nova_rht_entry *)kzalloc(
@@ -54,7 +63,7 @@ static int nova_table_leaf_delete(
 	struct nova_rht_entry *entry)
 {
 	// Remove the entry first to make it invisible to other threads.
-	int ret = rhashtable_remove_fast(rht, &entry->node, table->rht_param);
+	int ret = rhashtable_remove_fast(rht, &entry->node, nova_rht_params);
 	BUG_ON(ret < 0);
 	// TODO: Will there be other threads accessing the pentry?
 	nova_free_entry(table->entry_allocator, entry->pentry);
@@ -131,34 +140,44 @@ static int nova_table_leaf_insert(
 	int ret;
 
 	entry = nova_rht_entry_alloc();
-	BUG_ON(entry == NULL); // TODO
+	if (entry == NULL) {
+		ret = -ENOMEM;
+		goto fail0;
+	}
 	cpu = get_cpu();
 	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 	pentry = nova_alloc_entry(table->entry_allocator, allocator_cpu);
 	if (IS_ERR(pentry)) {
 		put_cpu();
-		return PTR_ERR(pentry);
+		ret = PTR_ERR(pentry);
+		goto fail1;
 	}
 	ret = get_new_block(sb, wp);
 	if (ret < 0) {
 		nova_alloc_entry_abort(allocator_cpu);
 		put_cpu();
-		return ret;
+		goto fail1;
 	}
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr, wp->base.refcount);
 	put_cpu();
 	assign_entry(entry, pentry, fp);
-	ret = rhashtable_insert_fast(rht, &entry->node, table->rht_param);
+	ret = rhashtable_lookup_insert_key(rht, &fp, &entry->node,
+		nova_rht_params);
 	if (ret < 0) {
-		nova_free_data_block(sb, pentry->blocknr);
-		nova_free_entry(table->entry_allocator, pentry);
+		// printk("Block %lu with fp %llx fail to insert into rhashtable "
+		// 	"with error code %d\n", wp->blocknr, fp.value, ret);
+		goto fail2;
 	}
-	// if (ret == 0)
-	// 	printk("Block %lu with fp %llx inserted into rhashtable %p\n",
-	// 		wp->blocknr, fp.value, rht);
-	// else
-	// 	printk("rhashtable_insert_fast returns %d\n", ret);
+	// printk("Block %lu with fp %llx inserted into rhashtable %p\n",
+	// 	wp->blocknr, fp.value, rht);
+	return 0;
+fail2:
+	nova_free_data_block(sb, pentry->blocknr);
+	nova_free_entry(table->entry_allocator, pentry);
+fail1:
+	nova_rht_entry_free(entry, NULL);
+fail0:
 	return ret;
 }
 // True: Not equal. False: Equal
@@ -196,7 +215,7 @@ static int bucket_upsert_base(
 retry:
 	rcu_read_lock();
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	entry = rhashtable_lookup(rht, &wp->base.fp, table->rht_param);
+	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	// We have to hold the read lock because if it is a hash collision,
 	// then the entry could be freed by another thread.
@@ -231,7 +250,7 @@ retry:
 			if (blocknr != wp->blocknr) {
 				// Collision happened. Just free it.
 				rcu_read_unlock();
-				printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+				printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n", __func__, blocknr, wp->blocknr);
 				wp->base.refcount = 0;
 				return 0;
 			}
@@ -299,7 +318,7 @@ static int bucket_upsert_decr1(
 
 	rcu_read_lock();
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	entry = rhashtable_lookup(rht, &wp->base.fp, table->rht_param);
+	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	// We have to hold the read lock because if it is a hash collision,
 	// then the entry could be freed by another thread.
@@ -316,7 +335,8 @@ static int bucket_upsert_decr1(
 	if (blocknr != wp->blocknr) {
 		rcu_read_unlock();
 		// Collision happened. Just free it.
-		printk("Blocknr mismatch: blocknr = %ld, expected %ld\n", blocknr, wp->blocknr);
+		printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n",
+			__func__, blocknr, wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}
@@ -336,8 +356,7 @@ static int bucket_upsert_decr1(
 	return 0;
 }
 
-int nova_rhashtable_insert_entry(struct rhashtable *rht,
-	const struct rhashtable_params params, struct nova_fp fp,
+int nova_rhashtable_insert_entry(struct rhashtable *rht, struct nova_fp fp,
 	struct nova_pmm_entry *pentry)
 {
 	struct nova_rht_entry *entry = nova_rht_entry_alloc();
@@ -347,7 +366,8 @@ int nova_rhashtable_insert_entry(struct rhashtable *rht,
 		return -ENOMEM;
 	assign_entry(entry, pentry, fp);
 	while(1) {
-		ret = rhashtable_insert_fast(rht, &entry->node, params);
+		ret = rhashtable_insert_fast(rht, &entry->node,
+			nova_rht_params);
 		if (ret != -EBUSY)
 			break;
 		schedule();
@@ -529,14 +549,6 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *psb = (struct nova_super_block *)sbi->virt_addr;
 	int retval;
-	struct rhashtable_params param = {
-		.key_len = sizeof(struct nova_fp),
-		.head_offset = offsetof(struct nova_rht_entry, node),
-		.automatic_shrinking = true,
-		.hashfn = nova_rht_entry_key_hashfn,
-		.obj_hashfn = nova_rht_entry_hashfn,
-		.obj_cmpfn = nova_rht_key_entry_cmp,
-	};
 	INIT_TIMING(table_init_time);
 
 	NOVA_START_TIMING(table_init_t, table_init_time);
@@ -544,10 +556,9 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
 
 	table->sblock = sb;
 	table->entry_allocator = &sbi->meta_table.entry_allocator;
-	table->rht_param = param; // TODO: A smarter way?
 
-	retval = rhashtable_init_large(
-		&table->rht, nelem_hint, &table->rht_param);
+	retval = rhashtable_init_large(&table->rht, nelem_hint,
+		&nova_rht_params);
 	BUG_ON(retval < 0); // TODO
 
 	NOVA_END_TIMING(table_init_t, table_init_time);
@@ -576,8 +587,8 @@ static int __table_recover_func(struct nova_mm_table *table,
 		pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
 			le64_to_cpu(rec[i].entry_offset));
 		BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-		ret = nova_rhashtable_insert_entry(&table->rht, table->rht_param,
-			pentry->fp, pentry);
+		ret = nova_rhashtable_insert_entry(&table->rht, pentry->fp,
+			pentry);
 		if (ret < 0)
 			break;
 	}
