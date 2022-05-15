@@ -342,7 +342,6 @@ static void scan_valid_entry_count_block_tails(struct nova_sb_info *sbi,
 #endif
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
-	struct rhashtable *rht, const struct rhashtable_params params,
 	unsigned long *bm, size_t *tot)
 {
 #if 0

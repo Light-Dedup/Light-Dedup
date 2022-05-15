@@ -843,7 +843,6 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 
 	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	ret = nova_scan_entry_table(sb, allocator, xat,
-		&table->metas.rht, table->metas.rht_param,
 		info->global_bm[0].bitmap, &tot);
 	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
 	if (ret < 0)
