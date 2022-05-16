@@ -640,7 +640,8 @@ static void __invalidate_unused_fp_entry_xa(
 		if (test_bit(blocknr, final_bm->bitmap))
 			continue;
 		// Unused. Invalidate the fp_entry.
-		nova_free_entry(allocator, pentry, false);
+		// TODO: Actually no need to use spin_lock_bh inside
+		nova_free_entry(allocator, pentry);
 	}
 }
 static void __invalidate_unused_fp_entry_func(

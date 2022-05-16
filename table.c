@@ -67,7 +67,7 @@ static void rht_entry_free(struct rcu_head *head)
 {
 	struct rht_entry_free_task *task =
 		container_of(head, struct rht_entry_free_task, head);
-	nova_free_entry(task->allocator, task->entry->pentry, true);
+	nova_free_entry(task->allocator, task->entry->pentry);
 	nova_rht_entry_free(task->entry, NULL);
 	kfree(task);
 }
@@ -87,8 +87,9 @@ static void nova_table_leaf_delete(
 		task->entry = entry;
 		call_rcu(&task->head, rht_entry_free);
 	} else {
+		// printk(KERN_ERR "%s: Fail to allocate task\n", __func__);
 		synchronize_rcu();
-		nova_free_entry(table->entry_allocator, entry->pentry, false);
+		nova_free_entry(table->entry_allocator, entry->pentry);
 		nova_rht_entry_free(entry, NULL);
 	}
 }
@@ -197,7 +198,7 @@ static int nova_table_leaf_insert(
 	return 0;
 fail2:
 	nova_free_data_block(sb, pentry->blocknr);
-	nova_free_entry(table->entry_allocator, pentry, false);
+	nova_free_entry(table->entry_allocator, pentry);
 fail1:
 	nova_rht_entry_free(entry, NULL);
 fail0:

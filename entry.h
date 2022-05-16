@@ -42,8 +42,11 @@ struct entry_allocator {
 	__le64 *last_counter_block_tail;
 	// TODO: Place most free regions in the NVM in a list queue manner.
 	struct nova_queue free_regions; // Region numbers
+	// Used in softirq context
 	spinlock_t lock;
-	struct xarray valid_entry; // Key is blocknr of region
+	// Used in softirq context
+	// Key is blocknr of region
+	struct xarray valid_entry;
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \
 	((PAGE_SIZE - sizeof(__le64)) / sizeof(uint16_t))
@@ -69,7 +72,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry, struct nova_fp fp,
 	unsigned long blocknr, int64_t refcount);
 void nova_free_entry(struct entry_allocator *allocator,
-	struct nova_pmm_entry *pentry, bool bh);
+	struct nova_pmm_entry *pentry);
 
 void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator);
 
