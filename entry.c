@@ -426,8 +426,8 @@ err_out0:
 	return ret;
 }
 // TODO: A more efficient way?
-static int16_t add_valid_count(struct xarray *counts, unsigned long blocknr,
-	int16_t delta)
+static inline int16_t add_valid_count(struct xarray *counts, unsigned long blocknr,
+	int16_t delta, bool bh)
 {
 	int16_t count;
 	void *entry;
@@ -439,10 +439,17 @@ static int16_t add_valid_count(struct xarray *counts, unsigned long blocknr,
 	do {
 		count = (int16_t)xa_to_value(entry);
 		// printk("count = %d\n", count);
-		entry = xa_cmpxchg(counts, blocknr,
-			xa_mk_value((uint16_t)count),
-			xa_mk_value((uint16_t)(count + delta)),
-			GFP_ATOMIC);
+		if (bh) {
+			entry = xa_cmpxchg_bh(counts, blocknr,
+				xa_mk_value((uint16_t)count),
+				xa_mk_value((uint16_t)(count + delta)),
+				GFP_ATOMIC);
+		} else {
+			entry = xa_cmpxchg(counts, blocknr,
+				xa_mk_value((uint16_t)count),
+				xa_mk_value((uint16_t)(count + delta)),
+				GFP_ATOMIC);
+		}
 		// Actually won't allocate
 		BUG_ON(xa_is_err(entry)); // TODO: Is this safe?
 	} while ((int16_t)xa_to_value(entry) != count);
@@ -483,7 +490,7 @@ new_region(struct entry_allocator *allocator,
 		blocknr = nova_get_addr_off(sbi, allocator_cpu->top_entry) /
 			PAGE_SIZE;
 		count = add_valid_count(&allocator->valid_entry, blocknr,
-			allocator_cpu->allocated);
+			allocator_cpu->allocated, false);
 		allocator_cpu->allocated = 0;
 		if (count <= FREE_THRESHOLD)
 		{
@@ -555,8 +562,9 @@ void nova_write_entry(struct entry_allocator *allocator,
 	nova_memlock(sb, &irq_flags);
 }
 
+// Can be called in softirq context
 void nova_free_entry(struct entry_allocator *allocator,
-	struct nova_pmm_entry *pentry)
+	struct nova_pmm_entry *pentry, bool bh)
 {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
@@ -564,21 +572,30 @@ void nova_free_entry(struct entry_allocator *allocator,
 		meta_table, struct nova_sb_info, meta_table);
 	struct super_block *sb = meta_table->sblock;
 	unsigned long blocknr = nova_get_addr_off(sbi, pentry) / PAGE_SIZE;
-	int16_t count = add_valid_count(&allocator->valid_entry, blocknr, -1);
+	int16_t count = add_valid_count(&allocator->valid_entry, blocknr, -1,
+		bh);
 
 	if (count == FREE_THRESHOLD) {
 		/*
 		 * This region does not belong to an allocator_cpu. Because the
 		 * valid counts of such regions decrease monotonously.
 		 */
-		spin_lock(&allocator->lock);
+		if (bh) {
+			spin_lock_bh(&allocator->lock);
+		} else {
+			spin_lock(&allocator->lock);
+		}
 		// TODO: Handle it
 		BUG_ON(nova_queue_push_ul(
 			&allocator->free_regions,
 			blocknr,
 			GFP_ATOMIC
 		) < 0);
-		spin_unlock(&allocator->lock);
+		if (bh) {
+			spin_unlock_bh(&allocator->lock);
+		} else {
+			spin_unlock(&allocator->lock);
+		}
 	}
 	nova_unlock_write(sb, &pentry->flag, 0, true);
 }
@@ -636,7 +653,8 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 					sbi,
 					allocator_cpu->top_entry
 				) / PAGE_SIZE,
-				allocator_cpu->allocated);
+				allocator_cpu->allocated,
+				false);
 			allocator_cpu->allocated = 0;
 		}
 	}

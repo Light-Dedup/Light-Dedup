@@ -69,7 +69,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry, struct nova_fp fp,
 	unsigned long blocknr, int64_t refcount);
 void nova_free_entry(struct entry_allocator *allocator,
-	struct nova_pmm_entry *pentry);
+	struct nova_pmm_entry *pentry, bool bh);
 
 void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator);
 

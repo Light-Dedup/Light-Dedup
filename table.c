@@ -57,19 +57,42 @@ static void nova_rht_entry_free(void *entry, void *arg)
 	kfree(entry);
 }
 
-static int nova_table_leaf_delete(
+struct rht_entry_free_task {
+	struct rcu_head head;
+	struct entry_allocator *allocator;
+	struct nova_rht_entry *entry;
+};
+
+static void rht_entry_free(struct rcu_head *head)
+{
+	struct rht_entry_free_task *task =
+		container_of(head, struct rht_entry_free_task, head);
+	nova_free_entry(task->allocator, task->entry->pentry, true);
+	nova_rht_entry_free(task->entry, NULL);
+	kfree(task);
+}
+
+static void nova_table_leaf_delete(
 	struct nova_mm_table *table,
 	struct rhashtable *rht,
 	struct nova_rht_entry *entry)
 {
+	struct rht_entry_free_task *task;
 	// Remove the entry first to make it invisible to other threads.
 	int ret = rhashtable_remove_fast(rht, &entry->node, nova_rht_params);
 	BUG_ON(ret < 0);
-	// TODO: Will there be other threads accessing the pentry?
-	nova_free_entry(table->entry_allocator, entry->pentry);
-	nova_rht_entry_free(entry, NULL);
-	return 0;
+	task = kmalloc(sizeof(struct rht_entry_free_task), GFP_KERNEL);
+	if (task) {
+		task->allocator = table->entry_allocator;
+		task->entry = entry;
+		call_rcu(&task->head, rht_entry_free);
+	} else {
+		synchronize_rcu();
+		nova_free_entry(table->entry_allocator, entry->pentry, false);
+		nova_rht_entry_free(entry, NULL);
+	}
 }
+
 static void print(const char *addr) {
 	int i;
 	for (i = 0; i < 4096; ++i) {
@@ -174,7 +197,7 @@ static int nova_table_leaf_insert(
 	return 0;
 fail2:
 	nova_free_data_block(sb, pentry->blocknr);
-	nova_free_entry(table->entry_allocator, pentry);
+	nova_free_entry(table->entry_allocator, pentry, false);
 fail1:
 	nova_rht_entry_free(entry, NULL);
 fail0:
@@ -256,7 +279,7 @@ retry:
 			}
 			rcu_read_unlock();
 			nova_memunlock_range(sb, &pentry->refcount,
-			sizeof(pentry->refcount), &irq_flags);
+				sizeof(pentry->refcount), &irq_flags);
 			wp->base.refcount = atomic64_add_return(
 				delta, &entry->pentry->refcount);
 			nova_memlock_range(sb, &pentry->refcount,
@@ -365,7 +388,7 @@ int nova_rhashtable_insert_entry(struct rhashtable *rht, struct nova_fp fp,
 	if (entry == NULL)
 		return -ENOMEM;
 	assign_entry(entry, pentry, fp);
-	while(1) {
+	while (1) {
 		ret = rhashtable_insert_fast(rht, &entry->node,
 			nova_rht_params);
 		if (ret != -EBUSY)
