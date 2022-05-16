@@ -40,8 +40,11 @@ struct entry_allocator {
 	__le64 *last_region_tail;
 	// TODO: Place most free regions in the NVM in a list queue manner.
 	struct nova_queue free_regions; // Region numbers
+	// Used in softirq context
 	spinlock_t lock;
-	struct xarray valid_entry; // Key is blocknr of region
+	// Used in softirq context
+	// Key is blocknr of region
+	struct xarray valid_entry;
 	void *first_region; // To free regions.
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \

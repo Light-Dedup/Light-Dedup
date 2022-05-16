@@ -43,7 +43,7 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 		return ret;
 	regions = (char *)get_zeroed_page(GFP_KERNEL);
 	BUG_ON(regions == NULL);
-	ret = xa_err(xa_store(&allocator->valid_entry, (unsigned long)regions,
+	ret = xa_err(xa_store_bh(&allocator->valid_entry, (unsigned long)regions,
 		xa_mk_value(0), GFP_KERNEL));
 	BUG_ON(ret < 0); // TODO: Handle it
 	BUG_ON(nova_queue_push_ul(
@@ -391,7 +391,7 @@ alloc_region(struct entry_allocator *allocator)
 	char *new_region = (char *)get_zeroed_page(GFP_ATOMIC);
 	int ret;
 	BUG_ON(new_region == NULL);
-	ret = xa_err(xa_store(&allocator->valid_entry, (unsigned long)new_region,
+	ret = xa_err(xa_store_bh(&allocator->valid_entry, (unsigned long)new_region,
 		xa_mk_value(0), GFP_ATOMIC));
 	BUG_ON(ret < 0);
 	ret = nova_queue_push_ul(
@@ -418,7 +418,7 @@ static int16_t add_valid_count(struct xarray *counts, unsigned long blocknr,
 	do {
 		count = (int16_t)xa_to_value(entry);
 		// printk("count = %d\n", count);
-		entry = xa_cmpxchg(counts, blocknr,
+		entry = xa_cmpxchg_bh(counts, blocknr,
 			xa_mk_value((uint16_t)count),
 			xa_mk_value((uint16_t)(count + delta)),
 			GFP_ATOMIC);
@@ -440,20 +440,20 @@ new_region(struct entry_allocator *allocator,
 	INIT_TIMING(alloc_region_time);
 
 	NOVA_START_TIMING(new_region_t, new_region_time);
-	spin_lock(&allocator->lock);
+	spin_lock_bh(&allocator->lock);
 	if (nova_queue_is_empty(&allocator->free_regions))
 	{
 		NOVA_START_TIMING(alloc_region_t, alloc_region_time);
 		ret = alloc_region(allocator);
 		NOVA_END_TIMING(alloc_region_t, alloc_region_time);
 		if (ret < 0) {
-			spin_unlock(&allocator->lock);
+			spin_unlock_bh(&allocator->lock);
 			NOVA_END_TIMING(new_region_t, new_region_time);
 			return ret;
 		}
 	}
 	*new_region = (struct nova_pmm_entry *)nova_queue_pop_ul(&allocator->free_regions);
-	spin_unlock(&allocator->lock);
+	spin_unlock_bh(&allocator->lock);
 	if (allocator_cpu->top_entry != NULL_PENTRY) {
 		region = (void *)((unsigned long)allocator_cpu->top_entry & ~(PAGE_SIZE - 1));
 		count = add_valid_count(&allocator->valid_entry, (unsigned long)region,
@@ -461,9 +461,11 @@ new_region(struct entry_allocator *allocator,
 		allocator_cpu->allocated = 0;
 		if (count <= FREE_THRESHOLD)
 		{
+			spin_lock_bh(&allocator->lock);
 			BUG_ON(nova_queue_push_ul(&allocator->free_regions,
 				(unsigned long)region, GFP_ATOMIC
 			) < 0);
+			spin_unlock_bh(&allocator->lock);
 		}
 		// new_region at most once, so it is safe to not update top_entrynr here.
 	}
@@ -522,6 +524,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	nova_memlock(sb, &irq_flags);
 }
 
+// Can be called in softirq context
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
@@ -539,14 +542,14 @@ void nova_free_entry(struct entry_allocator *allocator,
 		 * This region does not belong to an allocator_cpu. Because the
 		 * valid counts of such regions decrease monotonously.
 		 */
-		spin_lock(&allocator->lock);
+		spin_lock_bh(&allocator->lock);
 		// TODO: Handle it
 		BUG_ON(nova_queue_push_ul(
 			&allocator->free_regions,
 			blocknr,
 			GFP_ATOMIC
 		) < 0);
-		spin_unlock(&allocator->lock);
+		spin_unlock_bh(&allocator->lock);
 	}
 	nova_unlock_write(sb, &pentry->flag, 0, true);
 #endif
