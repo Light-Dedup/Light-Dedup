@@ -487,9 +487,11 @@ new_region(struct entry_allocator *allocator,
 		allocator_cpu->allocated = 0;
 		if (count <= FREE_THRESHOLD)
 		{
+			spin_lock_bh(&allocator->lock);
 			BUG_ON(nova_queue_push_ul(&allocator->free_regions,
 				blocknr, GFP_ATOMIC
 			) < 0);
+			spin_unlock_bh(&allocator->lock);
 		}
 		// new_region at most once, so it is safe to not update top_entrynr here.
 	}
