@@ -35,15 +35,14 @@ static uint64_t nova_table_leaf_find(
 	return NOVA_TABLE_NOT_FOUND;
 }
 
-static int nova_table_leaf_delete(
+static void nova_table_leaf_delete(
 	struct nova_mm_table *table,
 	entrynr_t entry_index)
 {
 	entrynr_t entrynr = entry_index;
 	nova_free_entry(table->entry_allocator, entrynr);
-	
-	return 0;
 }
+
 static void print(const char *addr) {
 	int i;
 	for (i = 0; i < 4096; ++i) {

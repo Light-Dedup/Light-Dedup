@@ -643,6 +643,7 @@ static void __invalidate_unused_fp_entry_xa(
 		if (test_bit(blocknr, final_bm->bitmap))
 			continue;
 		// Unused. Invalidate the fp_entry.
+		// TODO: Actually no need to use spin_lock_bh inside
 		nova_free_entry(allocator, pentry);
 	}
 }
@@ -900,7 +901,7 @@ static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *i
 		&irq_flags);
 	nova_flush_entry(fp_table->entry_allocator, pentry);
 	if (refcount == 1) {
-		ret = nova_rhashtable_insert_entry(&fp_table->rht, pentry->fp,
+		ret = nova_table_insert_entry(fp_table, pentry->fp,
 			pentry);
 		if (ret < 0)
 			return ret;
