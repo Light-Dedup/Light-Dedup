@@ -35,6 +35,7 @@ struct entry_allocator {
 	regionnr_t max_region_num; // Determined by the number of counter blocks.
 	struct nova_queue free_entries; // Addresses
 	struct nova_pmm_entry *last_entry; // Last not flushed entry.
+	// Used in softirq context
 	spinlock_t lock;
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \

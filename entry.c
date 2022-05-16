@@ -452,6 +452,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	nova_memlock(sb, &irq_flags);
 }
 
+// Can be called in softirq context
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
@@ -459,14 +460,14 @@ void nova_free_entry(struct entry_allocator *allocator,
 		container_of(allocator, struct nova_meta_table, entry_allocator);
 	struct super_block *sb = meta_table->sblock;
 
-	spin_lock(&allocator->lock);
+	spin_lock_bh(&allocator->lock);
 	// TODO: Handle it
 	BUG_ON(nova_queue_push_ul(
 		&allocator->free_entries,
 		(unsigned long)pentry,
 		GFP_ATOMIC
 	) < 0);
-	spin_unlock(&allocator->lock);
+	spin_unlock_bh(&allocator->lock);
 	nova_unlock_write(sb, &pentry->flag, 0, true);
 }
 
