@@ -46,9 +46,9 @@ const struct rhashtable_params nova_rht_params = {
 	.obj_cmpfn = nova_rht_key_entry_cmp,
 };
 
-static struct nova_rht_entry* nova_rht_entry_alloc(void)
+static inline struct nova_rht_entry* nova_rht_entry_alloc(void)
 {
-	return (struct nova_rht_entry *)kzalloc(
+	return (struct nova_rht_entry *)kmalloc(
 		sizeof(struct nova_rht_entry), GFP_KERNEL);
 }
 
