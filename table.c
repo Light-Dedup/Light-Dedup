@@ -70,10 +70,15 @@ static void rht_entry_free(struct rcu_head *head)
 		container_of(head, struct rht_entry_free_task, head);
 	struct nova_meta_table *meta_table = container_of(task->allocator,
 		struct nova_meta_table, entry_allocator);
+	struct super_block *sb = meta_table->sblock;
 	struct nova_mm_table *table = &meta_table->metas;
 	struct kmem_cache *rht_entry_cache = table->rht_entry_cache;
-	nova_free_entry(task->allocator, task->entry->pentry);
-	nova_rht_entry_free(task->entry, rht_entry_cache);
+	struct nova_rht_entry *entry = task->entry;
+	struct nova_pmm_entry *pentry = entry->pentry;
+	unsigned long blocknr = pentry->blocknr;
+	nova_free_data_block(sb, blocknr);
+	nova_free_entry(task->allocator, pentry);
+	nova_rht_entry_free(entry, rht_entry_cache);
 	kfree(task);
 }
 
@@ -247,7 +252,7 @@ retry:
 	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	// We have to hold the read lock because if it is a hash collision,
-	// then the entry could be freed by another thread.
+	// then the entry, pentry, and blocknr could be freed by another thread.
 	if (entry) {
 		pentry = entry->pentry;
 		BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
