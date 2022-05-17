@@ -447,6 +447,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	pentry->blocknr = cpu_to_le64(blocknr);
 	atomic64_set(&pentry->refcount, refcount);
 	wmb();
+	BUG_ON(pentry->flag != 0);
 	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock(sb, &irq_flags);
@@ -468,6 +469,7 @@ void nova_free_entry(struct entry_allocator *allocator,
 		GFP_ATOMIC
 	) < 0);
 	spin_unlock_bh(&allocator->lock);
+	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
 	nova_unlock_write(sb, &pentry->flag, 0, true);
 }
 
