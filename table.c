@@ -70,10 +70,15 @@ static void rht_entry_free(struct rcu_head *head)
 		container_of(head, struct rht_entry_free_task, head);
 	struct nova_meta_table *meta_table = container_of(task->allocator,
 		struct nova_meta_table, entry_allocator);
+	struct super_block *sb = meta_table->sblock;
 	struct nova_mm_table *table = &meta_table->metas;
 	struct kmem_cache *rht_entry_cache = table->rht_entry_cache;
-	nova_free_entry(task->allocator, task->entry->pentry);
-	nova_rht_entry_free(task->entry, rht_entry_cache);
+	struct nova_rht_entry *entry = task->entry;
+	struct nova_pmm_entry *pentry = entry->pentry;
+	unsigned long blocknr = pentry->blocknr;
+	nova_free_data_block(sb, blocknr);
+	nova_free_entry(task->allocator, pentry);
+	nova_rht_entry_free(entry, rht_entry_cache);
 	kfree(task);
 }
 
@@ -227,11 +232,11 @@ static bool cmp_content(struct super_block *sb, unsigned long blocknr, const voi
 }
 static int bucket_upsert_base(
 	struct nova_mm_table *table,
-	struct rhashtable *rht,
 	struct nova_write_para_normal *wp,
 	int (*get_new_block)(struct super_block *, struct nova_write_para_normal *))
 {
 	struct super_block *sb = table->sblock;
+	struct rhashtable *rht = &table->rht;
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
@@ -246,7 +251,7 @@ retry:
 	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	// We have to hold the read lock because if it is a hash collision,
-	// then the entry could be freed by another thread.
+	// then the entry, pentry, and blocknr could be freed by another thread.
 	if (entry) {
 		pentry = entry->pentry;
 		BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
@@ -308,32 +313,29 @@ retry:
 		goto retry;
 	return ret;
 }
-static int bucket_upsert_normal(
-	struct nova_mm_table *table,
-	struct rhashtable *rht,
-	struct nova_write_para_base *wp)
+
+// Upsert : update or insert
+int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp)
 {
-	return bucket_upsert_base(table, rht, (struct nova_write_para_normal *)wp, alloc_and_fill_block);
+	return bucket_upsert_base(table, wp, alloc_and_fill_block);
 }
-static int bucket_upsert_rewrite(
-	struct nova_mm_table *table,
-	struct rhashtable *rht,
-	struct nova_write_para_base *wp)
+// Inplace 
+int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
 {
-	return bucket_upsert_base(table, rht, (struct nova_write_para_normal *)wp, rewrite_block);
+	return bucket_upsert_base(table, (struct nova_write_para_normal *)wp,
+		rewrite_block);
 }
 
 // refcount-- only if refcount == 1
-static int bucket_upsert_decr1(
+int nova_table_upsert_decr1(
 	struct nova_mm_table *table,
-	struct rhashtable *rht,
-	struct nova_write_para_base *__wp)
+	struct nova_write_para_normal *wp)
 {
+	struct rhashtable *rht = &table->rht;
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
 	int64_t refcount;
-	struct nova_write_para_normal *wp = (struct nova_write_para_normal *)__wp;
 	INIT_TIMING(mem_bucket_find_time);
 
 	rcu_read_lock();
@@ -400,33 +402,7 @@ int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
 	return ret;
 }
 
-typedef int (*bucket_upsert_func)(struct nova_mm_table *,
-	struct rhashtable *rht, struct nova_write_para_base *);
-
-static int nova_table_upsert(
-	struct nova_mm_table* table, 
-	struct nova_write_para_base *wp,
-	bucket_upsert_func bucket_upsert)
-{
-	return bucket_upsert(table, &table->rht, wp);
-}
-// Upsert : update or insert
-int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_normal);
-}
-// Inplace 
-int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_rewrite);
-}
-// Handle edge case when inplace
-int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
-}
-
-static void init_normal_wp_incr(struct nova_sb_info *sbi,
+static inline void init_normal_wp_incr(struct nova_sb_info *sbi,
 	struct nova_write_para_normal *wp, const void *addr)
 {
 	BUG_ON(nova_fp_calc(&sbi->meta_table.fp_ctx, addr, &wp->base.fp));
