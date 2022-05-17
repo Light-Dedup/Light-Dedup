@@ -226,30 +226,29 @@ retry:
 	}
 	return -ESRCH;
 }
-static int bucket_upsert_normal(
-	struct nova_mm_table *table,
-	struct nova_write_para_base *wp)
+
+// Upsert : update or insert
+int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp)
 {
-	return bucket_upsert_base(table, (struct nova_write_para_normal *)wp, alloc_and_fill_block);
+	return bucket_upsert_base(table, wp, alloc_and_fill_block);
 }
-static int bucket_upsert_rewrite(
-	struct nova_mm_table *table,
-	struct nova_write_para_base *wp)
+// Inplace 
+int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
 {
-	return bucket_upsert_base(table, (struct nova_write_para_normal *)wp, rewrite_block);
+	return bucket_upsert_base(table, (struct nova_write_para_normal *)wp,
+		rewrite_block);
 }
 
 // refcount-- only if refcount == 1
-static int bucket_upsert_decr1(
+int nova_table_upsert_decr1(
 	struct nova_mm_table *table,
-	struct nova_write_para_base *__wp)
+	struct nova_write_para_normal *wp)
 {
 	struct nova_pmm_entry *pentries = table->pentries;
 	uint64_t leaf_index;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
 	int64_t refcount;
-	struct nova_write_para_normal *wp = (struct nova_write_para_normal *)__wp;
 	INIT_TIMING(mem_bucket_find_time);
 
 	rcu_read_lock();
@@ -291,31 +290,7 @@ static int bucket_upsert_decr1(
 	return 0;
 }
 
-typedef int (*bucket_upsert_func)(struct nova_mm_table *, struct nova_write_para_base *);
-static int nova_table_upsert(
-	struct nova_mm_table* table, 
-	struct nova_write_para_base *wp,
-	bucket_upsert_func bucket_upsert)
-{
-	return bucket_upsert(table, wp);
-}
-// Upsert : update or insert
-int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_normal);
-}
-// Inplace 
-int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_rewrite);
-}
-// Handle edge case when inplace
-int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp)
-{
-	return nova_table_upsert(table, (struct nova_write_para_base *)wp, bucket_upsert_decr1);
-}
-
-static void init_normal_wp_incr(struct nova_sb_info *sbi,
+static inline void init_normal_wp_incr(struct nova_sb_info *sbi,
 	struct nova_write_para_normal *wp, const void *addr)
 {
 	BUG_ON(nova_fp_calc(&sbi->meta_table.fp_ctx, addr, &wp->base.fp));

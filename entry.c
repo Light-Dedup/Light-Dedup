@@ -86,6 +86,7 @@ write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	pentry->blocknr = cpu_to_le64(blocknr);
 	atomic64_set(&pentry->refcount, refcount);
 	wmb();
+	BUG_ON(pentry->flag != 0);
 	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
 	nova_flush_buffer(pentry, sizeof(*pentry), true);
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
@@ -111,6 +112,7 @@ void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 	struct nova_pmm_entry *pentry = meta_table->pentries + entrynr;
 
 	spin_lock(&allocator->lock);
+	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
 	nova_unlock_write(sb, &pentry->flag, 0, true);
 	spin_unlock(&allocator->lock);
 }

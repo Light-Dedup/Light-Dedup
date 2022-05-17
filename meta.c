@@ -115,8 +115,6 @@ long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 	long    retval;
 
 	retval = nova_meta_table_decr_refcount(table, nova_blocknr_to_addr(sb, blocknr), blocknr);
-	if (retval == 0)
-		nova_free_data_block(sb, blocknr);
 	if (retval < 0)
 		BUG_ON(retval != -EIO);
 	return retval;
