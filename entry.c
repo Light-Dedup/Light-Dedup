@@ -493,7 +493,7 @@ new_region(struct entry_allocator *allocator,
 			) < 0);
 			spin_unlock_bh(&allocator->lock);
 		}
-		// new_region at most once, so it is safe to not update top_entrynr here.
+		allocator_cpu->top_entry = NULL_PENTRY;
 	}
 	// printk("%s: new_region_blocknr = %lx\n", __func__, *new_region_blocknr);
 	NOVA_END_TIMING(new_region_t, new_region_time);
@@ -548,6 +548,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	pentry->blocknr = cpu_to_le64(blocknr);
 	atomic64_set(&pentry->refcount, refcount);
 	wmb();
+	BUG_ON(pentry->flag != 0);
 	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
 	if (!in_the_same_cacheline(allocator_cpu->last_entry, pentry))
 		flush_last_entry(allocator_cpu);
@@ -583,6 +584,7 @@ void nova_free_entry(struct entry_allocator *allocator,
 		) < 0);
 		spin_unlock_bh(&allocator->lock);
 	}
+	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
 	nova_unlock_write(sb, &pentry->flag, 0, true);
 }
 
