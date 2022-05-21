@@ -172,6 +172,7 @@ static int nova_table_leaf_insert(
 	struct entry_allocator_cpu *allocator_cpu;
 	struct nova_pmm_entry *pentry;
 	int ret;
+	INIT_TIMING(index_insert_new_entry_time);
 
 	entry = nova_rht_entry_alloc(table);
 	if (entry == NULL) {
@@ -196,8 +197,11 @@ static int nova_table_leaf_insert(
 		wp->blocknr, wp->base.refcount);
 	put_cpu();
 	assign_entry(entry, pentry, fp);
+	NOVA_START_TIMING(index_insert_new_entry_t,
+		index_insert_new_entry_time);
 	ret = rhashtable_lookup_insert_key(rht, &fp, &entry->node,
 		nova_rht_params);
+	NOVA_END_TIMING(index_insert_new_entry_t, index_insert_new_entry_time);
 	if (ret < 0) {
 		// printk("Block %lu with fp %llx fail to insert into rhashtable "
 		// 	"with error code %d\n", wp->blocknr, fp.value, ret);
