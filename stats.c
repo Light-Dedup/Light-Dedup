@@ -171,8 +171,6 @@ const char *Timingstring[TIMING_NUM] = {
 	"alloc_entry",
 	"write_new_entry",
 	"mem_bucket_find",
-	"split_leaf",
-	"split",
 	"memcmp",
 	"table_init",
 	"save_refcount",

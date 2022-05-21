@@ -175,8 +175,6 @@ enum timing_category {
 	alloc_entry_t,
 	write_new_entry_t,
 	mem_bucket_find_t,
-	split_leaf_t,
-	split_t,
 	memcmp_t,
 	table_init_t,
 	save_refcount_t,
