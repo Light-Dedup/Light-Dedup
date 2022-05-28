@@ -578,5 +578,6 @@ int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocato
 	printk(KERN_CONT "\n");
 	vfree(count);
 #endif
+	printk("Number of regions: %u\n", allocator->region_num);
 	return 0;
 }
