@@ -488,6 +488,14 @@ void nova_save_blocknode_mappings_to_log(struct super_block *sb)
 	sih.ino = NOVA_BLOCKNODE_INO;
 	sih.i_blk_type = NOVA_DEFAULT_BLOCK_TYPE;
 
+	for_each_possible_cpu(i) {
+		struct block_allocator_per_cpu *allocator =
+			&per_cpu(block_allocator_per_cpu, i);
+		if (allocator->num != 0)
+			BUG_ON(nova_free_data_blocks(sb, &sih,
+				allocator->blocknr, allocator->num) < 0);
+	}
+
 	/* Allocate log pages before save blocknode mappings */
 	for (i = 0; i < sbi->cpus; i++) {
 		free_list = nova_get_free_list(sb, i);
