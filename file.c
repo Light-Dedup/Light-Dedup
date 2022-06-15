@@ -449,13 +449,20 @@ do_dax_mapping_read(struct file *filp, char __user *buf,
 			return -EIO;
 
 		/* Find contiguous blocks */
-		if (index != entryc->pgoff) {
-			nova_err(sb, "%s ERROR: %lu, entry pgoff %llu, blocknr %llu\n",
+		if (index < entryc->pgoff ||
+			index - entryc->pgoff >= entryc->num_pages) {
+			nova_err(sb, "%s ERROR: %lu, entry pgoff %llu, num %u, blocknr %llu\n",
 				__func__, index, entry->pgoff,
-				entry->block >> PAGE_SHIFT);
+				entry->num_pages, entry->block >> PAGE_SHIFT);
 			return -EINVAL;
 		}
-		nr = PAGE_SIZE;
+		if (entryc->reassigned == 0) {
+			nr = (entryc->num_pages - (index - entryc->pgoff))
+				* PAGE_SIZE;
+		} else {
+			nr = PAGE_SIZE;
+		}
+
 		nvmm = get_nvmm(sb, sih, entryc, index);
 		dax_mem = nova_get_block(sb, (nvmm << PAGE_SHIFT));
 
@@ -469,9 +476,9 @@ memcpy:
 				goto skip_verify;
 
 			if (!nova_verify_data_csum(sb, sih, nvmm, offset, nr)) {
-				nova_err(sb, "%s: nova data checksum and recovery fail! inode %lu, offset %lu, entry pgoff %lu, pgoff %lu\n",
+				nova_err(sb, "%s: nova data checksum and recovery fail! inode %lu, offset %lu, entry pgoff %lu, %u pages, pgoff %lu\n",
 					 __func__, inode->i_ino, offset,
-					 entry->pgoff, index);
+					 entry->pgoff, entry->num_pages, index);
 				error = -EIO;
 				goto out;
 			}
@@ -672,7 +679,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			file_size = cpu_to_le64(inode->i_size);
 
 		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
-					start_blk, blocknr, time,
+					start_blk, 1, blocknr, time,
 					file_size);
 
 		ret = nova_append_file_write_entry(sb, pi, inode,
@@ -726,7 +733,7 @@ out:
 		kmem_cache_free(table->kbuf_cache, kbuf);
 	if (ret < 0) {
 		int ret2;
-		ret2 = nova_cleanup_incomplete_write(sb, sih, blocknr,
+		ret2 = nova_cleanup_incomplete_write(sb, sih, blocknr, 1,
 						begin_tail, update.tail);
 		if (ret2 < 0)
 			ret = ret2;

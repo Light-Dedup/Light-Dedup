@@ -832,17 +832,17 @@ int nova_update_truncated_block_csum(struct super_block *sb,
 /* dax.c */
 int nova_cleanup_incomplete_write(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long blocknr,
-	u64 begin_tail, u64 end_tail);
+	int allocated, u64 begin_tail, u64 end_tail);
 void nova_init_file_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, struct nova_file_write_entry *entry,
-	u64 epoch_id, u64 pgoff, u64 blocknr, u32 time,
-	u64 file_size);
+	u64 epoch_id, u64 pgoff, int num_pages, u64 blocknr, u32 time,
+	u64 size);
 int nova_reassign_file_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, u64 begin_tail);
-void nova_check_existing_entry(struct super_block *sb,
-	struct inode *inode, unsigned long start_blk,
+unsigned long nova_check_existing_entry(struct super_block *sb,
+	struct inode *inode, unsigned long num_blocks, unsigned long start_blk,
 	struct nova_file_write_entry **ret_entry,
-	struct nova_file_write_entry *ret_entryc, u64 epoch_id,
+	struct nova_file_write_entry *ret_entryc, int check_next, u64 epoch_id,
 	int *inplace, int locked);
 int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	unsigned int flags, struct iomap *iomap, bool taking_lock);
@@ -919,8 +919,10 @@ extern long nova_compat_ioctl(struct file *file, unsigned int cmd,
 /* mprotect.c */
 extern int nova_dax_mem_protect(struct super_block *sb,
 				 void *vaddr, unsigned long size, int rw);
-bool nova_get_vma_overlap_range(struct vm_area_struct *vma,
-	unsigned long entry_pgoff);
+int nova_get_vma_overlap_range(struct super_block *sb,
+	struct nova_inode_info_header *sih, struct vm_area_struct *vma,
+	unsigned long entry_pgoff, unsigned long entry_pages,
+	unsigned long *start_pgoff, unsigned long *num_pages);
 int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 	unsigned long address);
 bool nova_find_pgoff_in_vma(struct inode *inode, unsigned long pgoff);
@@ -970,7 +972,7 @@ int nova_restore_snapshot_entry(struct super_block *sb,
 	struct nova_snapshot_info_entry *entry, u64 curr_p, int just_init);
 int nova_mount_snapshot(struct super_block *sb);
 int nova_append_data_to_snapshot(struct super_block *sb,
-	struct nova_file_write_entry *entry, u64 nvmm,
+	struct nova_file_write_entry *entry, u64 nvmm, u64 num_pages,
 	u64 delete_epoch_id);
 int nova_append_inode_to_snapshot(struct super_block *sb,
 	struct nova_inode *pi);
