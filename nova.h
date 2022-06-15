@@ -426,19 +426,22 @@ static inline unsigned long get_nvmm(struct super_block *sb,
 	 * or we can do memcpy_mcsafe here but have to avoid double copy and
 	 * verification of the entry.
 	 */
-	if (entry->pgoff != pgoff) {
+	if (entry->pgoff > pgoff || (unsigned long) entry->pgoff +
+			(unsigned long) entry->num_pages <= pgoff) {
 		struct nova_sb_info *sbi = NOVA_SB(sb);
 		u64 curr;
 
 		curr = nova_get_addr_off(sbi, entry);
-		nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, entry pgoff %llu\n",
-			sih->ino, curr, pgoff, entry->pgoff);
+		nova_dbg("Entry ERROR: inode %lu, curr 0x%llx, pgoff %lu, entry pgoff %llu, num %u\n",
+			sih->ino,
+			curr, pgoff, entry->pgoff, entry->num_pages);
 		nova_print_nova_log_pages(sb, sih);
 		nova_print_nova_log(sb, sih);
 		NOVA_ASSERT(0);
 	}
 
-	return (unsigned long) (entry->block >> PAGE_SHIFT);
+	return (unsigned long) (entry->block >> PAGE_SHIFT) + pgoff
+		- entry->pgoff;
 }
 
 bool nova_verify_entry_csum(struct super_block *sb, void *entry, void *entryc);
