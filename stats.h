@@ -165,6 +165,7 @@ enum timing_category {
 
 	/* Fingerprint table */
 	fingerprint_table_title_t,
+	copy_from_user_t,
 	fp_calc_t,
 	incr_ref_t,
 	decr_ref_t,

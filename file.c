@@ -566,6 +566,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	char *kbuf = NULL;
 	struct nova_write_para_normal wp;
 	unsigned long irq_flags = 0;
+	INIT_TIMING(copy_from_user_time);
 
 	if (len == 0)
 		return 0;
@@ -644,10 +645,14 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 				goto out;
 		}
 		/* Now copy from user buf */
+
+		NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
 		if (copy_from_user(kbuf + offset, buf, bytes)) {
+			NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 			ret = -EFAULT;
 			goto out;
 		}
+		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 		ret = nova_fp_table_incr(&table->metas, kbuf, &wp);
 		if (ret < 0)
 			goto out;

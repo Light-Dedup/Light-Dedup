@@ -161,6 +161,7 @@ const char *Timingstring[TIMING_NUM] = {
 
 	/* Fingerprint table */
 	"=================== Fingerprint table ===================",
+	"copy_from_user",
 	"fp_calc",
 	"incr_ref",
 	"decr_ref",
