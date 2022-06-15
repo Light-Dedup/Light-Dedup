@@ -560,6 +560,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	unsigned long start_blk, num_blocks;
 	unsigned long total_blocks;
 	unsigned long blocknr = 0;
+	unsigned long first_written_blocknr = 0, written_blocks = 0;
 	unsigned int data_bits;
 	u64 file_size;
 	size_t bytes;
@@ -666,12 +667,32 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		blocknr = wp.blocknr;
 		if (data_csum > 0 || data_parity > 0) {
 			if (wp.base.refcount == 1) {
-				ret = nova_protect_file_data(sb, inode, pos, bytes,
-								buf, blocknr, false);
+				ret = nova_protect_file_data(sb, inode, pos,
+					bytes, buf, blocknr, false);
 				if (ret)
 					goto out;
 			} // Existing block has already been protected.
 		}
+
+		if (first_written_blocknr == 0) {
+			first_written_blocknr = blocknr;
+			written_blocks = 1;
+		} else if (blocknr == first_written_blocknr + written_blocks) {
+			written_blocks += 1;
+		} else {
+			ret = nova_append_file_write_entry(sb, pi, inode,
+						&entry_data, &update);
+			if (ret) {
+				nova_dbg("%s: append inode entry failed\n", __func__);
+				ret = -ENOSPC;
+				goto out;
+			}
+			if (begin_tail == 0)
+				begin_tail = update.curr_entry;
+			first_written_blocknr = blocknr;
+			written_blocks = 1;
+		}
+		blocknr = 0;
 
 		if (pos + bytes > inode->i_size)
 			file_size = cpu_to_le64(pos + bytes);
@@ -679,17 +700,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			file_size = cpu_to_le64(inode->i_size);
 
 		nova_init_file_write_entry(sb, sih, &entry_data, epoch_id,
-					start_blk, 1, blocknr, time,
-					file_size);
-
-		ret = nova_append_file_write_entry(sb, pi, inode,
-					&entry_data, &update);
-		if (ret) {
-			nova_dbg("%s: append inode entry failed\n", __func__);
-			ret = -ENOSPC;
-			goto out;
-		}
-		blocknr = 0;
+			start_blk, written_blocks, first_written_blocknr, time,
+			file_size);
 
 		nova_dbgv("Write: %p, %lu\n", kbuf, bytes);
 		if (bytes > 0) {
@@ -699,9 +711,18 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			count -= bytes;
 			num_blocks -= 1;
 		}
-		if (begin_tail == 0)
-			begin_tail = update.curr_entry;
 	}
+	BUG_ON(first_written_blocknr == 0);
+	ret = nova_append_file_write_entry(sb, pi, inode, &entry_data, &update);
+	if (ret) {
+		nova_dbg("%s: append inode entry failed\n", __func__);
+		ret = -ENOSPC;
+		goto out;
+	}
+	if (begin_tail == 0)
+		begin_tail = update.curr_entry;
+	first_written_blocknr = 0;
+	written_blocks = 0;
 
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	sih->i_blocks += (total_blocks << (data_bits - sb->s_blocksize_bits));
@@ -737,6 +758,7 @@ out:
 						begin_tail, update.tail);
 		if (ret2 < 0)
 			ret = ret2;
+		// TODO: Clear first_written_blocknr
 	}
 
 	NOVA_END_TIMING(do_cow_write_t, cow_write_time);
