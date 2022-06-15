@@ -637,9 +637,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	epoch_id = nova_get_epoch_id(sb);
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
+	start_blk = pos >> sb->s_blocksize_bits;
 	while (num_blocks > 0) {
 		offset = pos & (nova_inode_blk_size(sih) - 1);
-		start_blk = pos >> sb->s_blocksize_bits;
 
 		step++;
 		bytes = sb->s_blocksize - offset;
@@ -689,6 +689,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			}
 			if (begin_tail == 0)
 				begin_tail = update.curr_entry;
+			start_blk = pos >> sb->s_blocksize_bits;
 			first_written_blocknr = blocknr;
 			written_blocks = 1;
 		}
