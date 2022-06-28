@@ -73,6 +73,16 @@ struct nova_write_para_rewrite {
 	unsigned long offset, len;
 };
 
+struct nova_write_para_continuous {
+	const char __user *ubuf;
+	size_t len;
+	unsigned long blocknr;
+	unsigned long num;
+	unsigned long blocknr_next;
+	// Used internally
+	char *kbuf;
+};
+
 int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp);
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp);
 // refcount-- only if refcount == 1
@@ -85,6 +95,9 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
 	const void *addr, struct nova_write_para_rewrite *wp,
 	unsigned long blocknr, size_t offset, size_t bytes);
+
+int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
+	struct nova_write_para_continuous *wp);
 
 int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
 	size_t nelem_hint);

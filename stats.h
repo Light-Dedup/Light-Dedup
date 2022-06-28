@@ -170,6 +170,9 @@ enum timing_category {
 	incr_ref_t,
 	decr_ref_t,
 	memcpy_data_block_t,
+	incr_continuous_t,
+	cmp_user_t,
+	update_hint_t,
 	alloc_region_t,
 	add_valid_count_t,
 	new_region_t,
@@ -217,6 +220,11 @@ enum stats_category {
 	dax_new_blocks,
 	inplace_new_blocks,
 	fdatasync,
+	predict_hit,
+	predict_miss,
+	no_hint,
+	hint_not_trusted_miss,
+	hint_not_trusted_hit,
 
 	/* Sentinel */
 	STATS_NUM,
