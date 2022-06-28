@@ -538,6 +538,7 @@ static u64 add_trust_degree(struct nova_sb_info *sbi,
 	ret = __add_trust_degree(next_hint, offset_ori, offset_new,
 		trust_degree, delta, limit);
 	nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint), &irq_flags);
+	nova_flush_cacheline(next_hint, false);
 	NOVA_END_TIMING(update_hint_t, update_hint_time);
 	return ret;
 }
@@ -609,6 +610,7 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 	}
 	nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint),
 		&irq_flags);
+	nova_flush_cacheline(next_hint, false);
 	NOVA_END_TIMING(update_hint_t, update_hint_time);
 	return 0;
 }
