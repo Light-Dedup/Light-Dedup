@@ -397,8 +397,8 @@ alloc_region(struct entry_allocator *allocator)
 	if (allocator->region_num == allocator->max_region_num) {
 		new_tail = (__le64 *)nova_blocknr_to_addr(
 			sb, count_blocknr + 1) - 1;
-		nova_unlock_write(sbi, new_tail, 0, true);
-		nova_unlock_write(sbi,
+		nova_unlock_write_flush(sbi, new_tail, 0, true);
+		nova_unlock_write_flush(sbi,
 			allocator->last_counter_block_tail,
 			cpu_to_le64(nova_get_blocknr_off(count_blocknr)),
 			false);
@@ -407,7 +407,7 @@ alloc_region(struct entry_allocator *allocator)
 			VALID_ENTRY_COUNTER_PER_BLOCK;
 		// printk("New valid count block: %lu\n", count_blocknr);
 	}
-	nova_unlock_write(sbi, allocator->last_region_tail,
+	nova_unlock_write_flush(sbi, allocator->last_region_tail,
 		cpu_to_le64(nova_get_blocknr_off(region_blocknr)), true);
 	allocator->last_region_tail =
 		(__le64 *)nova_blocknr_to_addr(sb, region_blocknr + 1) - 1;
@@ -584,7 +584,7 @@ void nova_free_entry(struct entry_allocator *allocator,
 		spin_unlock_bh(&allocator->lock);
 	}
 	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-	nova_unlock_write(sbi, &pentry->flag, 0, true);
+	nova_unlock_write_flush(sbi, &pentry->flag, 0, true);
 }
 
 static inline void
@@ -644,9 +644,9 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 			allocator_cpu->allocated = 0;
 		}
 	}
-	nova_unlock_write(sbi, &recover_meta->region_num,
+	nova_unlock_write_flush(sbi, &recover_meta->region_num,
 		cpu_to_le64(allocator->region_num), false);
-	nova_unlock_write(sbi, &recover_meta->last_region_tail,
+	nova_unlock_write_flush(sbi, &recover_meta->last_region_tail,
 		cpu_to_le64(nova_get_addr_off(
 			sbi, allocator->last_region_tail)),
 		false);
@@ -658,9 +658,9 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 		&allocator->valid_entry,
 		allocator->region_num
 	);
-	nova_unlock_write(sbi, &recover_meta->max_region_num,
+	nova_unlock_write_flush(sbi, &recover_meta->max_region_num,
 		cpu_to_le64(allocator->max_region_num), false);
-	nova_unlock_write(sbi,
+	nova_unlock_write_flush(sbi,
 		&recover_meta->last_counter_block_tail_offset,
 		nova_get_addr_off(sbi,
 			allocator->last_counter_block_tail),

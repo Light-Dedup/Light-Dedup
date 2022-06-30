@@ -256,18 +256,20 @@ static inline void nova_memlock_block(struct super_block *sb, void *bp, unsigned
 		memcpy_flushcache(addr, &tmp, sizeof(*(addr)));	\
 	} while (0)
 
-#define nova_unlock_assign(sbi, addr, val, fence)			\
-	do {								\
-		unsigned long irq_flags = 0;				\
-		nova_sbi_memunlock_range(sbi, addr, sizeof(*(addr)),	\
-			&irq_flags);					\
-		*(addr) = val;						\
-		nova_sbi_memlock_range(sbi, addr, sizeof(*(addr)),	\
-			&irq_flags);					\
-		nova_flush_buffer(addr, sizeof(*(addr)), fence);	\
-	} while (0)
+#define nova_unlock_write(sbi, addr, val)				\
+({									\
+	unsigned long irq_flags = 0;					\
+	nova_sbi_memunlock_range(sbi, addr, sizeof(*(addr)),		\
+		&irq_flags);						\
+	*(addr) = val;							\
+	nova_sbi_memlock_range(sbi, addr, sizeof(*(addr)),		\
+		&irq_flags);						\
+})
 
-#define nova_unlock_write(sbi, addr, val, fence) \
-	nova_unlock_assign(sbi, addr, val, fence)
+#define nova_unlock_write_flush(sbi, addr, val, fence)			\
+({									\
+	nova_unlock_write(sbi, addr, val);				\
+	nova_flush_buffer(addr, sizeof(*(addr)), fence);		\
+})
 
 #endif
