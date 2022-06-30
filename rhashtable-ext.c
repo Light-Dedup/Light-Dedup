@@ -63,11 +63,13 @@ static int rhashtable_traverse_func(void *__para)
 		para->fn, para->arg);
 	// printk("%s waiting for kthread_stop\n", __func__);
 	/* Wait for kthread_stop */
-	set_current_state(TASK_INTERRUPTIBLE);
-	while (!kthread_should_stop()) {
-		schedule();
+	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
+		if (kthread_should_stop())
+			break;
+		schedule();
 	}
+	__set_current_state(TASK_RUNNING);
 	return 0;
 }
 static int __rhashtable_traverse_multithread(struct rhashtable *ht,
