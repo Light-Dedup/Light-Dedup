@@ -532,7 +532,7 @@ static void table_save(struct nova_mm_table *table)
 	nova_memlock(sb, &irq_flags);
 	PERSISTENT_BARRIER();
 	saved = atomic64_read(&factory_arg.saved);
-	nova_unlock_write(sb, &recover_meta->refcount_record_num,
+	nova_unlock_write(sbi, &recover_meta->refcount_record_num,
 		cpu_to_le64(saved), true);
 	printk("About %llu entries in hash table saved in NVM.", saved);
 }
