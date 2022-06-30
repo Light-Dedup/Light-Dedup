@@ -503,10 +503,8 @@ static void table_save_func(void *ptr, void *local_arg)
 		arg->cur = arg->end - ENTRY_PER_REGION;
 		// printk("New region to save, start = %lu, end = %lu\n", arg->cur, arg->end);
 	}
-	arg->rec[arg->cur].entry_offset = cpu_to_le64(
-		nova_get_addr_off(arg->sbi, entry->pentry));
-	nova_flush_buffer(arg->rec + arg->cur,
-		sizeof(struct nova_entry_refcount_record), false);
+	nova_unlock_write_flush(arg->sbi, &arg->rec[arg->cur].entry_offset,
+		cpu_to_le64(nova_get_addr_off(arg->sbi, entry->pentry)), false);
 	++arg->cur;
 }
 static void table_save(struct nova_mm_table *table)
@@ -516,11 +514,9 @@ static void table_save(struct nova_mm_table *table)
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	struct table_save_factory_arg factory_arg;
 	uint64_t saved;
-	unsigned long irq_flags = 0;
 
 	atomic64_set(&factory_arg.saved, 0);
 	factory_arg.table = table;
-	nova_memunlock(sb, &irq_flags);
 	if (rhashtable_traverse_multithread(
 		&table->rht, sbi->cpus, table_save_func,
 		table_save_local_arg_factory, table_save_local_arg_recycler,
@@ -529,7 +525,6 @@ static void table_save(struct nova_mm_table *table)
 		nova_warn("%s: Fail to save the fingerprint table with multithread. Fall back to single thread.", __func__);
 		BUG(); // TODO
 	}
-	nova_memlock(sb, &irq_flags);
 	PERSISTENT_BARRIER();
 	saved = atomic64_read(&factory_arg.saved);
 	nova_unlock_write_flush(sbi, &recover_meta->refcount_record_num,
