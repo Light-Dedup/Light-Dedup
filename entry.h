@@ -70,7 +70,7 @@ nova_alloc_entry_abort(struct entry_allocator_cpu *allocator_cpu)
 void nova_write_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu,
 	struct nova_pmm_entry *pentry, struct nova_fp fp,
-	unsigned long blocknr, int64_t refcount);
+	unsigned long blocknr);
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry);
 
