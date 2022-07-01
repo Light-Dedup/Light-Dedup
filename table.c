@@ -194,7 +194,7 @@ static int nova_table_leaf_insert(
 		goto fail1;
 	}
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
-		wp->blocknr, wp->base.refcount);
+		wp->blocknr);
 	put_cpu();
 	assign_entry(entry, pentry, fp);
 	NOVA_START_TIMING(index_insert_new_entry_t,
@@ -234,22 +234,21 @@ static bool cmp_content(struct super_block *sb, unsigned long blocknr, const voi
 	}
 	return res;
 }
-static int bucket_upsert_base(
-	struct nova_mm_table *table,
+
+static int upsert_block(struct nova_mm_table *table,
 	struct nova_write_para_normal *wp,
-	int (*get_new_block)(struct super_block *, struct nova_write_para_normal *))
+	int (*get_new_block)(struct super_block *,
+		struct nova_write_para_normal *))
 {
 	struct super_block *sb = table->sblock;
 	struct rhashtable *rht = &table->rht;
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
-	long delta = wp->base.refcount;
 	unsigned long irq_flags = 0;
 	int ret;
 	INIT_TIMING(mem_bucket_find_time);
 
-	BUG_ON(delta == 0);
 retry:
 	rcu_read_lock();
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
@@ -257,85 +256,110 @@ retry:
 	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	// We have to hold the read lock because if it is a hash collision,
 	// then the entry, pentry, and blocknr could be freed by another thread.
-	if (entry) {
-		pentry = entry->pentry;
-		BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-		blocknr = le64_to_cpu(pentry->blocknr);
-		if (delta > 0) {
-			if (cmp_content(sb, blocknr, wp->addr)) {
-				rcu_read_unlock();
-				nova_dbg("fp:%llx rentry.fp:%llx",wp->base.fp.value, entry->pentry->fp.value);
-				printk("Collision, just write it.");
-				return get_new_block(sb, wp);
-				// const void *content = nova_get_block(sb, nova_sb_blocknr_to_addr(sb, le64_to_cpu(leaf->blocknr), NOVA_BLOCK_TYPE_4K));
-				// printk("First 8 bytes of existed_entry: %llx, chunk_id = %llx, fingerprint = %llx %llx %llx %llx\nFirst 8 bytes of incoming block: %llx, fingerprint = %llx %llx %llx %llx\n",
-				// 	*(uint64_t *)content, leaf->blocknr, leaf->fp_strong.u64s[0], leaf->fp_strong.u64s[1], leaf->fp_strong.u64s[2], leaf->fp_strong.u64s[3],
-				// 	*(uint64_t *)addr, entry->fp_strong.u64s[0], entry->fp_strong.u64s[1], entry->fp_strong.u64s[2], entry->fp_strong.u64s[3]);
-			}
-			wp->blocknr = blocknr;// retrieval block info
-			BUG_ON(wp->base.refcount < 0);
-			nova_memunlock_range(sb, &pentry->refcount,
-				sizeof(pentry->refcount), &irq_flags);
-			ret = atomic64_add_unless(&pentry->refcount, delta, 0);
-			nova_memlock_range(sb, &pentry->refcount,
-				sizeof(pentry->refcount), &irq_flags);
-			rcu_read_unlock();
-			if (ret == false) {
-				schedule();
-				goto retry;
-			}
-		} else {
-			if (blocknr != wp->blocknr) {
-				// Collision happened. Just free it.
-				rcu_read_unlock();
-				printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n", __func__, blocknr, wp->blocknr);
-				wp->base.refcount = 0;
-				return 0;
-			}
-			rcu_read_unlock();
-			nova_memunlock_range(sb, &pentry->refcount,
-				sizeof(pentry->refcount), &irq_flags);
-			wp->base.refcount = atomic64_add_return(
-				delta, &entry->pentry->refcount);
-			nova_memlock_range(sb, &pentry->refcount,
-				sizeof(pentry->refcount), &irq_flags);
-			BUG_ON(wp->base.refcount < 0);
-			if (wp->base.refcount == 0) {
-				// Now only we can free the entry,
-				// because there are no any other deleter.
-				nova_table_leaf_delete(table, rht, entry);
-				return 0;
-			}
-		}
-		nova_flush_entry(table->entry_allocator, pentry);
-		// printk("Block %lu has refcount %lld now\n",
-		// 	wp->blocknr, wp->base.refcount);
-		return 0;
+	if (entry == NULL) {
+		rcu_read_unlock();
+		// printk("Block with fp %llx not found in rhashtable %p\n",
+		// 	wp->base.fp.value, rht);
+		ret = nova_table_leaf_insert(table, rht, wp, get_new_block);
+		if (ret == -EEXIST)
+			goto retry;
+		wp->base.refcount = 1;
+		return ret;
 	}
+	pentry = entry->pentry;
+	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
+	blocknr = le64_to_cpu(pentry->blocknr);
+	if (cmp_content(sb, blocknr, wp->addr)) {
+		rcu_read_unlock();
+		nova_dbg("fp:%llx rentry.fp:%llx",wp->base.fp.value, entry->pentry->fp.value);
+		printk("Collision, just write it.");
+		wp->base.refcount = 0;
+		return get_new_block(sb, wp);
+		// const void *content = nova_get_block(sb, nova_sb_blocknr_to_addr(sb, le64_to_cpu(leaf->blocknr), NOVA_BLOCK_TYPE_4K));
+		// printk("First 8 bytes of existed_entry: %llx, chunk_id = %llx, fingerprint = %llx %llx %llx %llx\nFirst 8 bytes of incoming block: %llx, fingerprint = %llx %llx %llx %llx\n",
+		// 	*(uint64_t *)content, leaf->blocknr, leaf->fp_strong.u64s[0], leaf->fp_strong.u64s[1], leaf->fp_strong.u64s[2], leaf->fp_strong.u64s[3],
+		// 	*(uint64_t *)addr, entry->fp_strong.u64s[0], entry->fp_strong.u64s[1], entry->fp_strong.u64s[2], entry->fp_strong.u64s[3]);
+	}
+	wp->blocknr = blocknr;// retrieval block info
+	nova_memunlock_range(sb, &pentry->refcount,
+		sizeof(pentry->refcount), &irq_flags);
+	wp->base.refcount = atomic64_fetch_add_unless(&pentry->refcount, 1, 0);
+	nova_memlock_range(sb, &pentry->refcount,
+		sizeof(pentry->refcount), &irq_flags);
 	rcu_read_unlock();
-	// printk("Block with fp %llx not found in rhashtable %p\n",
-	// 	wp->base.fp.value, rht);
-	if (delta < 0) {
+	if (wp->base.refcount == 0) {
+		schedule();
+		goto retry;
+	}
+	wp->base.refcount += 1;
+	nova_flush_entry(table->entry_allocator, pentry);
+	// printk("Block %lu has refcount %lld now\n",
+	// 	wp->blocknr, wp->base.refcount);
+	return 0;
+}
+
+int nova_table_deref_block(struct nova_mm_table *table,
+	struct nova_write_para_normal *wp)
+{
+	struct super_block *sb = table->sblock;
+	struct rhashtable *rht = &table->rht;
+	struct nova_rht_entry *entry;
+	struct nova_pmm_entry *pentry;
+	unsigned long blocknr;
+	unsigned long irq_flags = 0;
+	INIT_TIMING(mem_bucket_find_time);
+
+	rcu_read_lock();
+	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
+	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+	// We have to hold the read lock because if it is a hash collision,
+	// then the entry, pentry, and blocknr could be freed by another thread.
+	if (entry == NULL) {
+		rcu_read_unlock();
+		// printk("Block with fp %llx not found in rhashtable %p\n",
+		// 	wp->base.fp.value, rht);
 		// Collision happened. Just free it.
 		printk("Block %ld can not be found in the hash table.", wp->blocknr);
 		wp->base.refcount = 0;
 		return 0;
 	}
-	ret = nova_table_leaf_insert(table, rht, wp, get_new_block);
-	if (ret == -EEXIST)
-		goto retry;
-	return ret;
+	pentry = entry->pentry;
+	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
+	blocknr = le64_to_cpu(pentry->blocknr);
+	if (blocknr != wp->blocknr) {
+		// Collision happened. Just free it.
+		rcu_read_unlock();
+		printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n", __func__, blocknr, wp->blocknr);
+		wp->base.refcount = 0;
+		return 0;
+	}
+	rcu_read_unlock();
+	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
+	wp->base.refcount = atomic64_add_return(-1, &entry->pentry->refcount);
+	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
+	BUG_ON(wp->base.refcount < 0);
+	if (wp->base.refcount == 0) {
+		// Now only we can free the entry,
+		// because there are no any other deleter.
+		nova_table_leaf_delete(table, rht, entry);
+		return 0;
+	}
+	nova_flush_entry(table->entry_allocator, pentry);
+	return 0;
 }
 
 // Upsert : update or insert
 int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp)
 {
-	return bucket_upsert_base(table, wp, alloc_and_fill_block);
+	return upsert_block(table, wp, alloc_and_fill_block);
 }
 // Inplace 
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
 {
-	return bucket_upsert_base(table, (struct nova_write_para_normal *)wp,
+	return upsert_block(table, (struct nova_write_para_normal *)wp,
 		rewrite_block);
 }
 
@@ -420,7 +444,6 @@ static inline void init_normal_wp_incr(struct nova_sb_info *sbi,
 {
 	BUG_ON(nova_fp_calc(&sbi->meta_table.fp_ctx, addr, &wp->base.fp));
 	wp->addr = addr;
-	wp->base.refcount = 1;
 }
 int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	struct nova_write_para_normal *wp)
