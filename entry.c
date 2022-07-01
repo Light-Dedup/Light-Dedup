@@ -533,8 +533,7 @@ nova_alloc_entry(struct entry_allocator *allocator,
 }
 void nova_write_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu,
-	struct nova_pmm_entry *pentry, struct nova_fp fp, unsigned long blocknr,
-	int64_t refcount)
+	struct nova_pmm_entry *pentry, struct nova_fp fp, unsigned long blocknr)
 {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
@@ -547,7 +546,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
 	pentry->blocknr = cpu_to_le64(blocknr);
-	atomic64_set(&pentry->refcount, refcount);
+	atomic64_set(&pentry->refcount, 1);
 	wmb();
 	BUG_ON(pentry->flag != 0);
 	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;

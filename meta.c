@@ -99,10 +99,9 @@ long nova_meta_table_decr_refcount(struct nova_meta_table *table,
 	BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
 
 	wp.addr = addr;
-	wp.base.refcount = -1;
 	wp.blocknr = blocknr;
 	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
-	retval = nova_table_upsert_normal(&table->metas, &wp);
+	retval = nova_table_deref_block(&table->metas, &wp);
 	NOVA_END_TIMING(decr_ref_t, decr_ref_time);
 	return retval < 0 ? retval : wp.base.refcount;
 }
