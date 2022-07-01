@@ -102,15 +102,15 @@ static inline int nova_is_wprotected(struct super_block *sb)
 }
 
 static inline void
-nova_memunlock(struct super_block *sb, unsigned long *flags)
+nova_memunlock(struct nova_sb_info *sbi, unsigned long *flags)
 {
-	if (nova_is_protected(NOVA_SB(sb)))
+	if (nova_is_protected(sbi))
 		__nova_writable(1, flags);
 }
 static inline void
-nova_memlock(struct super_block *sb, unsigned long *flags)
+nova_memlock(struct nova_sb_info *sbi, unsigned long *flags)
 {
-	if (nova_is_protected(NOVA_SB(sb)))
+	if (nova_is_protected(sbi))
 		__nova_writable(0, flags);
 }
 
