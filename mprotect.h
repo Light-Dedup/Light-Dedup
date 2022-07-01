@@ -102,15 +102,15 @@ static inline int nova_is_wprotected(struct super_block *sb)
 }
 
 static inline void
-nova_memunlock(struct super_block *sb, unsigned long *flags)
+nova_memunlock(struct nova_sb_info *sbi, unsigned long *flags)
 {
-	if (nova_is_protected(NOVA_SB(sb)))
+	if (nova_is_protected(sbi))
 		__nova_writable(1, flags);
 }
 static inline void
-nova_memlock(struct super_block *sb, unsigned long *flags)
+nova_memlock(struct nova_sb_info *sbi, unsigned long *flags)
 {
-	if (nova_is_protected(NOVA_SB(sb)))
+	if (nova_is_protected(sbi))
 		__nova_writable(0, flags);
 }
 
@@ -256,15 +256,20 @@ static inline void nova_memlock_block(struct super_block *sb, void *bp, unsigned
 		memcpy_flushcache(addr, &tmp, sizeof(*(addr)));	\
 	} while (0)
 
-#define nova_unlock_assign(sb, addr, val, fence)		\
-	do {							\
-		unsigned long irq_flags = 0;			\
-		nova_memunlock_range(sb, addr, sizeof(*(addr)), &irq_flags);\
-		*(addr) = val;					\
-		nova_memlock_range(sb, addr, sizeof(*(addr)), &irq_flags);\
-		nova_flush_buffer(addr, sizeof(*(addr)), fence);\
-	} while (0)
+#define nova_unlock_write(sbi, addr, val)				\
+({									\
+	unsigned long irq_flags = 0;					\
+	nova_sbi_memunlock_range(sbi, addr, sizeof(*(addr)),		\
+		&irq_flags);						\
+	*(addr) = val;							\
+	nova_sbi_memlock_range(sbi, addr, sizeof(*(addr)),		\
+		&irq_flags);						\
+})
 
-#define nova_unlock_write(sb, addr, val, fence) nova_unlock_assign(sb, addr, val, fence)
+#define nova_unlock_write_flush(sbi, addr, val, fence)			\
+({									\
+	nova_unlock_write(sbi, addr, val);				\
+	nova_flush_buffer(addr, sizeof(*(addr)), fence);		\
+})
 
 #endif

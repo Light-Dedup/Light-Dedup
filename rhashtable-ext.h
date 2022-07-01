@@ -5,6 +5,8 @@
 
 int rhashtable_traverse_multithread(struct rhashtable *ht, int thread_num,
         void (*fn)(void *ptr, void *arg),
+        void (*fn_worker_init)(void *arg),
+	void (*fn_worker_finish)(void *arg),
         void *(*thread_local_arg_factory)(void *),
         void (*thread_local_arg_recycler)(void *),
         void *arg);
