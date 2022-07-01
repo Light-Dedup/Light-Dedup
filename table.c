@@ -460,6 +460,7 @@ struct table_save_local_arg {
 	struct nova_entry_refcount_record *rec;
 	atomic64_t *saved;
 	struct nova_sb_info *sbi;
+	unsigned long irq_flags;
 };
 struct table_save_factory_arg {
 	struct nova_mm_table *table;
@@ -479,6 +480,7 @@ static void *table_save_local_arg_factory(void *factory_arg) {
 		sbi, sbi->entry_refcount_record_start);
 	local_arg->saved = &arg->saved;
 	local_arg->sbi = sbi;
+	local_arg->irq_flags = 0;
 	return local_arg;
 }
 static void table_save_local_arg_recycler(void *local_arg)
@@ -491,8 +493,24 @@ static void table_save_local_arg_recycler(void *local_arg)
 		0);
 	kfree(arg);
 }
+static void table_save_worker_init(void *local_arg)
+{
+	struct table_save_local_arg *arg =
+		(struct table_save_local_arg *)local_arg;
+	nova_memunlock(arg->sbi, &arg->irq_flags);
+}
+static void table_save_worker_finish(void *local_arg)
+{
+	struct table_save_local_arg *arg =
+		(struct table_save_local_arg *)local_arg;
+	nova_memlock(arg->sbi, &arg->irq_flags);
+	PERSISTENT_BARRIER();
+}
 static void table_save_func(void *ptr, void *local_arg)
 {
+	const size_t record_size = sizeof(struct nova_entry_refcount_record);
+	const size_t records_per_cache_line = CACHELINE_SIZE / record_size;
+
 	struct nova_rht_entry *entry = (struct nova_rht_entry *)ptr;
 	struct table_save_local_arg *arg =
 		(struct table_save_local_arg *)local_arg;
@@ -503,10 +521,11 @@ static void table_save_func(void *ptr, void *local_arg)
 		arg->cur = arg->end - ENTRY_PER_REGION;
 		// printk("New region to save, start = %lu, end = %lu\n", arg->cur, arg->end);
 	}
-	arg->rec[arg->cur].entry_offset = cpu_to_le64(
-		nova_get_addr_off(arg->sbi, entry->pentry));
-	nova_flush_buffer(arg->rec + arg->cur,
-		sizeof(struct nova_entry_refcount_record), false);
+	arg->rec[arg->cur].entry_offset =
+		cpu_to_le64(nova_get_addr_off(arg->sbi, entry->pentry));
+	if (arg->cur % records_per_cache_line == records_per_cache_line - 1 ||
+			arg->cur == arg->end - 1)
+		nova_flush_buffer(arg->rec + arg->cur, record_size, false);
 	++arg->cur;
 }
 static void table_save(struct nova_mm_table *table)
@@ -516,23 +535,19 @@ static void table_save(struct nova_mm_table *table)
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	struct table_save_factory_arg factory_arg;
 	uint64_t saved;
-	unsigned long irq_flags = 0;
 
 	atomic64_set(&factory_arg.saved, 0);
 	factory_arg.table = table;
-	nova_memunlock(sb, &irq_flags);
 	if (rhashtable_traverse_multithread(
-		&table->rht, sbi->cpus, table_save_func,
-		table_save_local_arg_factory, table_save_local_arg_recycler,
-		&factory_arg) < 0)
+		&table->rht, sbi->cpus, table_save_func, table_save_worker_init,
+		table_save_worker_finish, table_save_local_arg_factory,
+		table_save_local_arg_recycler, &factory_arg) < 0)
 	{
 		nova_warn("%s: Fail to save the fingerprint table with multithread. Fall back to single thread.", __func__);
 		BUG(); // TODO
 	}
-	nova_memlock(sb, &irq_flags);
-	PERSISTENT_BARRIER();
 	saved = atomic64_read(&factory_arg.saved);
-	nova_unlock_write(sb, &recover_meta->refcount_record_num,
+	nova_unlock_write_flush(sbi, &recover_meta->refcount_record_num,
 		cpu_to_le64(saved), true);
 	printk("About %llu entries in hash table saved in NVM.", saved);
 }

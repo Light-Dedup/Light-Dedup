@@ -84,7 +84,7 @@ void nova_meta_table_save(struct nova_meta_table *table)
 	kmem_cache_destroy(table->kbuf_cache);
 	nova_table_save(&table->metas);
 	nova_save_entry_allocator(sb, &table->entry_allocator);
-	nova_unlock_write(sb, &recover_meta->saved,
+	nova_unlock_write_flush(sbi, &recover_meta->saved,
 		NOVA_RECOVER_META_FLAG_COMPLETE, true);
 }
 
