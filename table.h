@@ -72,6 +72,10 @@ struct nova_write_para_normal {
 	// so that the corresponding block will not be regarded as a block
 	// without deduplication.
 	struct nova_pmm_entry *last_ref_entry;
+	// Last not flushed newly allocated entry.
+	// Maintained here to make sure that the newly allocated entry is
+	// flushed after its hint is written.
+	struct nova_pmm_entry *last_new_entry;
 	// Last accessed entry to provide hint for the next entry.
 	struct nova_pmm_entry *last_accessed;
 };

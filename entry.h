@@ -39,10 +39,6 @@ _Static_assert(sizeof(atomic64_t) == 8, "atomic64_t not 8B!");
 
 struct entry_allocator_cpu {
 	struct nova_pmm_entry *top_entry; // Last allocated entry.
-	// Last not flushed entry.
-	// Note that the newly allocated entry is always not flushed
-	// immediately.
-	struct nova_pmm_entry *last_entry;
 	int16_t allocated;
 };
 DECLARE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);

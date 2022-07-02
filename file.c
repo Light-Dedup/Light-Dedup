@@ -24,6 +24,7 @@
 #include "inode.h"
 
 DEFINE_PER_CPU(struct nova_pmm_entry *, last_accessed_fpentry_per_cpu);
+DEFINE_PER_CPU(struct nova_pmm_entry *, last_new_fpentry_per_cpu);
 
 static inline int nova_can_set_blocksize_hint(struct inode *inode,
 	struct nova_inode *pi, loff_t new_size)
@@ -689,6 +690,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	cpu = get_cpu();
 	wp.normal.last_accessed = per_cpu(last_accessed_fpentry_per_cpu, cpu);
+	wp.normal.last_new_entry = per_cpu(last_new_fpentry_per_cpu, cpu);
 	put_cpu();
 	wp.normal.last_ref_entry = NULL_PENTRY;
 	if (offset != 0) {
@@ -755,6 +757,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	nova_flush_entry_if_not_null(wp.normal.last_ref_entry, false);
 	cpu = get_cpu();
 	per_cpu(last_accessed_fpentry_per_cpu, cpu) = wp.normal.last_accessed;
+	per_cpu(last_new_fpentry_per_cpu, cpu) = wp.normal.last_new_entry;
 	put_cpu();
 
 	env.sih->i_blocks += (num_blocks <<

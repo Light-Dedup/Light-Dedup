@@ -83,6 +83,14 @@ static void rht_entry_free(struct rcu_head *head)
 	kfree(task);
 }
 
+static inline void change_dirty_fpentry(struct nova_pmm_entry **last_pentry,
+	struct nova_pmm_entry *pentry)
+{
+	if (!in_the_same_cacheline(*last_pentry, pentry))
+		nova_flush_entry_if_not_null(*last_pentry, false);
+	*last_pentry = pentry;
+}
+
 static void nova_table_leaf_delete(
 	struct nova_mm_table *table,
 	struct rhashtable *rht,
@@ -207,9 +215,10 @@ static int nova_table_leaf_insert(
 		// 	"with error code %d\n", wp->blocknr, fp.value, ret);
 		goto fail2;
 	}
+	change_dirty_fpentry(&wp->last_new_entry, pentry);
 	wp->last_accessed = pentry;
-	// printk("Block %lu with fp %llx inserted into rhashtable %p\n",
-	// 	wp->blocknr, fp.value, rht);
+	// printk("Block %lu with fp %llx inserted into rhashtable %p, "
+	// 	"fpentry offset = %p\n", wp->blocknr, fp.value, rht, pentry);
 	return 0;
 fail2:
 	nova_free_data_block(sb, pentry->blocknr);
@@ -294,12 +303,10 @@ retry:
 		goto retry;
 	}
 	wp->base.refcount += 1;
-	if (!in_the_same_cacheline(wp->last_ref_entry, pentry))
-		nova_flush_entry_if_not_null(wp->last_ref_entry, false);
-	wp->last_ref_entry = pentry;
+	change_dirty_fpentry(&wp->last_ref_entry, pentry);
 	wp->last_accessed = pentry;
-	// printk("Block %lu has refcount %lld now\n",
-	// 	wp->blocknr, wp->base.refcount);
+	// printk("Block %lu (fpentry %p) has refcount %lld now\n",
+	// 	wp->blocknr, pentry, wp->base.refcount);
 	return 0;
 }
 
@@ -681,6 +688,9 @@ static int check_hint(struct nova_sb_info *sbi,
 		return 0;
 	// The blocknr will not be released now, because we are referencing it.
 	attach_blocknr(wp, blocknr);
+	change_dirty_fpentry(&wp->normal.last_ref_entry, pentry);
+	wp->normal.last_accessed = pentry;
+	// printk("Prediction hit! blocknr = %ld, pentry = %p\n", blocknr, pentry);
 	return 1;
 }
 
@@ -708,7 +718,6 @@ static int handle_hint(struct nova_sb_info *sbi,
 	if (ret == 1) {
 		add_trust_degree(sbi, next_hint, offset, offset, trust_degree,
 			1, TRUST_DEGREE_MAX);
-		wp->normal.last_accessed = nova_sbi_get_block(sbi, offset);
 		return 0;
 	}
 	BUG_ON(ret != 0);
@@ -721,16 +730,34 @@ static int handle_hint(struct nova_sb_info *sbi,
 	return 0;
 }
 
+static inline struct nova_pmm_entry *
+get_last_accessed(struct nova_write_para_continuous *wp, bool check)
+{
+	struct nova_pmm_entry *last_pentry = wp->normal.last_accessed;
+	if (check && last_pentry && last_pentry != wp->normal.last_new_entry &&
+			last_pentry != wp->normal.last_ref_entry) {
+		printk("last_pentry: %p, last_new_entry: %p, "
+			"last_ref_entry: %p, NULL_PENTRY: %p\n",
+			last_pentry,
+			wp->normal.last_new_entry,
+			wp->normal.last_ref_entry,
+			NULL_PENTRY);
+		// BUG();
+	}
+	return last_pentry;
+}
+
 int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
 	struct nova_pmm_entry *last_pentry;
+	bool first = true;
 	int ret = 0;
 	INIT_TIMING(time);
 
 	NOVA_START_TIMING(incr_continuous_t, time);
 	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
-		last_pentry = wp->normal.last_accessed;
+		last_pentry = get_last_accessed(wp, !first);
 		if (last_pentry) {
 			ret = handle_hint(sbi, wp, &last_pentry->next_hint);
 		} else {
@@ -740,6 +767,7 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 			break;
 		wp->ubuf += PAGE_SIZE;
 		wp->len -= PAGE_SIZE;
+		first = false;
 	}
 	NOVA_END_TIMING(incr_continuous_t, time);
 	return ret;
