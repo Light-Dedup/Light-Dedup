@@ -742,7 +742,7 @@ get_last_accessed(struct nova_write_para_continuous *wp, bool check)
 			wp->normal.last_new_entry,
 			wp->normal.last_ref_entry,
 			NULL_PENTRY);
-		// BUG();
+		BUG();
 	}
 	return last_pentry;
 }
