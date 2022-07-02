@@ -34,9 +34,15 @@ _Static_assert(sizeof(atomic64_t) == 8, "atomic64_t not 8B!");
 #define REAL_ENTRY_PER_REGION \
 	((REGION_SIZE - sizeof(__le64)) / sizeof(struct nova_pmm_entry))
 
+#define NULL_PENTRY ((struct nova_pmm_entry *)( \
+	(REAL_ENTRY_PER_REGION - 1) * sizeof(struct nova_pmm_entry)))
+
 struct entry_allocator_cpu {
 	struct nova_pmm_entry *top_entry; // Last allocated entry.
-	struct nova_pmm_entry *last_entry; // Last not flushed entry.
+	// Last not flushed entry.
+	// Note that the newly allocated entry is always not flushed
+	// immediately.
+	struct nova_pmm_entry *last_entry;
 	int16_t allocated;
 	struct nova_pmm_entry *last_accessed;
 };
@@ -65,8 +71,25 @@ int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
 	unsigned long *bm, size_t *tot);
 
+static inline bool in_the_same_cacheline(
+	struct nova_pmm_entry *a,
+	struct nova_pmm_entry *b)
+{
+	return (unsigned long)a / CACHELINE_SIZE ==
+		(unsigned long)b / CACHELINE_SIZE;
+}
+
 void nova_flush_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry);
+
+static inline void nova_flush_entry_if_not_null(struct nova_pmm_entry *pentry,
+	bool fence)
+{
+	if (pentry != NULL_PENTRY)
+		nova_flush_cacheline(pentry, fence);
+		
+}
+
 struct nova_pmm_entry *
 nova_alloc_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu);
@@ -77,7 +100,7 @@ nova_alloc_entry_abort(struct entry_allocator_cpu *allocator_cpu)
 void nova_write_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu,
 	struct nova_pmm_entry *pentry, struct nova_fp fp,
-	unsigned long blocknr, int64_t refcount);
+	unsigned long blocknr);
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry);
 

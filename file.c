@@ -608,7 +608,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	struct nova_inode inode_copy;
 	size_t offset, bytes;
 	unsigned long num_blocks;
-	struct nova_write_para_normal wp_normal;
 	struct nova_write_para_continuous wp;
 	unsigned long irq_flags = 0;
 	ssize_t ret;
@@ -686,6 +685,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
 			__func__, env.inode->i_ino, env.pos, len);
 
+	wp.normal.last_ref_entry = NULL_PENTRY;
 	if (offset != 0) {
 		bytes = env.sb->s_blocksize - offset;
 		if (bytes > len)
@@ -702,10 +702,10 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto err_out1;
 		}
 		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
-		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp_normal);
+		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp.normal);
 		if (ret < 0)
 			goto err_out1;
-		wp.blocknr = wp_normal.blocknr;
+		wp.blocknr = wp.normal.blocknr;
 		wp.num = 1;
 		ret = advance(&env, bytes, &wp);
 		if (ret < 0)
@@ -738,15 +738,16 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto err_out1;
 		}
 		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
-		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp_normal);
+		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp.normal);
 		if (ret < 0)
 			goto err_out1;
-		wp.blocknr = wp_normal.blocknr;
+		wp.blocknr = wp.normal.blocknr;
 		wp.num = 1;
 		ret = advance(&env, wp.len, &wp);
 		if (ret < 0)
 			goto err_out1;
 	}
+	nova_flush_entry_if_not_null(wp.normal.last_ref_entry, false);
 
 	env.sih->i_blocks += (num_blocks <<
 		(blk_type_to_shift[env.sih->i_blk_type] -
