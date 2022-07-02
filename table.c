@@ -292,7 +292,9 @@ retry:
 		goto retry;
 	}
 	wp->base.refcount += 1;
-	nova_flush_entry(table->entry_allocator, pentry);
+	if (!in_the_same_cacheline(wp->last_ref_entry, pentry))
+		nova_flush_entry_if_not_null(wp->last_ref_entry, false);
+	wp->last_ref_entry = pentry;
 	// printk("Block %lu has refcount %lld now\n",
 	// 	wp->blocknr, wp->base.refcount);
 	return 0;
@@ -439,12 +441,6 @@ int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
 	return ret;
 }
 
-static inline void init_normal_wp_incr(struct nova_sb_info *sbi,
-	struct nova_write_para_normal *wp, const void *addr)
-{
-	BUG_ON(nova_fp_calc(&sbi->meta_table.fp_ctx, addr, &wp->base.fp));
-	wp->addr = addr;
-}
 int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	struct nova_write_para_normal *wp)
 {
@@ -454,26 +450,9 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	INIT_TIMING(incr_ref_time);
 
 	NOVA_START_TIMING(incr_ref_t, incr_ref_time);
-	init_normal_wp_incr(sbi, wp, addr);
+	BUG_ON(nova_fp_calc(&sbi->meta_table.fp_ctx, addr, &wp->base.fp));
+	wp->addr = addr;
 	ret = nova_table_upsert_normal(table, wp);
-	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
-	return ret;
-}
-int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
-	const void *addr, struct nova_write_para_rewrite *wp,
-	unsigned long blocknr, size_t offset, size_t bytes)
-{
-	struct super_block *sb = table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	int ret;
-	INIT_TIMING(incr_ref_time);
-
-	NOVA_START_TIMING(incr_ref_t, incr_ref_time);
-	init_normal_wp_incr(sbi, &wp->normal, addr);
-	wp->normal.blocknr = blocknr;
-	wp->offset = offset;
-	wp->len = bytes;
-	ret = nova_table_upsert_rewrite(table, wp);
 	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
 	return ret;
 }

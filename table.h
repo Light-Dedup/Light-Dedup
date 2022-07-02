@@ -67,6 +67,11 @@ struct nova_write_para_normal {
 	struct nova_write_para_base base;
 	const void *addr;
 	unsigned long blocknr;
+	// Last not flushed referenced entry. The fpentry should be flushed before
+	// committing the corresponding write entry to guarantee persistency,
+	// so that the corresponding block will not be regarded as a block
+	// without deduplication.
+	struct nova_pmm_entry *last_ref_entry;
 };
 struct nova_write_para_rewrite {
 	struct nova_write_para_normal normal;
@@ -84,9 +89,6 @@ int nova_table_insert_entry(struct nova_mm_table *rht, struct nova_fp fp,
 
 int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	struct nova_write_para_normal *wp);
-int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
-	const void *addr, struct nova_write_para_rewrite *wp,
-	unsigned long blocknr, size_t offset, size_t bytes);
 
 int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
 	size_t nelem_hint);

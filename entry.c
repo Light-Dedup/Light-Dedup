@@ -8,9 +8,6 @@
 // If the number of free entries in a region is greater or equal to FREE_THRESHOLD, then the region is regarded as free.
 #define FREE_THRESHOLD (REAL_ENTRY_PER_REGION / 2)
 
-#define NULL_PENTRY ((struct nova_pmm_entry *)( \
-	(REAL_ENTRY_PER_REGION - 1) * sizeof(struct nova_pmm_entry)))
-
 DEFINE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);
 
 static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocator *allocator)
@@ -347,13 +344,6 @@ static inline void flush_last_entry(struct entry_allocator_cpu *allocator_cpu)
 	// TODO: Does flush need memunlock?
 	if (allocator_cpu->last_entry != NULL_PENTRY)
 		nova_flush_cacheline(allocator_cpu->last_entry, true);
-}
-static inline bool in_the_same_cacheline(
-	struct nova_pmm_entry *a,
-	struct nova_pmm_entry *b)
-{
-	return (unsigned long)a / CACHELINE_SIZE ==
-		(unsigned long)b / CACHELINE_SIZE;
 }
 void nova_flush_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)

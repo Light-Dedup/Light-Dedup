@@ -543,13 +543,15 @@ out:
  */
 static long try_inplace_file_write(struct super_block *sb,
 	unsigned long old_blocknr, char *kbuf, const char __user *buf,
-	size_t offset, size_t bytes,
+	size_t offset, size_t bytes, struct nova_write_para_normal *wp_normal,
 	struct inode *inode, loff_t pos)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_meta_table *table = &sbi->meta_table;
 	struct nova_write_para_rewrite wp;
-	long ret = nova_meta_table_decr1(table, kbuf, old_blocknr);
+	long ret;
+
+	ret = nova_meta_table_decr1(table, kbuf, old_blocknr);
 	if (ret < 0)
 		return ret;
 	if (ret > 0)
@@ -557,8 +559,14 @@ static long try_inplace_file_write(struct super_block *sb,
 	// Refcount == 0, we can do inplace write.
 	if (copy_from_user(kbuf + offset, buf, bytes))
 		return -EFAULT;
-	ret = nova_fp_table_rewrite_on_insert(
-		&table->metas, kbuf, &wp, old_blocknr, offset, bytes);
+	BUG_ON(nova_fp_calc(&table->fp_ctx, kbuf, &wp.normal.base.fp));
+	wp.normal.addr = kbuf;
+	wp.normal.blocknr = old_blocknr;
+	wp.normal.last_ref_entry = wp_normal->last_ref_entry;
+	wp.offset = offset;
+	wp.len = bytes;
+	ret = nova_table_upsert_rewrite(&table->metas, &wp);
+	wp_normal->last_ref_entry = wp.normal.last_ref_entry;
 	if (ret < 0)
 		return ret;	// No need to free old blocknr or reinsert it into table.
 	if (wp.normal.base.refcount == 1) {
@@ -668,6 +676,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			__func__, epoch_id, inode->i_ino, pos, count);
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
+	wp.last_ref_entry = NULL_PENTRY;
 	while (num_blocks > 0) {
 		offset = pos & (nova_inode_blk_size(sih) - 1);
 		start_blk = pos >> sb->s_blocksize_bits;
@@ -689,7 +698,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			xmem = nova_blocknr_to_addr(sb, old_blocknr);
 			memcpy(kbuf, xmem, PAGE_SIZE);
 			ret = try_inplace_file_write(sb, old_blocknr, kbuf, buf,
-				offset, bytes, inode, pos);
+				offset, bytes, &wp, inode, pos);
 			if (ret < 0)
 				goto out;
 			if (ret > 0) {
@@ -777,6 +786,7 @@ protected:
 				begin_tail = update.curr_entry;
 		}
 	}
+	nova_flush_entry_if_not_null(wp.last_ref_entry, false);
 
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	sih->i_blocks += (new_blocks << (data_bits - sb->s_blocksize_bits));

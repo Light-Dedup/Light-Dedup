@@ -638,6 +638,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
 	start_blk = pos >> sb->s_blocksize_bits;
+	wp.last_ref_entry = NULL_PENTRY;
 	while (num_blocks > 0) {
 		offset = pos & (nova_inode_blk_size(sih) - 1);
 
@@ -714,6 +715,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		}
 	}
 	BUG_ON(first_written_blocknr == 0);
+	nova_flush_entry_if_not_null(wp.last_ref_entry, false);
 	ret = nova_append_file_write_entry(sb, pi, inode, &entry_data, &update);
 	if (ret) {
 		nova_dbg("%s: append inode entry failed\n", __func__);
