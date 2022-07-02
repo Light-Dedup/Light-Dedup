@@ -44,7 +44,6 @@ struct entry_allocator_cpu {
 	// immediately.
 	struct nova_pmm_entry *last_entry;
 	int16_t allocated;
-	struct nova_pmm_entry *last_accessed;
 };
 DECLARE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);
 

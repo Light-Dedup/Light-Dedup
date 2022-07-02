@@ -23,6 +23,7 @@
 #include "nova.h"
 #include "inode.h"
 
+DEFINE_PER_CPU(struct nova_pmm_entry *, last_accessed_fpentry_per_cpu);
 
 static inline int nova_can_set_blocksize_hint(struct inode *inode,
 	struct nova_inode *pi, loff_t new_size)
@@ -609,6 +610,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	size_t offset, bytes;
 	unsigned long num_blocks;
 	struct nova_write_para_continuous wp;
+	int cpu;
 	unsigned long irq_flags = 0;
 	ssize_t ret;
 	INIT_TIMING(cow_write_time);
@@ -685,6 +687,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
 			__func__, env.inode->i_ino, env.pos, len);
 
+	cpu = get_cpu();
+	wp.normal.last_accessed = per_cpu(last_accessed_fpentry_per_cpu, cpu);
+	put_cpu();
 	wp.normal.last_ref_entry = NULL_PENTRY;
 	if (offset != 0) {
 		bytes = env.sb->s_blocksize - offset;
@@ -748,6 +753,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto err_out1;
 	}
 	nova_flush_entry_if_not_null(wp.normal.last_ref_entry, false);
+	cpu = get_cpu();
+	per_cpu(last_accessed_fpentry_per_cpu, cpu) = wp.normal.last_accessed;
+	put_cpu();
 
 	env.sih->i_blocks += (num_blocks <<
 		(blk_type_to_shift[env.sih->i_blk_type] -

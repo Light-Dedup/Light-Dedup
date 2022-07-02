@@ -162,7 +162,6 @@ static void assign_entry(
 }
 static int nova_table_leaf_insert(
 	struct nova_mm_table *table,
-	struct entry_allocator_cpu *allocator_cpu,
 	struct rhashtable *rht,
 	struct nova_write_para_normal *wp,
 	int get_new_block(struct super_block *, struct nova_write_para_normal *))
@@ -170,6 +169,8 @@ static int nova_table_leaf_insert(
 	struct super_block *sb = table->sblock;
 	struct nova_rht_entry *entry;
 	struct nova_fp fp = wp->base.fp;
+	int cpu;
+	struct entry_allocator_cpu *allocator_cpu;
 	struct nova_pmm_entry *pentry;
 	int ret;
 	INIT_TIMING(index_insert_new_entry_time);
@@ -179,6 +180,8 @@ static int nova_table_leaf_insert(
 		ret = -ENOMEM;
 		goto fail0;
 	}
+	cpu = get_cpu();
+	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 	pentry = nova_alloc_entry(table->entry_allocator, allocator_cpu);
 	if (IS_ERR(pentry)) {
 		ret = PTR_ERR(pentry);
@@ -187,10 +190,12 @@ static int nova_table_leaf_insert(
 	ret = get_new_block(sb, wp);
 	if (ret < 0) {
 		nova_alloc_entry_abort(allocator_cpu);
+		put_cpu();
 		goto fail1;
 	}
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr);
+	put_cpu();
 	assign_entry(entry, pentry, fp);
 	NOVA_START_TIMING(index_insert_new_entry_t,
 		index_insert_new_entry_time);
@@ -202,7 +207,7 @@ static int nova_table_leaf_insert(
 		// 	"with error code %d\n", wp->blocknr, fp.value, ret);
 		goto fail2;
 	}
-	allocator_cpu->last_accessed = pentry;
+	wp->last_accessed = pentry;
 	// printk("Block %lu with fp %llx inserted into rhashtable %p\n",
 	// 	wp->blocknr, fp.value, rht);
 	return 0;
@@ -241,15 +246,11 @@ static int upsert_block(struct nova_mm_table *table,
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
-	int cpu;
-	struct entry_allocator_cpu *allocator_cpu;
 	unsigned long irq_flags = 0;
 	int ret;
 	INIT_TIMING(mem_bucket_find_time);
 
 retry:
-	cpu = get_cpu();
-	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 	rcu_read_lock();
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
@@ -260,9 +261,7 @@ retry:
 		rcu_read_unlock();
 		// printk("Block with fp %llx not found in rhashtable %p\n",
 		// 	wp->base.fp.value, rht);
-		ret = nova_table_leaf_insert(table, allocator_cpu, rht, wp,
-			get_new_block);
-		put_cpu();
+		ret = nova_table_leaf_insert(table, rht, wp, get_new_block);
 		if (ret == -EEXIST)
 			goto retry;
 		wp->base.refcount = 1;
@@ -273,8 +272,7 @@ retry:
 	BUG_ON(blocknr == 0);
 	if (cmp_content(sb, blocknr, wp->addr)) {
 		rcu_read_unlock();
-		allocator_cpu->last_accessed = NULL;
-		put_cpu();
+		wp->last_accessed = NULL;
 		nova_dbg("fp:%llx rentry.fp:%llx",wp->base.fp.value, entry->pentry->fp.value);
 		printk("Collision, just write it.");
 		wp->base.refcount = 0;
@@ -292,16 +290,14 @@ retry:
 		sizeof(pentry->refcount), &irq_flags);
 	rcu_read_unlock();
 	if (wp->base.refcount == 0) {
-		put_cpu();
 		schedule();
 		goto retry;
 	}
-	allocator_cpu->last_accessed = pentry;
-	put_cpu();
 	wp->base.refcount += 1;
 	if (!in_the_same_cacheline(wp->last_ref_entry, pentry))
 		nova_flush_entry_if_not_null(wp->last_ref_entry, false);
 	wp->last_ref_entry = pentry;
+	wp->last_accessed = pentry;
 	// printk("Block %lu has refcount %lld now\n",
 	// 	wp->blocknr, wp->base.refcount);
 	return 0;
@@ -315,13 +311,9 @@ int nova_table_deref_block(struct nova_mm_table *table,
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
-	int cpu;
-	struct entry_allocator_cpu *allocator_cpu;
 	unsigned long irq_flags = 0;
 	INIT_TIMING(mem_bucket_find_time);
 
-	cpu = get_cpu();
-	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 	rcu_read_lock();
 	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
@@ -333,10 +325,9 @@ int nova_table_deref_block(struct nova_mm_table *table,
 		// printk("Block with fp %llx not found in rhashtable %p\n",
 		// 	wp->base.fp.value, rht);
 		// Collision happened. Just free it.
-		allocator_cpu->last_accessed = NULL;
-		put_cpu();
 		printk("Block %ld can not be found in the hash table.", wp->blocknr);
 		wp->base.refcount = 0;
+		wp->last_accessed = NULL;
 		return 0;
 	}
 	pentry = entry->pentry;
@@ -345,10 +336,9 @@ int nova_table_deref_block(struct nova_mm_table *table,
 	if (blocknr != wp->blocknr) {
 		// Collision happened. Just free it.
 		rcu_read_unlock();
-		allocator_cpu->last_accessed = NULL;
-		put_cpu();
 		printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n", __func__, blocknr, wp->blocknr);
 		wp->base.refcount = 0;
+		wp->last_accessed = NULL;
 		return 0;
 	}
 	rcu_read_unlock();
@@ -361,14 +351,12 @@ int nova_table_deref_block(struct nova_mm_table *table,
 	if (wp->base.refcount == 0) {
 		// Now only we can free the entry,
 		// because there are no any other deleter.
-		allocator_cpu->last_accessed = NULL;
-		put_cpu();
+		wp->last_accessed = NULL;
 		nova_table_leaf_delete(table, rht, entry);
 		return 0;
 	}
-	allocator_cpu->last_accessed = pentry;
-	put_cpu();
 	nova_flush_entry(table->entry_allocator, pentry);
+	wp->last_accessed = pentry;
 	return 0;
 }
 
@@ -589,7 +577,6 @@ static int copy_from_user_incr(struct nova_sb_info *sbi,
 }
 
 static int handle_no_hint(struct nova_sb_info *sbi,
-	struct entry_allocator_cpu *allocator_cpu,
 	struct nova_write_para_continuous *wp, atomic64_t *next_hint,
 	uint8_t trust_degree)
 {
@@ -603,7 +590,7 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 	if (ret < 0)
 		return ret;
 	NOVA_STATS_ADD(no_hint, 1);
-	offset = nova_get_addr_off(sbi, allocator_cpu->last_accessed);
+	offset = nova_get_addr_off(sbi, wp->normal.last_accessed);
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
 	nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
 		&irq_flags);
@@ -621,7 +608,6 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 }
 
 static int handle_not_trust(struct nova_sb_info *sbi,
-	struct entry_allocator_cpu *allocator_cpu,
 	struct nova_write_para_continuous *wp, atomic64_t *next_hint,
 	u64 offset, uint8_t trust_degree)
 {
@@ -630,7 +616,7 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 	ret = copy_from_user_incr(sbi, wp);
 	if (ret < 0)
 		return ret;
-	offset_new = nova_get_addr_off(sbi, allocator_cpu->last_accessed);
+	offset_new = nova_get_addr_off(sbi, wp->normal.last_accessed);
 	if (offset_new == offset) {
 		NOVA_STATS_ADD(hint_not_trusted_hit, 1);
 		add_trust_degree(sbi, next_hint, offset, offset, trust_degree,
@@ -699,7 +685,6 @@ static int check_hint(struct nova_sb_info *sbi,
 }
 
 static int handle_hint(struct nova_sb_info *sbi,
-	struct entry_allocator_cpu *allocator_cpu,
 	struct nova_write_para_continuous *wp, atomic64_t *next_hint)
 {
 	uint64_t hint = le64_to_cpu(atomic64_read(next_hint));
@@ -709,12 +694,12 @@ static int handle_hint(struct nova_sb_info *sbi,
 
 	if (offset == 0) {
 		// Actually no hint
-		return handle_no_hint(sbi, allocator_cpu, wp, next_hint,
+		return handle_no_hint(sbi, wp, next_hint,
 			trust_degree);
 	}
 	if (trust_degree >= 4) {
 		// trust_degree < 0
-		return handle_not_trust(sbi, allocator_cpu, wp, next_hint,
+		return handle_not_trust(sbi, wp, next_hint,
 			offset, trust_degree);
 	}
 	ret = check_hint(sbi, wp, offset, trust_degree);
@@ -723,7 +708,7 @@ static int handle_hint(struct nova_sb_info *sbi,
 	if (ret == 1) {
 		add_trust_degree(sbi, next_hint, offset, offset, trust_degree,
 			1, TRUST_DEGREE_MAX);
-		allocator_cpu->last_accessed = nova_sbi_get_block(sbi, offset);
+		wp->normal.last_accessed = nova_sbi_get_block(sbi, offset);
 		return 0;
 	}
 	BUG_ON(ret != 0);
@@ -731,7 +716,7 @@ static int handle_hint(struct nova_sb_info *sbi,
 	if (ret < 0)
 		return ret;
 	decr_trust_degree(sbi, next_hint, offset,
-		nova_get_addr_off(sbi, allocator_cpu->last_accessed),
+		nova_get_addr_off(sbi, wp->normal.last_accessed),
 		trust_degree);
 	return 0;
 }
@@ -739,20 +724,15 @@ static int handle_hint(struct nova_sb_info *sbi,
 int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
-	int cpu;
-	struct entry_allocator_cpu *allocator_cpu;
 	struct nova_pmm_entry *last_pentry;
 	int ret = 0;
 	INIT_TIMING(time);
 
 	NOVA_START_TIMING(incr_continuous_t, time);
-	cpu = get_cpu();
-	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
-		last_pentry = allocator_cpu->last_accessed;
+		last_pentry = wp->normal.last_accessed;
 		if (last_pentry) {
-			ret = handle_hint(sbi, allocator_cpu, wp,
-				&last_pentry->next_hint);
+			ret = handle_hint(sbi, wp, &last_pentry->next_hint);
 		} else {
 			ret = copy_from_user_incr(sbi, wp);
 		}
@@ -761,7 +741,6 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 		wp->ubuf += PAGE_SIZE;
 		wp->len -= PAGE_SIZE;
 	}
-	put_cpu();
 	NOVA_END_TIMING(incr_continuous_t, time);
 	return ret;
 }

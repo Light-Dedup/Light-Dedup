@@ -72,6 +72,8 @@ struct nova_write_para_normal {
 	// so that the corresponding block will not be regarded as a block
 	// without deduplication.
 	struct nova_pmm_entry *last_ref_entry;
+	// Last accessed entry to provide hint for the next entry.
+	struct nova_pmm_entry *last_accessed;
 };
 struct nova_write_para_rewrite {
 	struct nova_write_para_normal normal;
