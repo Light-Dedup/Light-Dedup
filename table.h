@@ -87,6 +87,10 @@ struct nova_write_para_rewrite {
 	unsigned long offset, len;
 };
 
+const static int8_t STREAM_TRUST_DEGREE_MAX =
+	(1 << (TRUST_DEGREE_BITS - 1)) - 1;
+const static int8_t STREAM_TRUST_DEGREE_MIN = -(1 << (TRUST_DEGREE_BITS - 1));
+
 struct nova_write_para_continuous {
 	const char __user *ubuf;
 	size_t len;
@@ -97,6 +101,9 @@ struct nova_write_para_continuous {
 	struct nova_write_para_normal normal;
 	// Used internally
 	char *kbuf;
+	// Depends on the results of previous hints.
+	// [-4, 3]
+	int8_t stream_trust_degree;
 };
 
 int nova_table_deref_block(struct nova_mm_table *table,

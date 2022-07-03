@@ -472,6 +472,30 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	return ret;
 }
 
+void prefetch_block(char *block) {
+	size_t i;
+	INIT_TIMING(prefetch_block_time);
+	NOVA_START_TIMING(prefetch_block_t, prefetch_block_time);
+	for (i = 0; i < PAGE_SIZE; i += 256) {
+		prefetch(block + i);
+	}
+	NOVA_END_TIMING(prefetch_block_t, prefetch_block_time);
+}
+
+static inline void incr_stream_trust_degree(
+	struct nova_write_para_continuous *wp)
+{
+	if (wp->stream_trust_degree < STREAM_TRUST_DEGREE_MAX)
+		wp->stream_trust_degree += 1;
+}
+
+static inline void decr_stream_trust_degree(
+	struct nova_write_para_continuous *wp)
+{
+	if (wp->stream_trust_degree > STREAM_TRUST_DEGREE_MIN)
+		wp->stream_trust_degree -= 1;
+}
+
 // The original offset is 0
 // Return 0: Successful
 // Return x (!= 0): The offset has been changed, and the new hint is x.
@@ -629,12 +653,33 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 		NOVA_STATS_ADD(hint_not_trusted_hit, 1);
 		add_trust_degree(sbi, next_hint, offset, offset, trust_degree,
 			1, TRUST_DEGREE_MAX);
+		incr_stream_trust_degree(wp);
 	} else {
 		NOVA_STATS_ADD(hint_not_trusted_miss, 1);
 		decr_trust_degree(sbi, next_hint, offset, offset_new,
 			trust_degree);
+		decr_stream_trust_degree(wp);
 	}
 	return 0;
+}
+
+// The caller should hold rcu_read_lock
+static void handle_hint_of_hint(struct nova_sb_info *sbi,
+	struct nova_write_para_continuous *wp, atomic64_t *next_hint)
+{
+	uint64_t hint = le64_to_cpu(atomic64_read(next_hint));
+	u64 offset = hint & ~TRUST_DEGREE_MASK;
+	uint8_t trust_degree = hint & TRUST_DEGREE_MASK;
+	struct nova_pmm_entry *pentry;
+	unsigned long blocknr;
+
+	// Be conservative because prefetching consumes bandwidth.
+	if (wp->stream_trust_degree != STREAM_TRUST_DEGREE_MAX || offset == 0 ||
+			trust_degree >= 4)
+		return;
+	pentry = nova_sbi_get_block(sbi, offset);
+	blocknr = le64_to_cpu(pentry->blocknr);
+	prefetch_block(nova_sbi_blocknr_to_addr(sbi, blocknr));
 }
 
 // Return whether the block is deduplicated successfully.
@@ -656,6 +701,7 @@ static int check_hint(struct nova_sb_info *sbi,
 		// The hinted fpentry has already been released
 		return 0;
 	}
+	handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 	// It is guaranteed that the block will not be freed,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
@@ -719,6 +765,7 @@ static int handle_hint(struct nova_sb_info *sbi,
 	if (ret == 1) {
 		add_trust_degree(sbi, next_hint, offset, offset, trust_degree,
 			1, TRUST_DEGREE_MAX);
+		incr_stream_trust_degree(wp);
 		return 0;
 	}
 	BUG_ON(ret != 0);
@@ -728,6 +775,7 @@ static int handle_hint(struct nova_sb_info *sbi,
 	decr_trust_degree(sbi, next_hint, offset,
 		nova_get_addr_off(sbi, wp->normal.last_accessed),
 		trust_degree);
+	decr_stream_trust_degree(wp);
 	return 0;
 }
 
