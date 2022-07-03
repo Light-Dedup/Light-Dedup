@@ -67,15 +67,18 @@ struct nova_write_para_normal {
 	struct nova_write_para_base base;
 	const void *addr;
 	unsigned long blocknr;
-	// Last not flushed referenced entry. The fpentry should be flushed before
+	// Two last not flushed referenced entries.
+	// 0 is the last. 1 is the second to last.
+	// The two fpentries should be flushed before
 	// committing the corresponding write entry to guarantee persistency,
 	// so that the corresponding block will not be regarded as a block
 	// without deduplication.
-	struct nova_pmm_entry *last_ref_entry;
-	// Last not flushed newly allocated entry.
+	struct nova_pmm_entry *last_ref_entries[2];
+	// Two last not flushed newly allocated entries.
+	// 0 is the last. 1 is the second to last.
 	// Maintained here to make sure that the newly allocated entry is
 	// flushed after its hint is written.
-	struct nova_pmm_entry *last_new_entry;
+	struct nova_pmm_entry *last_new_entries[2];
 	// Last accessed entry to provide hint for the next entry.
 	struct nova_pmm_entry *last_accessed;
 };

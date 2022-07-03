@@ -562,11 +562,13 @@ static long try_inplace_file_write(struct super_block *sb,
 	BUG_ON(nova_fp_calc(&table->fp_ctx, kbuf, &wp.normal.base.fp));
 	wp.normal.addr = kbuf;
 	wp.normal.blocknr = old_blocknr;
-	wp.normal.last_ref_entry = wp_normal->last_ref_entry;
+	wp.normal.last_ref_entries[0] = wp_normal->last_ref_entries[0];
+	wp.normal.last_ref_entries[1] = wp_normal->last_ref_entries[1];
 	wp.offset = offset;
 	wp.len = bytes;
 	ret = nova_table_upsert_rewrite(&table->metas, &wp);
-	wp_normal->last_ref_entry = wp.normal.last_ref_entry;
+	wp_normal->last_ref_entries[0] = wp.normal.last_ref_entries[0];
+	wp_normal->last_ref_entries[1] = wp.normal.last_ref_entries[1];
 	if (ret < 0)
 		return ret;	// No need to free old blocknr or reinsert it into table.
 	if (wp.normal.base.refcount == 1) {
@@ -676,7 +678,8 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			__func__, epoch_id, inode->i_ino, pos, count);
 	update.tail = sih->log_tail;
 	update.alter_tail = sih->alter_log_tail;
-	wp.last_ref_entry = NULL_PENTRY;
+	wp.last_ref_entries[0] = NULL_PENTRY;
+	wp.last_ref_entries[1] = NULL_PENTRY;
 	while (num_blocks > 0) {
 		offset = pos & (nova_inode_blk_size(sih) - 1);
 		start_blk = pos >> sb->s_blocksize_bits;
@@ -786,7 +789,8 @@ protected:
 				begin_tail = update.curr_entry;
 		}
 	}
-	nova_flush_entry_if_not_null(wp.last_ref_entry, false);
+	nova_flush_entry_if_not_null(wp.last_ref_entries[0], false);
+	nova_flush_entry_if_not_null(wp.last_ref_entries[1], false);
 
 	data_bits = blk_type_to_shift[sih->i_blk_type];
 	sih->i_blocks += (new_blocks << (data_bits - sb->s_blocksize_bits));
