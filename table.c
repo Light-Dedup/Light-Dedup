@@ -472,7 +472,7 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	return ret;
 }
 
-void prefetch_block(char *block) {
+void prefetch_block(const char *block) {
 	size_t i;
 	INIT_TIMING(prefetch_block_time);
 	NOVA_START_TIMING(prefetch_block_t, prefetch_block_time);
