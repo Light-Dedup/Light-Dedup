@@ -639,16 +639,14 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 
 // Return whether the block is deduplicated successfully.
 static int check_hint(struct nova_sb_info *sbi,
-	struct nova_write_para_continuous *wp, u64 offset, uint8_t trust_degree)
+	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
 {
-	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
 	const void *addr;
 	int64_t ret;
 	unsigned long irq_flags = 0;
 	INIT_TIMING(cmp_user_time);
 
-	pentry = nova_sbi_get_block(sbi, offset);
 	// To make sure that pentry will not be released while we
 	// are reading its content.
 	rcu_read_lock();
@@ -701,6 +699,7 @@ static int handle_hint(struct nova_sb_info *sbi,
 	uint64_t hint = le64_to_cpu(atomic64_read(next_hint));
 	u64 offset = hint & ~TRUST_DEGREE_MASK;
 	uint8_t trust_degree = hint & TRUST_DEGREE_MASK;
+	struct nova_pmm_entry *pentry;
 	int ret;
 
 	if (offset == 0) {
@@ -713,7 +712,8 @@ static int handle_hint(struct nova_sb_info *sbi,
 		return handle_not_trust(sbi, wp, next_hint,
 			offset, trust_degree);
 	}
-	ret = check_hint(sbi, wp, offset, trust_degree);
+	pentry = nova_sbi_get_block(sbi, offset);
+	ret = check_hint(sbi, wp, pentry);
 	if (ret < 0)
 		return ret;
 	if (ret == 1) {
