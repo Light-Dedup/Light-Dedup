@@ -84,7 +84,7 @@ void nova_meta_table_save(struct nova_meta_table *table)
 	kmem_cache_destroy(table->kbuf_cache);
 	nova_table_save(&table->metas);
 	nova_save_entry_allocator(sb, &table->entry_allocator);
-	nova_unlock_write(sb, &recover_meta->saved,
+	nova_unlock_write_flush(sbi, &recover_meta->saved,
 		NOVA_RECOVER_META_FLAG_COMPLETE, true);
 }
 
@@ -99,10 +99,9 @@ long nova_meta_table_decr_refcount(struct nova_meta_table *table,
 	BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
 
 	wp.addr = addr;
-	wp.base.refcount = -1;
 	wp.blocknr = blocknr;
 	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
-	retval = nova_table_upsert_normal(&table->metas, &wp);
+	retval = nova_table_deref_block(&table->metas, &wp);
 	NOVA_END_TIMING(decr_ref_t, decr_ref_time);
 	return retval < 0 ? retval : wp.base.refcount;
 }
