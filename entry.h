@@ -8,6 +8,8 @@
 #include "xatable.h"
 #include "queue.h"
 
+#define NOVA_LEAF_ENTRY_MAGIC (0x66ccff2020ffcc66)
+
 struct nova_sb_info;
 
 typedef uint64_t entrynr_t;
@@ -17,17 +19,9 @@ struct nova_pmm_entry {
 	struct nova_fp fp;	// TODO: cpu_to_le64?
 	__le64 blocknr;
 	atomic64_t refcount;
-	// Lowest 3 bits are trust degree: [-4, 3]
-	// For each result matching the hint, the trust degree += 1
-	// For each result mismatching the hint, the trust degree -= 1
-	// If the trust degree < 0, then the hint is not taken.
-	atomic64_t next_hint;
+	__le64 flag;
 };
 _Static_assert(sizeof(atomic64_t) == 8, "atomic64_t not 8B!");
-#define TRUST_DEGREE_BITS 3
-#define TRUST_DEGREE_MASK ((1 << TRUST_DEGREE_BITS) - 1)
-#define TRUST_DEGREE_MAX ((1 << (TRUST_DEGREE_BITS - 1)) - 1)
-#define TRUST_DEGREE_MIN (1 << (TRUST_DEGREE_BITS - 1))
 
 #define REGION_SIZE PAGE_SIZE
 #define ENTRY_PER_REGION (REGION_SIZE / sizeof(struct nova_pmm_entry))
@@ -39,6 +33,10 @@ _Static_assert(sizeof(atomic64_t) == 8, "atomic64_t not 8B!");
 
 struct entry_allocator_cpu {
 	struct nova_pmm_entry *top_entry; // Last allocated entry.
+	// Last not flushed entry.
+	// Note that the newly allocated entry is always not flushed
+	// immediately.
+	struct nova_pmm_entry *last_entry;
 	int16_t allocated;
 };
 DECLARE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);

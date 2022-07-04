@@ -23,9 +23,6 @@
 #include "nova.h"
 #include "inode.h"
 
-DEFINE_PER_CPU(int8_t, stream_trust_degree_per_cpu);
-DEFINE_PER_CPU(struct nova_pmm_entry *, last_accessed_fpentry_per_cpu);
-DEFINE_PER_CPU(struct nova_pmm_entry *, last_new_fpentry_per_cpu);
 
 static inline int nova_can_set_blocksize_hint(struct inode *inode,
 	struct nova_inode *pi, loff_t new_size)
@@ -612,7 +609,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	size_t offset, bytes;
 	unsigned long num_blocks;
 	struct nova_write_para_continuous wp;
-	int cpu;
 	unsigned long irq_flags = 0;
 	ssize_t ret;
 	INIT_TIMING(cow_write_time);
@@ -689,15 +685,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
 			__func__, env.inode->i_ino, env.pos, len);
 
-	cpu = get_cpu();
-	wp.normal.last_accessed = per_cpu(last_accessed_fpentry_per_cpu, cpu);
-	wp.normal.last_new_entries[0] = per_cpu(last_new_fpentry_per_cpu, cpu);
-	wp.normal.last_new_entries[1] = NULL_PENTRY;
-	wp.stream_trust_degree = per_cpu(stream_trust_degree_per_cpu, cpu);
-	put_cpu();
-	wp.normal.last_ref_entries[0] = NULL_PENTRY;
-	wp.normal.last_ref_entries[1] = NULL_PENTRY;
-	wp.prefetched_blocknr[0] = wp.prefetched_blocknr[1] = 0;
+	wp.normal.last_ref_entry = NULL_PENTRY;
 	if (offset != 0) {
 		bytes = env.sb->s_blocksize - offset;
 		if (bytes > len)
@@ -759,17 +747,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		if (ret < 0)
 			goto err_out1;
 	}
-	nova_flush_entry_if_not_null(wp.normal.last_ref_entries[0], false);
-	nova_flush_entry_if_not_null(wp.normal.last_ref_entries[1], false);
-	cpu = get_cpu();
-	per_cpu(last_accessed_fpentry_per_cpu, cpu) = wp.normal.last_accessed;
-	per_cpu(last_new_fpentry_per_cpu, cpu) = wp.normal.last_new_entries[0];
-	per_cpu(stream_trust_degree_per_cpu, cpu) = wp.stream_trust_degree;
-	put_cpu();
-	if (!in_the_same_cacheline(wp.normal.last_new_entries[0],
-			wp.normal.last_new_entries[1]))
-		nova_flush_entry_if_not_null(wp.normal.last_new_entries[1],
-			false);
+	nova_flush_entry_if_not_null(wp.normal.last_ref_entry, false);
 
 	env.sih->i_blocks += (num_blocks <<
 		(blk_type_to_shift[env.sih->i_blk_type] -
