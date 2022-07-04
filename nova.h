@@ -267,44 +267,7 @@ static inline int memcpy_to_pmem_nocache(void *dst, const void *src,
 }
 
 
-/* assumes the length to be 4-byte aligned */
-static inline void memset_nt(void *dest, uint32_t dword, size_t length)
-{
-	uint64_t dummy1, dummy2;
-	uint64_t qword = ((uint64_t)dword << 32) | dword;
-
-	asm volatile ("movl %%edx,%%ecx\n"
-		"andl $63,%%edx\n"
-		"shrl $6,%%ecx\n"
-		"jz 9f\n"
-		"1:	 movnti %%rax,(%%rdi)\n"
-		"2:	 movnti %%rax,1*8(%%rdi)\n"
-		"3:	 movnti %%rax,2*8(%%rdi)\n"
-		"4:	 movnti %%rax,3*8(%%rdi)\n"
-		"5:	 movnti %%rax,4*8(%%rdi)\n"
-		"8:	 movnti %%rax,5*8(%%rdi)\n"
-		"7:	 movnti %%rax,6*8(%%rdi)\n"
-		"8:	 movnti %%rax,7*8(%%rdi)\n"
-		"leaq 64(%%rdi),%%rdi\n"
-		"decl %%ecx\n"
-		"jnz 1b\n"
-		"9:	movl %%edx,%%ecx\n"
-		"andl $7,%%edx\n"
-		"shrl $3,%%ecx\n"
-		"jz 11f\n"
-		"10:	 movnti %%rax,(%%rdi)\n"
-		"leaq 8(%%rdi),%%rdi\n"
-		"decl %%ecx\n"
-		"jnz 10b\n"
-		"11:	 movl %%edx,%%ecx\n"
-		"shrl $2,%%ecx\n"
-		"jz 12f\n"
-		"movnti %%eax,(%%rdi)\n"
-		"12:\n"
-		: "=D"(dummy1), "=d" (dummy2)
-		: "D" (dest), "a" (qword), "d" (length)
-		: "memory", "rcx");
-}
+void memset_nt(void *dest, uint32_t dword, size_t length);
 
 
 #include "super.h" // Remove when we factor out these and other functions.
@@ -596,7 +559,7 @@ static inline u64 nova_find_nvmm_block(struct super_block *sb,
 	 */
 	entryc = &entry_copy;
 	if (memcpy_mcsafe(entryc, entry,
-			sizeof(struct nova_file_write_entry)) < 0)
+			sizeof(struct nova_file_write_entry)))
 		return 0;
 
 	nvmm = get_nvmm(sb, sih, entryc, blocknr);

@@ -108,9 +108,9 @@ static inline void PERSISTENT_BARRIER(void)
 	asm volatile ("sfence\n" : : );
 }
 
-static inline void nova_flush_buffer(void *buf, uint32_t len, bool fence)
+static inline void nova_flush_buffer(void *buf, size_t len, bool fence)
 {
-	uint32_t i;
+	size_t i;
 
 	len = len + ((unsigned long)(buf) & (CACHELINE_SIZE - 1));
 	if (support_clwb) {

@@ -131,10 +131,10 @@ static void nova_init_free_list(struct super_block *sb,
 	free_list->block_start = per_list_blocks * index;
 	free_list->block_end = free_list->block_start +
 					per_list_blocks - 1;
-	if (index == 0)
-		free_list->block_start += sbi->head_reserved_blocks;
-	if (index == sbi->cpus - 1)
-		free_list->block_end -= sbi->tail_reserved_blocks;
+	if (free_list->block_start < sbi->block_start)
+		free_list->block_start = sbi->block_start;
+	if (free_list->block_end > sbi->block_end - 1)
+		free_list->block_end = sbi->block_end - 1;
 
 	nova_data_csum_init_free_list(sb, free_list);
 	nova_data_parity_init_free_list(sb, free_list);
@@ -169,8 +169,11 @@ void nova_init_blockmap(struct super_block *sb, int recovery)
 
 		/* For recovery, update these fields later */
 		if (recovery == 0) {
-			free_list->num_free_blocks = free_list->block_end -
-						free_list->block_start + 1;
+			if (free_list->block_start <= free_list->block_end)
+				free_list->num_free_blocks = free_list->block_end -
+							free_list->block_start + 1;
+			else
+				free_list->num_free_blocks = 0;
 
 			blknode = nova_alloc_blocknode(sb);
 			if (blknode == NULL)
@@ -389,21 +392,18 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	int cpuid;
 	int new_node_used = 0;
 	int ret;
-	INIT_TIMING(free_time);
 
 	if (num <= 0) {
 		nova_dbg("%s ERROR: free %d\n", __func__, num);
 		return -EINVAL;
 	}
 
-	NOVA_START_TIMING(free_blocks_t, free_time);
 	cpuid = blocknr / sbi->per_list_blocks;
 
 	/* Pre-allocate blocknode */
 	curr_node = nova_alloc_blocknode(sb);
 	if (curr_node == NULL) {
 		/* returning without freeing the block*/
-		NOVA_END_TIMING(free_blocks_t, free_time);
 		return -ENOMEM;
 	}
 
@@ -496,7 +496,6 @@ out:
 	if (new_node_used == 0)
 		nova_free_blocknode(curr_node);
 
-	NOVA_END_TIMING(free_blocks_t, free_time);
 	return ret;
 }
 
@@ -740,11 +739,11 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 		return -ENOSPC;
 	}
 
-	if (atype == LOG && not_enough_blocks(free_list, num_blocks, atype)) {
-		nova_dbgv("%s: Can't alloc.  not_enough_blocks() == true",
-			  __func__);
-		return -ENOSPC;
-	}
+	// if (atype == LOG && not_enough_blocks(free_list, num_blocks, atype)) {
+	// 	nova_dbgv("%s: Can't alloc.  not_enough_blocks() == true",
+	// 		  __func__);
+	// 	return -ENOSPC;
+	// }
 
 	tree = &(free_list->block_free_tree);
 	if (from_tail == ALLOC_FROM_HEAD)
@@ -877,7 +876,6 @@ static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 	long ret_blocks = 0;
 	int retried = 0;
 	unsigned long irq_flags = 0;
-	INIT_TIMING(alloc_time);
 
 	num_blocks = num * nova_get_numblocks(btype);
 	if (num_blocks == 0) {
@@ -885,7 +883,6 @@ static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 		return -EINVAL;
 	}
 
-	NOVA_START_TIMING(new_blocks_t, alloc_time);
 	if (cpuid == ANY_CPU)
 		cpuid = nova_get_cpuid(sb);
 
@@ -923,7 +920,6 @@ alloc:
 	}
 
 	spin_unlock(&free_list->s_lock);
-	NOVA_END_TIMING(new_blocks_t, alloc_time);
 
 	if (ret_blocks <= 0 || new_blocknr == 0) {
 		nova_dbgv("%s: not able to allocate %d blocks. "
