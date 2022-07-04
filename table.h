@@ -67,12 +67,50 @@ struct nova_write_para_normal {
 	struct nova_write_para_base base;
 	const void *addr;
 	unsigned long blocknr;
+	// Two last not flushed referenced entries.
+	// 0 is the last. 1 is the second to last.
+	// The two fpentries should be flushed before
+	// committing the corresponding write entry to guarantee persistency,
+	// so that the corresponding block will not be regarded as a block
+	// without deduplication.
+	struct nova_pmm_entry *last_ref_entries[2];
+	// Two last not flushed newly allocated entries.
+	// 0 is the last. 1 is the second to last.
+	// Maintained here to make sure that the newly allocated entry is
+	// flushed after its hint is written.
+	struct nova_pmm_entry *last_new_entries[2];
+	// Last accessed entry to provide hint for the next entry.
+	struct nova_pmm_entry *last_accessed;
 };
 struct nova_write_para_rewrite {
 	struct nova_write_para_normal normal;
 	unsigned long offset, len;
 };
 
+const static int8_t STREAM_TRUST_DEGREE_MAX =
+	(1 << (TRUST_DEGREE_BITS - 1)) - 1;
+const static int8_t STREAM_TRUST_DEGREE_MIN = -(1 << (TRUST_DEGREE_BITS - 1));
+
+struct nova_write_para_continuous {
+	const char __user *ubuf;
+	size_t len;
+	unsigned long blocknr;
+	unsigned long num;
+	unsigned long blocknr_next;
+	// To keep track of last_ref_entry
+	struct nova_write_para_normal normal;
+	// Used internally
+	char *kbuf;
+	// Depends on the results of previous hints.
+	// [-4, 3]
+	int8_t stream_trust_degree;
+	// For stats
+	// [0] is the lastest prefetched blocknr.
+	unsigned long prefetched_blocknr[2];
+};
+
+int nova_table_deref_block(struct nova_mm_table *table,
+	struct nova_write_para_normal *wp);
 int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp);
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp);
 // refcount-- only if refcount == 1
@@ -82,9 +120,9 @@ int nova_table_insert_entry(struct nova_mm_table *rht, struct nova_fp *fp,
 
 int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	struct nova_write_para_normal *wp);
-int nova_fp_table_rewrite_on_insert(struct nova_mm_table *table,
-	const void *addr, struct nova_write_para_rewrite *wp,
-	unsigned long blocknr, size_t offset, size_t bytes);
+
+int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
+	struct nova_write_para_continuous *wp);
 
 int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
 	size_t nelem_hint);
