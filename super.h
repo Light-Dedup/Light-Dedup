@@ -214,6 +214,23 @@ nova_block_decr(struct super_block *sb, unsigned long blocknr)
 	return nova_meta_table_decr(table, blocknr);
 }
 
+static inline long
+nova_deref_blocks(struct super_block *sb, unsigned long blocknr,
+	unsigned long num)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_meta_table *table = &sbi->meta_table;
+	long ret;
+	while (num) {
+		ret = nova_meta_table_decr(table, blocknr);
+		if (ret < 0)
+			return ret;
+		num -= 1;
+		blocknr += 1;
+	}
+	return 0;
+}
+
 static inline struct nova_super_block
 *nova_get_redund_super(struct super_block *sb)
 {

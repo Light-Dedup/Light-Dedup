@@ -6,10 +6,14 @@
 
 #define ENTRY_PER_CACHELINE (CACHELINE_SIZE / sizeof(struct nova_pmm_entry))
 
-#define REGION_FULL ((entrynr_t)-1)
+DECLARE_PER_CPU(struct nova_pmm_entry *, last_new_fpentry_per_cpu);
 
 static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocator *allocator)
 {
+	int cpu;
+	for_each_possible_cpu(cpu) {
+		per_cpu(last_new_fpentry_per_cpu, cpu) = NULL_PENTRY;
+	}
 	spin_lock_init(&allocator->lock);
 	return 0;
 }
@@ -49,8 +53,7 @@ int nova_scan_entry_table(struct super_block *sb,
 	return ret;
 }
 
-static entrynr_t
-alloc_entry(struct entry_allocator *allocator, struct nova_fp fp)
+entrynr_t nova_alloc_entry(struct entry_allocator *allocator, struct nova_fp fp)
 {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
@@ -68,9 +71,8 @@ alloc_entry(struct entry_allocator *allocator, struct nova_fp fp)
 	} while (i != offset);
 	return REGION_FULL;
 }
-static void
-write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
-	struct nova_fp fp, __le32 blocknr, __le32 refcount)
+void nova_write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
+	struct nova_fp fp, unsigned long blocknr)
 {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
@@ -83,42 +85,38 @@ write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	nova_memunlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
-	pentry->blocknr = cpu_to_le64(blocknr);
-	atomic64_set(&pentry->refcount, refcount);
+	atomic64_set(&pentry->refcount, 1);
+	atomic64_set(&pentry->next_hint, 0);
 	wmb();
-	BUG_ON(pentry->flag != 0);
-	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
+	BUG_ON(pentry->blocknr != 0);
+	pentry->blocknr = cpu_to_le64(blocknr);
 	nova_flush_buffer(pentry, sizeof(*pentry), true);
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
-}
-void nova_alloc_and_write_entry(struct entry_allocator *allocator,
-	struct nova_fp fp, __le32 blocknr, __le32 refcount)
-{
-	entrynr_t entrynr;
-	spin_lock(&allocator->lock);
-	entrynr = alloc_entry(allocator, fp);
-	if (entrynr != REGION_FULL)
-		write_entry(allocator, entrynr, fp, blocknr,refcount);
-	else
-		++allocator->entry_collision;
-	spin_unlock(&allocator->lock);
 }
 
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
 	struct super_block *sb = meta_table->sblock;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_pmm_entry *pentry = meta_table->pentries + entrynr;
 
 	spin_lock(&allocator->lock);
-	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-	nova_unlock_write(sb, &pentry->flag, 0, true);
+	BUG_ON(pentry->blocknr == 0);
+	nova_unlock_write_flush(sbi, &pentry->blocknr, 0, true);
 	spin_unlock(&allocator->lock);
 }
 
 void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator)
 {
+	int cpu;
+	INIT_TIMING(save_entry_allocator_time);
+	NOVA_START_TIMING(save_entry_allocator_t, save_entry_allocator_time);
+	for_each_possible_cpu(cpu) {
+		nova_flush_entry_if_not_null(
+			per_cpu(last_new_fpentry_per_cpu, cpu), false);
+	}
 	nova_free_entry_allocator(allocator);
 }
 

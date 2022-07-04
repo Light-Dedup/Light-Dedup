@@ -75,6 +75,11 @@ enum node_type {
 	NODE_DIR,
 };
 
+struct block_allocator_per_cpu {
+	unsigned long blocknr;
+	unsigned long num;
+};
+DECLARE_PER_CPU(struct block_allocator_per_cpu, block_allocator_per_cpu);
 
 
 int nova_alloc_block_free_lists(struct super_block *sb);
@@ -105,7 +110,7 @@ extern int nova_new_data_blocks(struct super_block *sb,
 	enum nova_alloc_init zero, int cpu,
 	enum nova_alloc_direction from_tail);
 unsigned long nova_new_data_block(struct super_block *sb,
-	enum nova_alloc_init zero, int cpu);
+	enum nova_alloc_init zero);
 extern int nova_new_log_blocks(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	unsigned long *blocknr, unsigned int num,
