@@ -178,6 +178,7 @@ static int nova_seq_IO_show(struct seq_file *seq, void *v)
 		"not trusted then hit %llu, not trusted then miss %llu\n",
 		IOstats[predict_hit], IOstats[predict_miss], IOstats[no_hint],
 		IOstats[hint_not_trusted_miss], IOstats[hint_not_trusted_hit]);
+	seq_printf(seq, "Prefetch hit: %llu\n", IOstats[prefetch_hit]);
 
 	seq_puts(seq, "\n");
 

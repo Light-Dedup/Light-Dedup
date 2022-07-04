@@ -104,6 +104,9 @@ struct nova_write_para_continuous {
 	// Depends on the results of previous hints.
 	// [-4, 3]
 	int8_t stream_trust_degree;
+	// For stats
+	// [0] is the lastest prefetched blocknr.
+	unsigned long prefetched_blocknr[2];
 };
 
 int nova_table_deref_block(struct nova_mm_table *table,

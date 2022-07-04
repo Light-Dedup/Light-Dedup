@@ -680,6 +680,8 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	pentry = nova_sbi_get_block(sbi, offset);
 	blocknr = le64_to_cpu(pentry->blocknr);
 	prefetch_block(nova_sbi_blocknr_to_addr(sbi, blocknr));
+	wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
+	wp->prefetched_blocknr[0] = blocknr;
 }
 
 // Return whether the block is deduplicated successfully.
@@ -723,6 +725,13 @@ static int check_hint(struct nova_sb_info *sbi,
 		return 0;
 	}
 	NOVA_STATS_ADD(predict_hit, 1);
+	if (blocknr == wp->prefetched_blocknr[1] ||
+			blocknr == wp->prefetched_blocknr[0]) {
+		// The hit counts of prefetching is slightly underestimated
+		// because there is also probability that the current hint
+		// misses but the prefetched block hits.
+		NOVA_STATS_ADD(prefetch_hit, 1);
+	}
 	nova_memunlock_range(sbi->sb, &pentry->refcount,
 		sizeof(pentry->refcount), &irq_flags);
 	ret = atomic64_add_unless(&pentry->refcount, 1, 0);
