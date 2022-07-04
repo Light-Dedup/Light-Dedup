@@ -279,13 +279,16 @@ int nova_get_alter_inode_address(struct super_block *sb, u64 ino,
 }
 
 int nova_delete_file_tree(struct super_block *sb,
-	struct nova_inode_info_header *sih, unsigned long start_pgoff,
-	unsigned long last_pgoff, bool delete_nvmm, bool delete_dead,
+	struct nova_inode_info_header *sih, unsigned long start_blocknr,
+	unsigned long last_blocknr, bool delete_nvmm, bool delete_dead,
 	u64 epoch_id)
 {
 	struct nova_file_write_entry *entry;
 	struct nova_file_write_entry *entryc, entry_copy;
-	unsigned long pgoff = start_pgoff;
+	struct nova_file_write_entry *old_entry = NULL;
+	unsigned long pgoff = start_blocknr;
+	unsigned long old_pgoff = 0;
+	unsigned int num_free = 0;
 	int freed = 0;
 	void *ret;
 	INIT_TIMING(delete_time);
@@ -300,12 +303,21 @@ int nova_delete_file_tree(struct super_block *sb,
 		if (entry) {
 			ret = radix_tree_delete(&sih->tree, pgoff);
 			BUG_ON(!ret || ret != entry);
-			if (delete_nvmm)
-				nova_free_old_entry(sb, sih,
-						entry, pgoff,
-						delete_dead,
-						epoch_id);
-			++freed;
+			if (entry != old_entry) {
+				if (old_entry && delete_nvmm) {
+					nova_free_old_entry(sb, sih,
+							old_entry, old_pgoff,
+							num_free, delete_dead,
+							epoch_id);
+					freed += num_free;
+				}
+
+				old_entry = entry;
+				old_pgoff = pgoff;
+				num_free = 1;
+			} else {
+				num_free++;
+			}
 			pgoff++;
 		} else {
 			/* We are finding a hole. Jump to the next entry. */
@@ -321,10 +333,16 @@ int nova_delete_file_tree(struct super_block *sb,
 			pgoff++;
 			pgoff = pgoff > entryc->pgoff ? pgoff : entryc->pgoff;
 		}
-	} while (pgoff <= last_pgoff);
+	} while (1);
+
+	if (old_entry && delete_nvmm) {
+		nova_free_old_entry(sb, sih, old_entry, old_pgoff,
+					num_free, delete_dead, epoch_id);
+		freed += num_free;
+	}
 
 	nova_dbgv("Inode %lu: delete file tree from pgoff %lu to %lu, %d blocks freed\n",
-			sih->ino, start_pgoff, last_pgoff, freed);
+			sih->ino, start_blocknr, last_blocknr, freed);
 
 	NOVA_END_TIMING(delete_file_tree_t, delete_time);
 	return freed;

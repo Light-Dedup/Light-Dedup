@@ -22,7 +22,7 @@
 
 static int nova_execute_invalidate_reassign_logentry(struct super_block *sb,
 	void *entry, enum nova_entry_type type, int reassign,
-	bool free)
+	unsigned int num_free)
 {
 	struct nova_file_write_entry *fw_entry;
 	int invalid = 0;
@@ -32,9 +32,9 @@ static int nova_execute_invalidate_reassign_logentry(struct super_block *sb,
 		fw_entry = (struct nova_file_write_entry *)entry;
 		if (reassign)
 			fw_entry->reassigned = 1;
-		if (free)
-			fw_entry->invalid = true;
-		if (fw_entry->invalid)
+		if (num_free)
+			fw_entry->invalid_pages += num_free;
+		if (fw_entry->invalid_pages == fw_entry->num_pages)
 			invalid = 1;
 		break;
 	case DIR_LOG:
@@ -77,13 +77,13 @@ static int nova_execute_invalidate_reassign_logentry(struct super_block *sb,
 
 static int nova_invalidate_reassign_logentry(struct super_block *sb,
 	void *entry, enum nova_entry_type type, int reassign,
-	bool free)
+	unsigned int num_free)
 {
 	unsigned long irq_flags = 0;
 	nova_memunlock_range(sb, entry, CACHELINE_SIZE, &irq_flags);
 
 	nova_execute_invalidate_reassign_logentry(sb, entry, type,
-						reassign, free);
+						reassign, num_free);
 	nova_update_alter_entry(sb, entry);
 	nova_memlock_range(sb, entry, CACHELINE_SIZE, &irq_flags);
 
@@ -104,7 +104,7 @@ int nova_reassign_logentry(struct super_block *sb, void *entry,
 
 static inline int nova_invalidate_write_entry(struct super_block *sb,
 	struct nova_file_write_entry *entry, int reassign,
-	bool free)
+	unsigned int num_free)
 {
 	struct nova_file_write_entry *entryc, entry_copy;
 
@@ -119,17 +119,17 @@ static inline int nova_invalidate_write_entry(struct super_block *sb,
 			return -EIO;
 	}
 
-	if (free == 0 && entryc->reassigned == 1)
+	if (num_free == 0 && entryc->reassigned == 1)
 		return 0;
 
 	return nova_invalidate_reassign_logentry(sb, entry, FILE_WRITE,
-							reassign, free);
+							reassign, num_free);
 }
 
 unsigned int nova_free_old_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih,
 	struct nova_file_write_entry *entry,
-	unsigned long pgoff,
+	unsigned long pgoff, unsigned int num_free,
 	bool delete_dead, u64 epoch_id)
 {
 	struct nova_file_write_entry *entryc, entry_copy;
@@ -154,26 +154,26 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 
 	if (!delete_dead) {
 		ret = nova_append_data_to_snapshot(sb, entryc, old_nvmm,
-				epoch_id);
+				num_free, epoch_id);
 		if (ret == 0) {
 			nova_invalidate_write_entry(sb, entry, 1, 0);
 			goto out;
 		}
 
-		nova_invalidate_write_entry(sb, entry, 1, true);
+		nova_invalidate_write_entry(sb, entry, 1, num_free);
 	}
 
-	nova_dbgv("%s: pgoff %lu\n",
-				__func__, pgoff);
+	nova_dbgv("%s: pgoff %lu, free %u blocks\n",
+				__func__, pgoff, num_free);
 	ret = nova_block_decr(sb, old_nvmm);
 	if (ret < 0)
 		goto out;
 
 out:
-	sih->i_blocks -= 1;
+	sih->i_blocks -= num_free;
 
 	NOVA_END_TIMING(free_old_t, free_time);
-	return ret;
+	return num_free;
 }
 
 struct nova_file_write_entry *nova_find_next_entry(struct super_block *sb,
@@ -800,31 +800,59 @@ int nova_assign_write_entry(struct super_block *sb,
 	bool free)
 {
 	struct nova_file_write_entry *old_entry;
+	struct nova_file_write_entry *start_old_entry = NULL;
 	void **pentry;
-	unsigned long curr_pgoff = entryc->pgoff;
+	unsigned long start_pgoff = entryc->pgoff;
+	unsigned long start_old_pgoff = 0;
+	unsigned int num = entryc->num_pages;
+	unsigned int num_free = 0;
+	unsigned long curr_pgoff;
+	int i;
 	int ret = 0;
 	INIT_TIMING(assign_time);
 
 	NOVA_START_TIMING(assign_t, assign_time);
-	pentry = radix_tree_lookup_slot(&sih->tree, curr_pgoff);
-	if (pentry) {
-		old_entry = radix_tree_deref_slot(pentry);
-		if (old_entry != NULL) {
-			if (free) {
-				nova_free_old_entry(sb, sih, old_entry,
-					curr_pgoff, false,
-					entryc->epoch_id);
+	for (i = 0; i < num; i++) {
+		curr_pgoff = start_pgoff + i;
+
+		pentry = radix_tree_lookup_slot(&sih->tree, curr_pgoff);
+		if (pentry) {
+			old_entry = radix_tree_deref_slot(pentry);
+			if (old_entry != start_old_entry) {
+				if (start_old_entry && free)
+					nova_free_old_entry(sb, sih,
+							start_old_entry,
+							start_old_pgoff,
+							num_free, false,
+							entryc->epoch_id);
+				nova_invalidate_write_entry(sb,
+						start_old_entry, 1, 0);
+
+				start_old_entry = old_entry;
+				start_old_pgoff = curr_pgoff;
+				num_free = 1;
+			} else {
+				num_free++;
 			}
-			nova_invalidate_write_entry(sb, old_entry, 1, 0);
-		}
-		radix_tree_replace_slot(&sih->tree, pentry, entry);
-	} else {
-		ret = radix_tree_insert(&sih->tree, curr_pgoff, entry);
-		if (ret) {
-			nova_dbg("%s: ERROR %d\n", __func__, ret);
+
+			radix_tree_replace_slot(&sih->tree, pentry, entry);
+		} else {
+			ret = radix_tree_insert(&sih->tree, curr_pgoff, entry);
+			if (ret) {
+				nova_dbg("%s: ERROR %d\n", __func__, ret);
+				goto out;
+			}
 		}
 	}
 
+	if (start_old_entry && free)
+		nova_free_old_entry(sb, sih, start_old_entry,
+					start_old_pgoff, num_free, false,
+					entryc->epoch_id);
+
+	nova_invalidate_write_entry(sb, start_old_entry, 1, 0);
+
+out:
 	NOVA_END_TIMING(assign_t, assign_time);
 
 	return ret;
