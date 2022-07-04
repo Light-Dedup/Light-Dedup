@@ -677,6 +677,9 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	if (wp->stream_trust_degree != STREAM_TRUST_DEGREE_MAX || offset == 0 ||
 			trust_degree >= 4)
 		return;
+	// Do not prefetch across syscall.
+	if (wp->len < PAGE_SIZE * 2)
+		return;
 	pentry = nova_sbi_get_block(sbi, offset);
 	blocknr = le64_to_cpu(pentry->blocknr);
 	prefetch_block(nova_sbi_blocknr_to_addr(sbi, blocknr));
