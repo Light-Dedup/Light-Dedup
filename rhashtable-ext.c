@@ -27,13 +27,17 @@ static void rhashtable_operate_one(struct rhashtable *ht, struct rhash_head *obj
 
 static void __rhashtable_traverse_func(struct rhashtable *ht,
         struct bucket_table *tbl, unsigned int start, unsigned int end,
-        void (*fn)(void *ptr, void *arg), void *arg)
+        void (*fn)(void *ptr, void *arg), void (*fn_worker_init)(void *arg),
+	void (*fn_worker_finish)(void *arg), void *arg)
 {
 	unsigned int i;
+	fn_worker_init(arg);
 	for (i = start; i < end; i++) {
 		struct rhash_head *pos, *next;
 
-		cond_resched();
+		// TODO: Check with should_resched, and call something before
+		// reschedule.
+		// cond_resched();
 		pos = rht_dereference(*rht_bucket(tbl, i), ht);
 		next = !rht_is_a_nulls(pos) ?
 			rht_dereference(pos->next, ht) : NULL;
@@ -44,6 +48,7 @@ static void __rhashtable_traverse_func(struct rhashtable *ht,
 				rht_dereference(pos->next, ht) : NULL;
 		}
 	}
+	fn_worker_finish(arg);
 }
 
 struct __rhashtable_traverse_para {
@@ -52,6 +57,8 @@ struct __rhashtable_traverse_para {
         struct bucket_table *tbl;
 	unsigned int start, end;
         void (*fn)(void *ptr, void *arg);
+	void (*fn_worker_init)(void *arg);
+	void (*fn_worker_finish)(void *arg);
         void *arg;
 };
 static int rhashtable_traverse_func(void *__para)
@@ -60,19 +67,24 @@ static int rhashtable_traverse_func(void *__para)
                 (struct __rhashtable_traverse_para *)__para;
 	complete(&para->entered);
 	__rhashtable_traverse_func(para->ht, para->tbl, para->start, para->end,
-		para->fn, para->arg);
+		para->fn, para->fn_worker_init, para->fn_worker_finish,
+		para->arg);
 	// printk("%s waiting for kthread_stop\n", __func__);
 	/* Wait for kthread_stop */
-	set_current_state(TASK_INTERRUPTIBLE);
-	while (!kthread_should_stop()) {
-		schedule();
+	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
+		if (kthread_should_stop())
+			break;
+		schedule();
 	}
+	__set_current_state(TASK_RUNNING);
 	return 0;
 }
 static int __rhashtable_traverse_multithread(struct rhashtable *ht,
         struct bucket_table *tbl, int thread_num,
         void (*fn)(void *ptr, void *arg),
+	void (*fn_worker_init)(void *arg),
+	void (*fn_worker_finish)(void *arg),
         void *(*thread_local_arg_factory)(void *factory_arg),
         void (*thread_local_arg_recycler)(void *),
         void *arg)
@@ -106,6 +118,8 @@ static int __rhashtable_traverse_multithread(struct rhashtable *ht,
 		base += per_thread;
 		para[i].end = base < tbl->size ? base : tbl->size;
                 para[i].fn = fn;
+		para[i].fn_worker_init = fn_worker_init;
+		para[i].fn_worker_finish = fn_worker_finish;
                 if (thread_local_arg_factory) {
                         para[i].arg = thread_local_arg_factory(arg);
                 } else {
@@ -139,6 +153,8 @@ out:
 }
 int rhashtable_traverse_multithread(struct rhashtable *ht, int thread_num,
         void (*fn)(void *ptr, void *arg),
+	void (*fn_worker_init)(void *arg),
+	void (*fn_worker_finish)(void *arg),
         void *(*thread_local_arg_factory)(void *),
         void (*thread_local_arg_recycler)(void *),
         void *arg)
@@ -151,7 +167,8 @@ int rhashtable_traverse_multithread(struct rhashtable *ht, int thread_num,
 	tbl = rht_dereference(ht->tbl, ht);
         do {
                 ret = __rhashtable_traverse_multithread(ht, tbl, thread_num, fn,
-                        thread_local_arg_factory, thread_local_arg_recycler,
+                        fn_worker_init, fn_worker_finish,
+			thread_local_arg_factory, thread_local_arg_recycler,
                         arg);
                 if (ret < 0) {
                         break;
@@ -187,7 +204,6 @@ int lockdep_rht_mutex_is_held(struct rhashtable *ht)
 {
 	return (debug_locks) ? lockdep_is_held(&ht->mutex) : 1;
 }
-EXPORT_SYMBOL_GPL(lockdep_rht_mutex_is_held);
 
 int lockdep_rht_bucket_is_held(const struct bucket_table *tbl, u32 hash)
 {
@@ -195,7 +211,6 @@ int lockdep_rht_bucket_is_held(const struct bucket_table *tbl, u32 hash)
 
 	return (debug_locks) ? lockdep_is_held(lock) : 1;
 }
-EXPORT_SYMBOL_GPL(lockdep_rht_bucket_is_held);
 #else
 #define ASSERT_RHT_MUTEX(HT)
 #endif

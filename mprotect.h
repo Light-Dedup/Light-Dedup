@@ -27,14 +27,12 @@
 
 extern void nova_error_mng(struct super_block *sb, const char *fmt, ...);
 
-static inline int nova_range_check(struct super_block *sb, void *p,
-					 unsigned long len)
+static inline int nova_range_check(struct nova_sb_info *sbi, void *p,
+	unsigned long len)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-
 	if (p < sbi->virt_addr ||
 			p + len > sbi->virt_addr + sbi->initsize) {
-		nova_err(sb, "access pmem out of range: pmem range 0x%lx - 0x%lx, "
+		printk("access pmem out of range: pmem range 0x%lx - 0x%lx, "
 				"access range 0x%lx - 0x%lx\n",
 				(unsigned long)sbi->virt_addr,
 				(unsigned long)(sbi->virt_addr + sbi->initsize),
@@ -90,10 +88,8 @@ nova_writeable(void *vaddr, unsigned long size, int rw, unsigned long *flags)
 	return 0;
 }
 
-static inline int nova_is_protected(struct super_block *sb)
+static inline int nova_is_protected(struct nova_sb_info *sbi)
 {
-	struct nova_sb_info *sbi = (struct nova_sb_info *)sb->s_fs_info;
-
 	if (wprotect)
 		return wprotect;
 
@@ -102,19 +98,19 @@ static inline int nova_is_protected(struct super_block *sb)
 
 static inline int nova_is_wprotected(struct super_block *sb)
 {
-	return nova_is_protected(sb);
+	return nova_is_protected(NOVA_SB(sb));
 }
 
 static inline void
-nova_memunlock(struct super_block *sb, unsigned long *flags)
+nova_memunlock(struct nova_sb_info *sbi, unsigned long *flags)
 {
-	if (nova_is_protected(sb))
+	if (nova_is_protected(sbi))
 		__nova_writable(1, flags);
 }
 static inline void
-nova_memlock(struct super_block *sb, unsigned long *flags)
+nova_memlock(struct nova_sb_info *sbi, unsigned long *flags)
 {
-	if (nova_is_protected(sb))
+	if (nova_is_protected(sbi))
 		__nova_writable(0, flags);
 }
 
@@ -137,28 +133,40 @@ __nova_memlock_range(void *p, unsigned long len, unsigned long *flags)
 	nova_writeable(p, len, 0, flags);
 }
 
+static inline void nova_sbi_memunlock_range(struct nova_sb_info *sbi, void *p,
+					 unsigned long len, unsigned long *flags)
+{
+	if (nova_range_check(sbi, p, len))
+		return;
+
+	if (nova_is_protected(sbi))
+		__nova_memunlock_range(p, len, flags);
+}
+
+static inline void nova_sbi_memlock_range(struct nova_sb_info *sbi, void *p,
+				       unsigned long len, unsigned long *flags)
+{
+	if (nova_is_protected(sbi))
+		__nova_memlock_range(p, len, flags);
+}
+
 static inline void nova_memunlock_range(struct super_block *sb, void *p,
 					 unsigned long len, unsigned long *flags)
 {
-	if (nova_range_check(sb, p, len))
-		return;
-
-	if (nova_is_protected(sb))
-		__nova_memunlock_range(p, len, flags);
+	nova_sbi_memunlock_range(NOVA_SB(sb), p, len, flags);
 }
 
 static inline void nova_memlock_range(struct super_block *sb, void *p,
 				       unsigned long len, unsigned long *flags)
 {
-	if (nova_is_protected(sb))
-		__nova_memlock_range(p, len, flags);
+	nova_sbi_memlock_range(NOVA_SB(sb), p, len, flags);
 }
 
 static inline void nova_memunlock_super(struct super_block *sb, unsigned long *flags)
 {
 	struct nova_super_block *ps = nova_get_super(sb);
 
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memunlock_range(ps, NOVA_SB_SIZE, flags);
 }
 
@@ -166,7 +174,7 @@ static inline void nova_memlock_super(struct super_block *sb, unsigned long *fla
 {
 	struct nova_super_block *ps = nova_get_super(sb);
 
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memlock_range(ps, NOVA_SB_SIZE, flags);
 }
 
@@ -175,7 +183,7 @@ static inline void nova_memunlock_reserved(struct super_block *sb,
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memunlock_range(ps,
 			sbi->block_start * NOVA_DEF_BLOCK_SIZE_4K, flags);
 }
@@ -185,7 +193,7 @@ static inline void nova_memlock_reserved(struct super_block *sb,
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memlock_range(ps,
 			sbi->block_start * NOVA_DEF_BLOCK_SIZE_4K, flags);
 }
@@ -194,10 +202,10 @@ static inline void nova_memunlock_journal(struct super_block *sb, unsigned long 
 {
 	void *addr = nova_get_block(sb, NOVA_DEF_BLOCK_SIZE_4K * JOURNAL_START);
 
-	if (nova_range_check(sb, addr, NOVA_DEF_BLOCK_SIZE_4K))
+	if (nova_range_check(NOVA_SB(sb), addr, NOVA_DEF_BLOCK_SIZE_4K))
 		return;
 
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memunlock_range(addr, NOVA_DEF_BLOCK_SIZE_4K, flags);
 }
 
@@ -205,17 +213,17 @@ static inline void nova_memlock_journal(struct super_block *sb, unsigned long *f
 {
 	void *addr = nova_get_block(sb, NOVA_DEF_BLOCK_SIZE_4K * JOURNAL_START);
 
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memlock_range(addr, NOVA_DEF_BLOCK_SIZE_4K, flags);
 }
 
 static inline void nova_memunlock_inode(struct super_block *sb,
 					 struct nova_inode *pi, unsigned long *flags)
 {
-	if (nova_range_check(sb, pi, NOVA_INODE_SIZE))
+	if (nova_range_check(NOVA_SB(sb), pi, NOVA_INODE_SIZE))
 		return;
 
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memunlock_range(pi, NOVA_INODE_SIZE, flags);
 }
 
@@ -223,22 +231,22 @@ static inline void nova_memlock_inode(struct super_block *sb,
 				       struct nova_inode *pi, unsigned long *flags)
 {
 	/* nova_sync_inode(pi); */
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memlock_range(pi, NOVA_INODE_SIZE, flags);
 }
 
 static inline void nova_memunlock_block(struct super_block *sb, void *bp, unsigned long *flags)
 {
-	if (nova_range_check(sb, bp, sb->s_blocksize))
+	if (nova_range_check(NOVA_SB(sb), bp, sb->s_blocksize))
 		return;
 
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memunlock_range(bp, sb->s_blocksize, flags);
 }
 
 static inline void nova_memlock_block(struct super_block *sb, void *bp, unsigned long *flags)
 {
-	if (nova_is_protected(sb))
+	if (nova_is_protected(NOVA_SB(sb)))
 		__nova_memlock_range(bp, sb->s_blocksize, flags);
 }
 
@@ -248,15 +256,20 @@ static inline void nova_memlock_block(struct super_block *sb, void *bp, unsigned
 		memcpy_flushcache(addr, &tmp, sizeof(*(addr)));	\
 	} while (0)
 
-#define nova_unlock_assign(sb, addr, val, fence)		\
-	do {							\
-		unsigned long irq_flags = 0;			\
-		nova_memunlock_range(sb, addr, sizeof(*(addr)), &irq_flags);\
-		*(addr) = val;					\
-		nova_memlock_range(sb, addr, sizeof(*(addr)), &irq_flags);\
-		nova_flush_buffer(addr, sizeof(*(addr)), fence);\
-	} while (0)
+#define nova_unlock_write(sbi, addr, val)				\
+({									\
+	unsigned long irq_flags = 0;					\
+	nova_sbi_memunlock_range(sbi, addr, sizeof(*(addr)),		\
+		&irq_flags);						\
+	*(addr) = val;							\
+	nova_sbi_memlock_range(sbi, addr, sizeof(*(addr)),		\
+		&irq_flags);						\
+})
 
-#define nova_unlock_write(sb, addr, val, fence) nova_unlock_assign(sb, addr, val, fence)
+#define nova_unlock_write_flush(sbi, addr, val, fence)			\
+({									\
+	nova_unlock_write(sbi, addr, val);				\
+	nova_flush_buffer(addr, sizeof(*(addr)), fence);		\
+})
 
 #endif

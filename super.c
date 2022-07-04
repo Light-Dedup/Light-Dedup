@@ -518,7 +518,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	nova_append_dir_init_entries(sb, root_i, NOVA_ROOT_INO,
 					NOVA_ROOT_INO, epoch_id);
 
-	nova_memunlock(sb, &irq_flags); // TODO
+	nova_memunlock(sbi, &irq_flags); // TODO
 	init_regions(sbi);
 	memset_nt(
 		nova_sbi_blocknr_to_addr(sbi,
@@ -526,7 +526,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 		0,
 		PAGE_SIZE
 	);
-	nova_memlock(sb, &irq_flags);
+	nova_memlock(sbi, &irq_flags);
 
 	PERSISTENT_MARK();
 	PERSISTENT_BARRIER();

@@ -28,10 +28,13 @@
 #include "nova.h"
 #include "inode.h"
 
+DEFINE_PER_CPU(struct block_allocator_per_cpu, block_allocator_per_cpu);
+
 int nova_alloc_block_free_lists(struct super_block *sb)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct free_list *free_list;
+	struct block_allocator_per_cpu *allocator;
 	int i;
 
 	sbi->free_lists = kcalloc(sbi->cpus, sizeof(struct free_list),
@@ -45,6 +48,11 @@ int nova_alloc_block_free_lists(struct super_block *sb)
 		free_list->block_free_tree = RB_ROOT;
 		spin_lock_init(&free_list->s_lock);
 		free_list->index = i;
+	}
+
+	for_each_possible_cpu(i) {
+		allocator = &per_cpu(block_allocator_per_cpu, i);
+		allocator->blocknr = allocator->num = 0;
 	}
 
 	return 0;
@@ -1011,24 +1019,37 @@ int nova_new_data_blocks(struct super_block *sb,
 	}
 	return allocated;
 }
+
 unsigned long nova_new_data_block(struct super_block *sb,
-	enum nova_alloc_init zero, int cpu)
+	enum nova_alloc_init zero)
 {
-	int allocated;
+	int cpu;
+	struct block_allocator_per_cpu *allocator;
 	unsigned long blocknr;
 	INIT_TIMING(alloc_time);
 
 	NOVA_START_TIMING(new_data_blocks_t, alloc_time);
-	allocated = nova_new_blocks(sb, &blocknr, 1,
-			    NOVA_BLOCK_TYPE_4K, zero, DATA, cpu, ALLOC_FROM_HEAD);
-	NOVA_END_TIMING(new_data_blocks_t, alloc_time);
-	if (allocated < 0) {
-		nova_dbgv("FAILED: alloc data block\n");
-		return 0;
-	} else {
-		nova_dbgv("Alloc data blocknr %lu\n", blocknr);
-		return blocknr;
+	cpu = get_cpu();
+	allocator = &per_cpu(block_allocator_per_cpu, cpu);
+	if (allocator->num == 0) {
+		allocator->num = nova_new_blocks(sb, &allocator->blocknr,
+			(1 << (PAGE_SHIFT_2M - PAGE_SHIFT)),
+			NOVA_BLOCK_TYPE_4K, zero, DATA, ANY_CPU,
+			ALLOC_FROM_HEAD);
+		if (allocator->num <= 0) {
+			nova_dbgv("FAILED: alloc data block\n");
+			blocknr = 0;
+			goto err_out;
+		}
 	}
+	blocknr = allocator->blocknr;
+	allocator->blocknr += 1;
+	allocator->num -= 1;
+	nova_dbgv("Alloc data blocknr %lu\n", blocknr);
+err_out:
+	put_cpu();
+	NOVA_END_TIMING(new_data_blocks_t, alloc_time);
+	return blocknr;
 }
 
 // Allocate log blocks.	 The offset for the allocated block comes back in
