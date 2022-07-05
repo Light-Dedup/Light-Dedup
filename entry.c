@@ -532,7 +532,8 @@ void nova_write_entry(struct entry_allocator *allocator,
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
 	atomic64_set(&pentry->refcount, 1);
-	atomic64_set(&pentry->next_hint, 0);
+	atomic64_set(&pentry->next_hint,
+		cpu_to_le64(HINT_TRUST_DEGREE_THRESHOLD));
 	wmb();
 	BUG_ON(pentry->blocknr != 0);
 	pentry->blocknr = cpu_to_le64(blocknr);

@@ -17,17 +17,19 @@ struct nova_pmm_entry {
 	struct nova_fp fp;	// TODO: cpu_to_le64?
 	__le64 blocknr;
 	atomic64_t refcount;
-	// Lowest 3 bits are trust degree: [-4, 3]
+	// Lowest 3 bits are unsigned trust degree (<= 7). Initially 4.
 	// For each result matching the hint, the trust degree += 1
 	// For each result mismatching the hint, the trust degree -= 1
-	// If the trust degree < 0, then the hint is not taken.
+	// If the trust degree < 4, then the hint is not taken.
 	atomic64_t next_hint;
 };
 _Static_assert(sizeof(atomic64_t) == 8, "atomic64_t not 8B!");
 #define TRUST_DEGREE_BITS 3
+#define HINT_TRUST_DEGREE_THRESHOLD (1 << (TRUST_DEGREE_BITS - 1))
 #define TRUST_DEGREE_MASK ((1 << TRUST_DEGREE_BITS) - 1)
-#define TRUST_DEGREE_MAX ((1 << (TRUST_DEGREE_BITS - 1)) - 1)
-#define TRUST_DEGREE_MIN (1 << (TRUST_DEGREE_BITS - 1))
+#define HINT_OFFSET_MASK (~TRUST_DEGREE_MASK)
+#define TRUST_DEGREE_MAX ((1 << TRUST_DEGREE_BITS) - 1)
+#define TRUST_DEGREE_MIN 0
 
 #define REGION_SIZE PAGE_SIZE
 #define ENTRY_PER_REGION (REGION_SIZE / sizeof(struct nova_pmm_entry))
