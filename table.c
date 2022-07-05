@@ -535,20 +535,18 @@ static inline bool trust_degree_out_of_bound(uint8_t trust_degree)
 
 // Return 0: Successful
 // Return x (!= 0): The offset has been changed, and the new hint is x.
-static u64 __add_trust_degree(atomic64_t *next_hint, u64 offset_ori,
-	u64 offset_new, uint8_t trust_degree, int8_t delta, int8_t limit)
+static u64 __incr_trust_degree(atomic64_t *next_hint, u64 offset_ori,
+	uint8_t trust_degree)
 {
 	__le64 old_hint = cpu_to_le64(offset_ori | trust_degree);
 	__le64 tmp;
 	uint64_t hint;
 
 	while (1) {
-		if (trust_degree == limit)
+		if (trust_degree == TRUST_DEGREE_MAX)
 			return 0;
-		trust_degree += delta;
-		if (trust_degree_out_of_bound(trust_degree))
-			trust_degree = limit;
-		hint = offset_new | trust_degree;
+		trust_degree += 1;
+		hint = offset_ori | trust_degree;
 		tmp = atomic64_cmpxchg_relaxed(next_hint, old_hint,
 			cpu_to_le64(hint));
 		if (tmp == old_hint)
@@ -563,9 +561,43 @@ static u64 __add_trust_degree(atomic64_t *next_hint, u64 offset_ori,
 	}
 }
 
-static u64 add_trust_degree(struct nova_sb_info *sbi,
-	atomic64_t *next_hint, u64 offset_ori, u64 offset_new,
-	uint8_t trust_degree, int8_t delta, int8_t limit)
+// Update offset to offset_new if the resulting trust degree is not trustable.
+// Return 0: Successful
+// Return x (!= 0): The offset has been changed, and the new hint is x.
+static u64 __decr_trust_degree(atomic64_t *next_hint, u64 offset_ori,
+	u64 offset_new, uint8_t trust_degree)
+{
+	__le64 old_hint = cpu_to_le64(offset_ori | trust_degree);
+	__le64 tmp;
+	uint64_t hint;
+
+	while (1) {
+		if (trust_degree < TRUST_DEGREE_MIN + 2) {
+			trust_degree = TRUST_DEGREE_MIN;
+		} else {
+			trust_degree -= 2;
+		}
+		if (!hint_trustable(trust_degree)) {
+			hint = offset_new | trust_degree;
+		} else {
+			hint = offset_ori | trust_degree;
+		}
+		tmp = atomic64_cmpxchg_relaxed(next_hint, old_hint,
+			cpu_to_le64(hint));
+		if (tmp == old_hint)
+			return 0;
+		hint = le64_to_cpu(tmp);
+		if ((hint & HINT_OFFSET_MASK) != offset_ori) {
+			// The hinted fpentry has been changed.
+			return hint;
+		}
+		trust_degree = hint & TRUST_DEGREE_MASK;
+		old_hint = tmp;
+	}
+}
+
+static u64 incr_trust_degree(struct nova_sb_info *sbi, atomic64_t *next_hint,
+	u64 offset_ori, uint8_t trust_degree)
 {
 	u64 ret;
 	unsigned long irq_flags = 0;
@@ -574,8 +606,7 @@ static u64 add_trust_degree(struct nova_sb_info *sbi,
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
 	nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
 		&irq_flags);
-	ret = __add_trust_degree(next_hint, offset_ori, offset_new,
-		trust_degree, delta, limit);
+	ret = __incr_trust_degree(next_hint, offset_ori, trust_degree);
 	nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint), &irq_flags);
 	// nova_flush_cacheline(next_hint, false);
 	NOVA_END_TIMING(update_hint_t, update_hint_time);
@@ -586,8 +617,18 @@ static inline u64 decr_trust_degree(struct nova_sb_info *sbi,
 	atomic64_t *next_hint, u64 offset_ori, u64 offset_new,
 	uint8_t trust_degree)
 {
-	return add_trust_degree(sbi, next_hint, offset_ori, offset_new,
-		trust_degree, -1, TRUST_DEGREE_MIN);
+	u64 ret;
+	unsigned long irq_flags = 0;
+	INIT_TIMING(update_hint_time);
+	NOVA_START_TIMING(update_hint_t, update_hint_time);
+	nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
+		&irq_flags);
+	ret = __decr_trust_degree(next_hint, offset_ori, offset_new,
+		trust_degree);
+	nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint), &irq_flags);
+	// nova_flush_cacheline(next_hint, false);
+	NOVA_END_TIMING(update_hint_t, update_hint_time);
+	return ret;
 }
 
 static inline void attach_blocknr(struct nova_write_para_continuous *wp,
@@ -642,8 +683,7 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 	hint = __update_offset(next_hint, offset, trust_degree);
 	if ((hint & HINT_OFFSET_MASK) == offset) {
 		trust_degree = hint & TRUST_DEGREE_MASK;
-		__add_trust_degree(next_hint, offset, offset, trust_degree,
-			1, TRUST_DEGREE_MAX);
+		__incr_trust_degree(next_hint, offset, trust_degree);
 	}
 	nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint),
 		&irq_flags);
@@ -664,8 +704,7 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 	offset_new = nova_get_addr_off(sbi, wp->normal.last_accessed);
 	if (offset_new == offset) {
 		NOVA_STATS_ADD(hint_not_trusted_hit, 1);
-		add_trust_degree(sbi, next_hint, offset, offset, trust_degree,
-			1, TRUST_DEGREE_MAX);
+		incr_trust_degree(sbi, next_hint, offset, trust_degree);
 		incr_stream_trust_degree(wp);
 	} else {
 		NOVA_STATS_ADD(hint_not_trusted_miss, 1);
@@ -789,8 +828,7 @@ static int handle_hint(struct nova_sb_info *sbi,
 	if (ret < 0)
 		return ret;
 	if (ret == 1) {
-		add_trust_degree(sbi, next_hint, offset, offset, trust_degree,
-			1, TRUST_DEGREE_MAX);
+		incr_trust_degree(sbi, next_hint, offset, trust_degree);
 		incr_stream_trust_degree(wp);
 		return 0;
 	}
