@@ -486,15 +486,17 @@ void prefetch_block(const char *block) {
 static inline void incr_stream_trust_degree(
 	struct nova_write_para_continuous *wp)
 {
-	if (wp->stream_trust_degree < STREAM_TRUST_DEGREE_MAX)
+	if (wp->stream_trust_degree < TRUST_DEGREE_MAX)
 		wp->stream_trust_degree += 1;
 }
 
 static inline void decr_stream_trust_degree(
 	struct nova_write_para_continuous *wp)
 {
-	if (wp->stream_trust_degree > STREAM_TRUST_DEGREE_MIN)
-		wp->stream_trust_degree -= 1;
+	if (wp->stream_trust_degree < TRUST_DEGREE_MIN + 2)
+		wp->stream_trust_degree = TRUST_DEGREE_MIN;
+	else
+		wp->stream_trust_degree -= 2;
 }
 
 static inline bool hint_trustable(uint8_t trust_degree)
@@ -726,7 +728,7 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	unsigned long blocknr;
 
 	// Be conservative because prefetching consumes bandwidth.
-	if (wp->stream_trust_degree != STREAM_TRUST_DEGREE_MAX || offset == 0 ||
+	if (wp->stream_trust_degree != TRUST_DEGREE_MAX || offset == 0 ||
 			!hint_trustable(trust_degree))
 		return;
 	// Do not prefetch across syscall.
