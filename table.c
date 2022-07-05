@@ -663,33 +663,6 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 	return 0;
 }
 
-static void handle_hint_of_hint(struct nova_sb_info *sbi,
-	struct nova_write_para_continuous *wp, atomic64_t *next_hint)
-{
-	uint64_t hint = le64_to_cpu(atomic64_read(next_hint));
-	u64 offset = hint & ~TRUST_DEGREE_MASK;
-	uint8_t trust_degree = hint & TRUST_DEGREE_MASK;
-	struct nova_pmm_entry *pentry;
-	unsigned long blocknr;
-
-	// Be conservative because prefetching consumes bandwidth.
-	if (wp->stream_trust_degree != STREAM_TRUST_DEGREE_MAX || offset == 0 ||
-			trust_degree >= 4)
-		return;
-	// Do not prefetch across syscall.
-	if (wp->len < PAGE_SIZE * 2)
-		return;
-	pentry = nova_sbi_get_block(sbi, offset);
-	rcu_read_lock();
-	blocknr = le64_to_cpu(pentry->blocknr);
-	if (blocknr) {
-		prefetch_block(nova_sbi_blocknr_to_addr(sbi, blocknr));
-		wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
-		wp->prefetched_blocknr[0] = blocknr;
-	}
-	rcu_read_unlock();
-}
-
 // Return whether the hint is correct or not.
 static int check_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
@@ -697,33 +670,31 @@ static int check_hint(struct nova_sb_info *sbi,
 	unsigned long blocknr;
 	int ret;
 
-	handle_hint_of_hint(sbi, wp, &pentry->next_hint);
+	if (wp->stream_trust_degree == STREAM_TRUST_DEGREE_MAX) {
+		// Ensure that the block will not be freed while we are reading it.
+		rcu_read_lock();
+		blocknr = le64_to_cpu(pentry->blocknr);
+		if (blocknr != 0) {
+			prefetch_block(nova_sbi_blocknr_to_addr(sbi, blocknr));
+		}
+		rcu_read_unlock();
+	}
 	ret = copy_from_user_incr(sbi, wp);
 	if (ret < 0)
 		return ret;
 	// It is guaranteed that the last accessed entry will not be freed, because
 	// we are referencing it.
 	if (wp->normal.last_accessed != pentry) {
-		NOVA_STATS_ADD(predict_miss, 1);
 		// printk("Prediction miss: %lld\n", ret);
 		// BUG_ON(copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE));
 		// print(wp->kbuf);
 		// printk("\n");
 		// print(addr);
-		pentry = wp->normal.last_accessed;
 		ret = 0;
 	} else {
-		NOVA_STATS_ADD(predict_hit, 1);
+		NOVA_STATS_ADD(prefetch_hit, 1);
 		// printk("Prediction hit! blocknr = %ld, pentry = %p\n", blocknr, pentry);
 		ret = 1;
-	}
-	blocknr = le64_to_cpu(pentry->blocknr);
-	if (blocknr == wp->prefetched_blocknr[1] ||
-			blocknr == wp->prefetched_blocknr[0]) {
-		// The hit counts of prefetching is slightly underestimated
-		// because there is also probability that the current hint
-		// misses but the prefetched block hits.
-		NOVA_STATS_ADD(prefetch_hit, 1);
 	}
 	return ret;
 }

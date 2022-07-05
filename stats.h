@@ -221,8 +221,6 @@ enum stats_category {
 	dax_new_blocks,
 	inplace_new_blocks,
 	fdatasync,
-	predict_hit,
-	predict_miss,
 	no_hint,
 	hint_not_trusted_miss,
 	hint_not_trusted_hit,

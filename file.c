@@ -697,7 +697,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	put_cpu();
 	wp.normal.last_ref_entries[0] = NULL_PENTRY;
 	wp.normal.last_ref_entries[1] = NULL_PENTRY;
-	wp.prefetched_blocknr[0] = wp.prefetched_blocknr[1] = 0;
 	if (offset != 0) {
 		bytes = env.sb->s_blocksize - offset;
 		if (bytes > len)
