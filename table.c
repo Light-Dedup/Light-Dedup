@@ -193,6 +193,7 @@ static int nova_table_leaf_insert(
 	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 	pentry = nova_alloc_entry(table->entry_allocator, allocator_cpu);
 	if (IS_ERR(pentry)) {
+		put_cpu();
 		ret = PTR_ERR(pentry);
 		goto fail1;
 	}
