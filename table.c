@@ -188,6 +188,7 @@ static int nova_table_leaf_insert(
 	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 	pentry = nova_alloc_entry(table->entry_allocator, allocator_cpu);
 	if (IS_ERR(pentry)) {
+		put_cpu();
 		ret = PTR_ERR(pentry);
 		goto fail1;
 	}
@@ -649,9 +650,11 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 		return;
 	pentry = nova_sbi_get_block(sbi, offset);
 	blocknr = le64_to_cpu(pentry->blocknr);
-	prefetch_block(nova_sbi_blocknr_to_addr(sbi, blocknr));
-	wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
-	wp->prefetched_blocknr[0] = blocknr;
+	if (blocknr) {
+		prefetch_block(nova_sbi_blocknr_to_addr(sbi, blocknr));
+		wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
+		wp->prefetched_blocknr[0] = blocknr;
+	}
 }
 
 // Return whether the block is deduplicated successfully.
