@@ -699,8 +699,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	wp.normal.last_ref_entries[1] = NULL_PENTRY;
 	if (offset != 0) {
 		bytes = env.sb->s_blocksize - offset;
-		if (bytes > len)
-			bytes = len;
+		if (bytes > wp.len)
+			bytes = wp.len;
 		ret = nova_handle_head_tail_blocks(env.sb, env.inode, env.pos,
 			bytes, wp.kbuf);
 		if (ret)
@@ -713,6 +713,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto err_out1;
 		}
 		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
+		wp.ubuf += bytes;
+		wp.len -= bytes;
 		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp.normal);
 		if (ret < 0)
 			goto err_out1;
@@ -737,24 +739,27 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto err_out1;
 	}
 	if (wp.len != 0) {
-		ret = nova_handle_head_tail_blocks(env.sb, env.inode, env.pos,
-			wp.len, wp.kbuf);
+		bytes = wp.len;
+		ret = nova_handle_head_tail_blocks(env.sb, env.inode, env.pos, bytes,
+			wp.kbuf);
 		if (ret)
 			goto err_out1;
 		/* Now copy from user buf */
 		NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
-		if (copy_from_user(wp.kbuf, wp.ubuf, wp.len)) {
+		if (copy_from_user(wp.kbuf, wp.ubuf, bytes)) {
 			NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 			ret = -EFAULT;
 			goto err_out1;
 		}
 		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
+		wp.ubuf += bytes;
+		wp.len -= bytes;
 		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp.normal);
 		if (ret < 0)
 			goto err_out1;
 		wp.blocknr = wp.normal.blocknr;
 		wp.num = 1;
-		ret = advance(&env, wp.len, &wp);
+		ret = advance(&env, bytes, &wp);
 		if (ret < 0)
 			goto err_out1;
 	}
