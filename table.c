@@ -775,7 +775,6 @@ static int check_hint(struct nova_sb_info *sbi,
 	}
 	if (ret != 0) {
 		rcu_read_unlock();
-		NOVA_STATS_ADD(predict_miss, 1);
 		// printk("Prediction miss: %lld\n", ret);
 		// BUG_ON(copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE));
 		// print(wp->kbuf);
@@ -792,7 +791,6 @@ static int check_hint(struct nova_sb_info *sbi,
 	if (ret == false)
 		return 0;
 	// The blocknr will not be released now, because we are referencing it.
-	NOVA_STATS_ADD(predict_hit, 1);
 	if (blocknr == wp->prefetched_blocknr[1] ||
 			blocknr == wp->prefetched_blocknr[0]) {
 		// The hit counts of prefetching is slightly underestimated
@@ -830,10 +828,12 @@ static int handle_hint(struct nova_sb_info *sbi,
 	if (ret < 0)
 		return ret;
 	if (ret == 1) {
+		NOVA_STATS_ADD(predict_hit, 1);
 		incr_trust_degree(sbi, next_hint, offset, trust_degree);
 		incr_stream_trust_degree(wp);
 		return 0;
 	}
+	NOVA_STATS_ADD(predict_miss, 1);
 	BUG_ON(ret != 0);
 	ret = copy_from_user_incr(sbi, wp);
 	if (ret < 0)
