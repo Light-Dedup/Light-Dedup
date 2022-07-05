@@ -783,14 +783,6 @@ static int check_hint(struct nova_sb_info *sbi,
 		// print(addr);
 		return 0;
 	}
-	NOVA_STATS_ADD(predict_hit, 1);
-	if (blocknr == wp->prefetched_blocknr[1] ||
-			blocknr == wp->prefetched_blocknr[0]) {
-		// The hit counts of prefetching is slightly underestimated
-		// because there is also probability that the current hint
-		// misses but the prefetched block hits.
-		NOVA_STATS_ADD(prefetch_hit, 1);
-	}
 	nova_memunlock_range(sbi->sb, &pentry->refcount,
 		sizeof(pentry->refcount), &irq_flags);
 	ret = atomic64_add_unless(&pentry->refcount, 1, 0);
@@ -800,6 +792,14 @@ static int check_hint(struct nova_sb_info *sbi,
 	if (ret == false)
 		return 0;
 	// The blocknr will not be released now, because we are referencing it.
+	NOVA_STATS_ADD(predict_hit, 1);
+	if (blocknr == wp->prefetched_blocknr[1] ||
+			blocknr == wp->prefetched_blocknr[0]) {
+		// The hit counts of prefetching is slightly underestimated
+		// because there is also probability that the current hint
+		// misses but the prefetched block hits.
+		NOVA_STATS_ADD(prefetch_hit, 1);
+	}
 	attach_blocknr(wp, blocknr);
 	new_dirty_fpentry(wp->normal.last_ref_entries, pentry);
 	wp->normal.last_accessed = pentry;
