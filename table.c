@@ -757,13 +757,6 @@ static int check_hint(struct nova_sb_info *sbi,
 		// print(addr);
 		return 0;
 	}
-	if (blocknr == wp->prefetched_blocknr[1] ||
-			blocknr == wp->prefetched_blocknr[0]) {
-		// The hit counts of prefetching is slightly underestimated
-		// because there is also probability that the current hint
-		// misses but the prefetched block hits.
-		NOVA_STATS_ADD(prefetch_hit, 1);
-	}
 	ret = atomic64_add_unless(&pentry->refcount, 1, 0);
 	rcu_read_unlock();
 	if (ret == false)
