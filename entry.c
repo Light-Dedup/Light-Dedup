@@ -44,7 +44,7 @@ int nova_init_entry_allocator(struct nova_sb_info *sbi, struct entry_allocator *
 	if (ret < 0)
 		return ret;
 	regions = (char *)get_zeroed_page(GFP_KERNEL);
-	BUG_ON(regions == NULL);
+	BUG_ON(regions == NULL || ((uint64_t)regions & (PAGE_SIZE - 1)));
 	ret = xa_err(xa_store_bh(&allocator->valid_entry, (unsigned long)regions,
 		xa_mk_value(0), GFP_KERNEL));
 	BUG_ON(ret < 0); // TODO: Handle it
@@ -379,7 +379,7 @@ alloc_region(struct entry_allocator *allocator)
 {
 	char *new_region = (char *)get_zeroed_page(GFP_ATOMIC);
 	int ret;
-	BUG_ON(new_region == NULL);
+	BUG_ON(new_region == NULL || ((uint64_t)new_region & (PAGE_SIZE - 1)));
 	ret = xa_err(xa_store_bh(&allocator->valid_entry, (unsigned long)new_region,
 		xa_mk_value(0), GFP_ATOMIC));
 	BUG_ON(ret < 0);
@@ -516,13 +516,8 @@ void nova_write_entry(struct entry_allocator *allocator,
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
-#if 0
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct nova_sb_info *sbi = container_of(
-		meta_table, struct nova_sb_info, meta_table);
-	unsigned long blocknr = nova_get_addr_off(sbi, pentry) / PAGE_SIZE;
-	int16_t count = add_valid_count(&allocator->valid_entry, blocknr, -1);
+	unsigned long region = (unsigned long)pentry & ~(PAGE_SIZE - 1);
+	int16_t count = add_valid_count(&allocator->valid_entry, region, -1);
 
 	if (count == FREE_THRESHOLD) {
 		/*
@@ -533,15 +528,14 @@ void nova_free_entry(struct entry_allocator *allocator,
 		// TODO: Handle it
 		BUG_ON(nova_queue_push_ul(
 			&allocator->free_regions,
-			blocknr,
+			region,
 			GFP_ATOMIC
 		) < 0);
 		spin_unlock_bh(&allocator->lock);
 	}
-	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-	nova_unlock_write(sb, &pentry->flag, 0, true);
-#endif
-	BUG();
+	BUG_ON(pentry->blocknr == 0);
+	pentry->blocknr = 0;
+	PERSISTENT_BARRIER();
 }
 
 #if 0
