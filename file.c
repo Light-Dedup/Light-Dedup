@@ -243,6 +243,7 @@ static long nova_fallocate(struct file *file, int mode, loff_t offset,
 		// TODO: truncate_pagecache?
 		nova_truncate_file_blocks(inode, offset, offset + len,
 			epoch_id);
+		goto out;
 	}
 
 	inode->i_mtime = inode->i_ctime = current_time(inode);
