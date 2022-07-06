@@ -6,6 +6,7 @@
 
 #define ENTRY_PER_CACHELINE (CACHELINE_SIZE / sizeof(struct nova_pmm_entry))
 
+DECLARE_PER_CPU(uint8_t, stream_trust_degree_per_cpu);
 DECLARE_PER_CPU(struct nova_pmm_entry *, last_new_fpentry_per_cpu);
 
 static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocator *allocator)
@@ -13,6 +14,8 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 	int cpu;
 	for_each_possible_cpu(cpu) {
 		per_cpu(last_new_fpentry_per_cpu, cpu) = NULL_PENTRY;
+		per_cpu(stream_trust_degree_per_cpu, cpu) =
+			HINT_TRUST_DEGREE_THRESHOLD;
 	}
 	spin_lock_init(&allocator->lock);
 	return 0;
@@ -86,7 +89,8 @@ void nova_write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
 	atomic64_set(&pentry->refcount, 1);
-	atomic64_set(&pentry->next_hint, 0);
+	atomic64_set(&pentry->next_hint,
+		cpu_to_le64(HINT_TRUST_DEGREE_THRESHOLD));
 	wmb();
 	BUG_ON(pentry->blocknr != 0);
 	pentry->blocknr = cpu_to_le64(blocknr);
