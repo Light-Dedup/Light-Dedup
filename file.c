@@ -23,7 +23,7 @@
 #include "nova.h"
 #include "inode.h"
 
-DEFINE_PER_CPU(int8_t, stream_trust_degree_per_cpu);
+DEFINE_PER_CPU(uint8_t, stream_trust_degree_per_cpu);
 DEFINE_PER_CPU(struct nova_pmm_entry *, last_accessed_fpentry_per_cpu);
 DEFINE_PER_CPU(struct nova_pmm_entry *, last_new_fpentry_per_cpu);
 
