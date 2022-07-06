@@ -605,14 +605,10 @@ static inline u64 decr_trust_degree(struct nova_sb_info *sbi,
 	uint8_t trust_degree)
 {
 	u64 ret;
-	unsigned long irq_flags = 0;
 	INIT_TIMING(update_hint_time);
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
-	nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
-		&irq_flags);
 	ret = __decr_trust_degree(next_hint, offset_ori, offset_new,
 		trust_degree);
-	nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint), &irq_flags);
 	// nova_flush_cacheline(next_hint, false);
 	NOVA_END_TIMING(update_hint_t, update_hint_time);
 	return ret;
