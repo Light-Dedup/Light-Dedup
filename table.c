@@ -129,7 +129,7 @@ static int alloc_and_fill_block(
 	unsigned long irq_flags = 0;
 	INIT_TIMING(memcpy_time);
 
-	wp->blocknr = nova_new_data_block(sb, false);
+	wp->blocknr = nova_new_data_block(sb);
 	if (wp->blocknr == 0)
 		return -ENOSPC;
 	// printk("%s: Block %ld allocated", __func__, wp->blocknr);
