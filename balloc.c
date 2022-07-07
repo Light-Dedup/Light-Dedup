@@ -769,7 +769,7 @@ next:
 /* Return how many blocks allocated */
 static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 	struct free_list *free_list, unsigned short btype,
-	enum alloc_type atype, unsigned long num_blocks,
+	enum alloc_type atype, unsigned long num_blocks, bool try_superpage,
 	unsigned long *new_blocknr, enum nova_alloc_direction from_tail)
 {
 	struct rb_root *tree;
@@ -802,7 +802,7 @@ static long nova_alloc_blocks_in_free_list(struct super_block *sb,
 		temp = &(free_list->last_node->node);
 
 	/* Try huge block allocation for data blocks first */
-	if (IS_DATABLOCKS_2MB_ALIGNED(num_blocks, atype)) {
+	if (try_superpage && IS_DATABLOCKS_2MB_ALIGNED(num_blocks, atype)) {
 		ret_blocks = nova_alloc_superpage(sb, free_list,
 					num_blocks, new_blocknr, from_tail);
 		if (ret_blocks > 0 && *new_blocknr != 0) {
@@ -916,7 +916,7 @@ static int nova_get_candidate_free_list(struct super_block *sb)
 }
 
 static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
-	unsigned int num, unsigned short btype, int zero,
+	unsigned int num, bool try_superpage, unsigned short btype, int zero,
 	enum alloc_type atype, int cpuid, enum nova_alloc_direction from_tail)
 {
 	struct free_list *free_list;
@@ -957,7 +957,7 @@ retry:
 	}
 alloc:
 	ret_blocks = nova_alloc_blocks_in_free_list(sb, free_list, btype, atype,
-					num_blocks, &new_blocknr, from_tail);
+		num_blocks, try_superpage, &new_blocknr, from_tail);
 
 	if (ret_blocks > 0) {
 		if (atype == LOG) {
@@ -1003,7 +1003,7 @@ int nova_new_data_blocks(struct super_block *sb,
 	INIT_TIMING(alloc_time);
 
 	NOVA_START_TIMING(new_data_blocks_t, alloc_time);
-	allocated = nova_new_blocks(sb, blocknr, num,
+	allocated = nova_new_blocks(sb, blocknr, num, true,
 			    sih->i_blk_type, zero, DATA, cpu, from_tail);
 	NOVA_END_TIMING(new_data_blocks_t, alloc_time);
 	if (allocated < 0) {
@@ -1020,8 +1020,7 @@ int nova_new_data_blocks(struct super_block *sb,
 	return allocated;
 }
 
-unsigned long nova_new_data_block(struct super_block *sb,
-	enum nova_alloc_init zero)
+unsigned long nova_new_data_block(struct super_block *sb)
 {
 	int cpu;
 	struct block_allocator_per_cpu *allocator;
@@ -1033,8 +1032,8 @@ unsigned long nova_new_data_block(struct super_block *sb,
 	allocator = &per_cpu(block_allocator_per_cpu, cpu);
 	if (allocator->num == 0) {
 		allocator->num = nova_new_blocks(sb, &allocator->blocknr,
-			(1 << (PAGE_SHIFT_2M - PAGE_SHIFT)),
-			NOVA_BLOCK_TYPE_4K, zero, DATA, ANY_CPU,
+			(1 << (PAGE_SHIFT_2M - PAGE_SHIFT)), false,
+			NOVA_BLOCK_TYPE_4K, false, DATA, ANY_CPU,
 			ALLOC_FROM_HEAD);
 		if (allocator->num <= 0) {
 			nova_dbgv("FAILED: alloc data block\n");
@@ -1064,7 +1063,7 @@ int nova_new_log_blocks(struct super_block *sb,
 	INIT_TIMING(alloc_time);
 
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
-	allocated = nova_new_blocks(sb, blocknr, num,
+	allocated = nova_new_blocks(sb, blocknr, num, true,
 			    sih->i_blk_type, zero, LOG, cpu, from_tail);
 	NOVA_END_TIMING(new_log_blocks_t, alloc_time);
 	if (allocated < 0) {
@@ -1085,7 +1084,7 @@ unsigned long nova_new_log_block(struct super_block *sb,
 	INIT_TIMING(alloc_time);
 
 	NOVA_START_TIMING(new_log_blocks_t, alloc_time);
-	allocated = nova_new_blocks(sb, &blocknr, 1,
+	allocated = nova_new_blocks(sb, &blocknr, 1, true,
 			    NOVA_BLOCK_TYPE_4K, zero, LOG, cpu, ALLOC_FROM_HEAD);
 	NOVA_END_TIMING(new_log_blocks_t, alloc_time);
 	if (allocated < 0) {
