@@ -1020,8 +1020,7 @@ int nova_new_data_blocks(struct super_block *sb,
 	return allocated;
 }
 
-unsigned long nova_new_data_block(struct super_block *sb,
-	enum nova_alloc_init zero)
+unsigned long nova_new_data_block(struct super_block *sb)
 {
 	int cpu;
 	struct block_allocator_per_cpu *allocator;
@@ -1034,7 +1033,7 @@ unsigned long nova_new_data_block(struct super_block *sb,
 	if (allocator->num == 0) {
 		allocator->num = nova_new_blocks(sb, &allocator->blocknr,
 			(1 << (PAGE_SHIFT_2M - PAGE_SHIFT)),
-			NOVA_BLOCK_TYPE_4K, zero, DATA, ANY_CPU,
+			NOVA_BLOCK_TYPE_4K, false, DATA, ANY_CPU,
 			ALLOC_FROM_HEAD);
 		if (allocator->num <= 0) {
 			nova_dbgv("FAILED: alloc data block\n");
