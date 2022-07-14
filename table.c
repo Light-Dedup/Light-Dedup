@@ -756,7 +756,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	size_t i;
 	int64_t ret;
 	unsigned long irq_flags = 0;
-	INIT_TIMING(prefetch_block_time);
+	INIT_TIMING(prefetch_cmp_time);
 	INIT_TIMING(cmp_user_time);
 
 	// To make sure that pentry will not be released while we
@@ -772,11 +772,11 @@ static int check_hint(struct nova_sb_info *sbi,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
-	NOVA_START_TIMING(prefetch_block_t, prefetch_block_time);
-	for (i = 0; i < 8; ++i) {
-		prefetch_cacheline_from_nvm(addr + 8 * 256 + i * 256);
+	NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
+	for (i = 0; i < PAGE_SIZE; i += CACHELINE_SIZE) {
+		prefetch_cacheline_from_nvm(addr + i);
 	}
-	NOVA_END_TIMING(prefetch_block_t, prefetch_block_time);
+	NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 
 	handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 

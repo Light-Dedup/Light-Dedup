@@ -182,6 +182,7 @@ enum timing_category {
 	index_insert_new_entry_t,
 	memcmp_t,
 	prefetch_block_t,
+	prefetch_cmp_t,
 	table_init_t,
 	save_refcount_t,
 	save_entry_allocator_t,
