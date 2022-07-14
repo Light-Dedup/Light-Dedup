@@ -473,12 +473,16 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	return ret;
 }
 
+static inline void prefetch_cacheline_from_nvm(const void *x)
+{
+	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
+}
 void prefetch_block(const char *block) {
 	size_t i;
 	INIT_TIMING(prefetch_block_time);
 	NOVA_START_TIMING(prefetch_block_t, prefetch_block_time);
-	for (i = 0; i < PAGE_SIZE; i += 256) {
-		prefetch(block + i);
+	for (i = 0; i < 8; ++i) {
+		prefetch_cacheline_from_nvm(block + i * 256);
 	}
 	NOVA_END_TIMING(prefetch_block_t, prefetch_block_time);
 }
@@ -748,9 +752,11 @@ static int check_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
 {
 	unsigned long blocknr;
-	const void *addr;
+	const char *addr;
+	size_t i;
 	int64_t ret;
 	unsigned long irq_flags = 0;
+	INIT_TIMING(prefetch_block_time);
 	INIT_TIMING(cmp_user_time);
 
 	// To make sure that pentry will not be released while we
@@ -762,10 +768,18 @@ static int check_hint(struct nova_sb_info *sbi,
 		// The hinted fpentry has already been released
 		return 0;
 	}
-	handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 	// It is guaranteed that the block will not be freed,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
+
+	NOVA_START_TIMING(prefetch_block_t, prefetch_block_time);
+	for (i = 0; i < 8; ++i) {
+		prefetch_cacheline_from_nvm(addr + 8 * 256 + i * 256);
+	}
+	NOVA_END_TIMING(prefetch_block_t, prefetch_block_time);
+
+	handle_hint_of_hint(sbi, wp, &pentry->next_hint);
+
 	NOVA_START_TIMING(cmp_user_t, cmp_user_time);
 	ret = cmp_user_generic_const_8B_aligned(wp->ubuf, addr, PAGE_SIZE);
 	NOVA_END_TIMING(cmp_user_t, cmp_user_time);
