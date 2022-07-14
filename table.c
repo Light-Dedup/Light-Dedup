@@ -773,8 +773,13 @@ static int check_hint(struct nova_sb_info *sbi,
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
 	NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
-	for (i = 0; i < PAGE_SIZE; i += CACHELINE_SIZE) {
-		prefetch_cacheline_from_nvm(addr + i);
+	for (i = 8; i < 16; ++i) {
+		prefetch_cacheline_from_nvm(addr + i * 256);
+	}
+	for (i = 0; i < PAGE_SIZE; i += 256) {
+		prefetch_cacheline_from_nvm(addr + i + 64);
+		prefetch_cacheline_from_nvm(addr + i + 64 * 2);
+		prefetch_cacheline_from_nvm(addr + i + 64 * 3);
 	}
 	NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 
