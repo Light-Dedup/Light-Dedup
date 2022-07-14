@@ -473,9 +473,14 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	return ret;
 }
 
-static inline void prefetch_cacheline_from_nvm(const void *x)
+static inline void prefetcht0(const void *x)
 {
 	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
+}
+
+static inline void prefetcht2(const void *x)
+{
+	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
 }
 
 static inline void incr_stream_trust_degree(
@@ -747,7 +752,7 @@ static inline void prefetch_next_stage_1(struct nova_write_para_continuous *wp)
 		return;
 	NOVA_START_TIMING(prefetch_next_stage_1_t, time);
 	for (i = 0; i < 8; ++i) {
-		prefetch_cacheline_from_nvm(wp->block_prefetching + i * 256);
+		prefetcht2(wp->block_prefetching + i * 256);
 	}
 	NOVA_END_TIMING(prefetch_next_stage_1_t, time);
 }
@@ -761,7 +766,7 @@ static inline void prefetch_next_stage_2(struct nova_write_para_continuous *wp)
 		return;
 	NOVA_START_TIMING(prefetch_next_stage_2_t, time);
 	for (i = 8; i < 16; ++i) {
-		prefetch_cacheline_from_nvm(wp->block_prefetching + i * 256);
+		prefetcht2(wp->block_prefetching + i * 256);
 	}
 	NOVA_END_TIMING(prefetch_next_stage_2_t, time);
 	wp->block_prefetching = NULL;
@@ -778,6 +783,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	unsigned long irq_flags = 0;
 	INIT_TIMING(prefetch_cmp_time);
 	INIT_TIMING(cmp_user_time);
+	INIT_TIMING(hit_incr_ref_time);
 
 	// To make sure that pentry will not be released while we
 	// are reading its content.
@@ -795,9 +801,9 @@ static int check_hint(struct nova_sb_info *sbi,
 
 	NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 	for (i = 0; i < PAGE_SIZE; i += 256) {
-		prefetch_cacheline_from_nvm(addr + i + 64);
-		prefetch_cacheline_from_nvm(addr + i + 64 * 2);
-		prefetch_cacheline_from_nvm(addr + i + 64 * 3);
+		prefetcht0(addr + i + 64);
+		prefetcht0(addr + i + 64 * 2);
+		prefetcht0(addr + i + 64 * 3);
 	}
 	NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 
@@ -822,11 +828,15 @@ static int check_hint(struct nova_sb_info *sbi,
 		// print(addr);
 		return 0;
 	}
+
+	NOVA_START_TIMING(hit_incr_ref_t, hit_incr_ref_time);
 	nova_memunlock_range(sbi->sb, &pentry->refcount,
 		sizeof(pentry->refcount), &irq_flags);
 	ret = atomic64_add_unless(&pentry->refcount, 1, 0);
 	nova_memlock_range(sbi->sb, &pentry->refcount,
 		sizeof(pentry->refcount), &irq_flags);
+	NOVA_END_TIMING(hit_incr_ref_t, hit_incr_ref_time);
+
 	rcu_read_unlock();
 	if (ret == false)
 		return 0;

@@ -168,6 +168,7 @@ const char *Timingstring[TIMING_NUM] = {
 	"memcpy_data_block",
 	"incr_continuous",
 	"cmp_user",
+	"hit_incr_ref",
 	"update_hint",
 	"alloc_region",
 	"add_valid_count",
