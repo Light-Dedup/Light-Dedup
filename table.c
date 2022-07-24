@@ -602,7 +602,7 @@ static u64 incr_trust_degree(struct nova_sb_info *sbi, atomic64_t *next_hint,
 	u64 offset_ori, uint8_t trust_degree)
 {
 	u64 ret;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(update_hint_time);
 
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
@@ -800,11 +800,8 @@ static int check_hint(struct nova_sb_info *sbi,
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
 	NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
-	for (i = 0; i < PAGE_SIZE; i += 256) {
-		prefetcht0(addr + i + 64);
-		prefetcht0(addr + i + 64 * 2);
-		prefetcht0(addr + i + 64 * 3);
-	}
+	for (i = 0; i < PAGE_SIZE; i += 64)
+		prefetcht0(addr + i);
 	NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 
 	prefetch_next_stage_1(wp);
