@@ -620,7 +620,7 @@ static inline u64 decr_trust_degree(struct nova_sb_info *sbi,
 	uint8_t trust_degree)
 {
 	u64 ret;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(update_hint_time);
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
 	// nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
@@ -780,7 +780,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	const char *addr;
 	size_t i;
 	int64_t ret;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(prefetch_cmp_time);
 	INIT_TIMING(cmp_user_time);
 	INIT_TIMING(hit_incr_ref_time);
