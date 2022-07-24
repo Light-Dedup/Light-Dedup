@@ -97,6 +97,7 @@ struct nova_write_para_continuous {
 	struct nova_write_para_normal normal;
 	// Used internally
 	char *kbuf;
+	const char *block_prefetching;
 	// Depends on the results of previous hints.
 	// [-4, 3]
 	uint8_t stream_trust_degree;
