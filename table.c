@@ -50,7 +50,7 @@ const struct rhashtable_params nova_rht_params = {
 static inline struct nova_rht_entry* nova_rht_entry_alloc(
 	struct nova_mm_table *table)
 {
-	return kmem_cache_alloc(table->rht_entry_cache, GFP_KERNEL);
+	return kmem_cache_alloc(table->rht_entry_cache, GFP_ATOMIC);
 }
 
 static void nova_rht_entry_free(void *entry, void *arg)
@@ -101,7 +101,7 @@ static void nova_table_leaf_delete(
 	// Remove the entry first to make it invisible to other threads.
 	int ret = rhashtable_remove_fast(rht, &entry->node, nova_rht_params);
 	BUG_ON(ret < 0);
-	task = kmalloc(sizeof(struct rht_entry_free_task), GFP_KERNEL);
+	task = kmalloc(sizeof(struct rht_entry_free_task), GFP_ATOMIC);
 	if (task) {
 		task->allocator = table->entry_allocator;
 		task->entry = entry;
@@ -466,14 +466,14 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	return ret;
 }
 
-void prefetch_block(const char *block) {
-	size_t i;
-	INIT_TIMING(prefetch_block_time);
-	NOVA_START_TIMING(prefetch_block_t, prefetch_block_time);
-	for (i = 0; i < PAGE_SIZE; i += 256) {
-		prefetch(block + i);
-	}
-	NOVA_END_TIMING(prefetch_block_t, prefetch_block_time);
+static inline void prefetcht0(const void *x)
+{
+	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
+}
+
+static inline void prefetcht2(const void *x)
+{
+	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
 }
 
 static inline void incr_stream_trust_degree(
@@ -595,14 +595,14 @@ static u64 incr_trust_degree(struct nova_sb_info *sbi, atomic64_t *next_hint,
 	u64 offset_ori, uint8_t trust_degree)
 {
 	u64 ret;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(update_hint_time);
 
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
-	nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
-		&irq_flags);
+	// nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
+	// 	&irq_flags);
 	ret = __incr_trust_degree(next_hint, offset_ori, trust_degree);
-	nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint), &irq_flags);
+	// nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint), &irq_flags);
 	// nova_flush_cacheline(next_hint, false);
 	NOVA_END_TIMING(update_hint_t, update_hint_time);
 	return ret;
@@ -613,14 +613,14 @@ static inline u64 decr_trust_degree(struct nova_sb_info *sbi,
 	uint8_t trust_degree)
 {
 	u64 ret;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(update_hint_time);
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
-	nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
-		&irq_flags);
+	// nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
+	// 	&irq_flags);
 	ret = __decr_trust_degree(next_hint, offset_ori, offset_new,
 		trust_degree);
-	nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint), &irq_flags);
+	// nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint), &irq_flags);
 	// nova_flush_cacheline(next_hint, false);
 	NOVA_END_TIMING(update_hint_t, update_hint_time);
 	return ret;
@@ -664,7 +664,7 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 	u64 offset;
 	uint64_t hint;
 	int ret;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(update_hint_time);
 
 	ret = copy_from_user_incr(sbi, wp);
@@ -673,15 +673,15 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 	NOVA_STATS_ADD(no_hint, 1);
 	offset = nova_get_addr_off(sbi, wp->normal.last_accessed);
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
-	nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
-		&irq_flags);
+	// nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
+	// 	&irq_flags);
 	hint = __update_offset(next_hint, offset, trust_degree);
 	if ((hint & HINT_OFFSET_MASK) == offset) {
 		trust_degree = hint & TRUST_DEGREE_MASK;
 		__incr_trust_degree(next_hint, offset, trust_degree);
 	}
-	nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint),
-		&irq_flags);
+	// nova_sbi_memlock_range(sbi, next_hint, sizeof(*next_hint),
+	// 	&irq_flags);
 	// nova_flush_cacheline(next_hint, false);
 	NOVA_END_TIMING(update_hint_t, update_hint_time);
 	return 0;
@@ -730,10 +730,39 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	pentry = nova_sbi_get_block(sbi, offset);
 	blocknr = le64_to_cpu(pentry->blocknr);
 	if (blocknr) {
-		prefetch_block(nova_sbi_blocknr_to_addr(sbi, blocknr));
+		wp->block_prefetching = nova_sbi_blocknr_to_addr(sbi, blocknr);
 		wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
 		wp->prefetched_blocknr[0] = blocknr;
 	}
+}
+
+static inline void prefetch_next_stage_1(struct nova_write_para_continuous *wp)
+{
+	size_t i;
+	INIT_TIMING(time);
+
+	if (wp->block_prefetching == NULL)
+		return;
+	NOVA_START_TIMING(prefetch_next_stage_1_t, time);
+	for (i = 0; i < 8; ++i) {
+		prefetcht2(wp->block_prefetching + i * 256);
+	}
+	NOVA_END_TIMING(prefetch_next_stage_1_t, time);
+}
+
+static inline void prefetch_next_stage_2(struct nova_write_para_continuous *wp)
+{
+	size_t i;
+	INIT_TIMING(time);
+
+	if (wp->block_prefetching == NULL)
+		return;
+	NOVA_START_TIMING(prefetch_next_stage_2_t, time);
+	for (i = 8; i < 16; ++i) {
+		prefetcht2(wp->block_prefetching + i * 256);
+	}
+	NOVA_END_TIMING(prefetch_next_stage_2_t, time);
+	wp->block_prefetching = NULL;
 }
 
 // Return whether the block is deduplicated successfully.
@@ -741,10 +770,13 @@ static int check_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
 {
 	unsigned long blocknr;
-	const void *addr;
+	const char *addr;
+	size_t i;
 	int64_t ret;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
+	INIT_TIMING(prefetch_cmp_time);
 	INIT_TIMING(cmp_user_time);
+	INIT_TIMING(hit_incr_ref_time);
 
 	// To make sure that pentry will not be released while we
 	// are reading its content.
@@ -759,9 +791,20 @@ static int check_hint(struct nova_sb_info *sbi,
 	// It is guaranteed that the block will not be freed,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
+
+	NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
+	for (i = 0; i < PAGE_SIZE; i += 64)
+		prefetcht0(addr + i);
+	NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
+
+	prefetch_next_stage_1(wp);
+
 	NOVA_START_TIMING(cmp_user_t, cmp_user_time);
 	ret = cmp_user_generic_const_8B_aligned(wp->ubuf, addr, PAGE_SIZE);
 	NOVA_END_TIMING(cmp_user_t, cmp_user_time);
+
+	prefetch_next_stage_2(wp);
+
 	if (ret < 0) {
 		rcu_read_unlock();
 		return -EFAULT;
@@ -775,11 +818,15 @@ static int check_hint(struct nova_sb_info *sbi,
 		// print(addr);
 		return 0;
 	}
-	nova_memunlock_range(sbi->sb, &pentry->refcount,
-		sizeof(pentry->refcount), &irq_flags);
+
+	NOVA_START_TIMING(hit_incr_ref_t, hit_incr_ref_time);
+	// nova_memunlock_range(sbi->sb, &pentry->refcount,
+	// 	sizeof(pentry->refcount), &irq_flags);
 	ret = atomic64_add_unless(&pentry->refcount, 1, 0);
-	nova_memlock_range(sbi->sb, &pentry->refcount,
-		sizeof(pentry->refcount), &irq_flags);
+	// nova_memlock_range(sbi->sb, &pentry->refcount,
+	// 	sizeof(pentry->refcount), &irq_flags);
+	NOVA_END_TIMING(hit_incr_ref_t, hit_incr_ref_time);
+
 	rcu_read_unlock();
 	if (ret == false)
 		return 0;
@@ -864,9 +911,12 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	struct nova_pmm_entry *last_pentry;
 	bool first = true;
 	int ret = 0;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(time);
 
 	NOVA_START_TIMING(incr_continuous_t, time);
+	// Unlock here because it seems that wprotect will affect prefetching
+	nova_memunlock(sbi, &irq_flags);
 	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
 		last_pentry = get_last_accessed(wp, !first);
 		if (last_pentry) {
@@ -880,6 +930,7 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 		wp->len -= PAGE_SIZE;
 		first = false;
 	}
+	nova_memlock(sbi, &irq_flags);
 	NOVA_END_TIMING(incr_continuous_t, time);
 	return ret;
 }
@@ -902,7 +953,7 @@ static void *table_save_local_arg_factory(void *factory_arg) {
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct table_save_local_arg *local_arg = kmalloc(
-		sizeof(struct table_save_local_arg), GFP_KERNEL);
+		sizeof(struct table_save_local_arg), GFP_ATOMIC);
 	local_arg->cur = 0;
 	local_arg->end = 0;
 	local_arg->rec = nova_sbi_blocknr_to_addr(
