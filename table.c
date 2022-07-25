@@ -49,7 +49,7 @@ const struct rhashtable_params nova_rht_params = {
 static inline struct nova_rht_entry* nova_rht_entry_alloc(
 	struct nova_mm_table *table)
 {
-	return kmem_cache_alloc(table->rht_entry_cache, GFP_KERNEL);
+	return kmem_cache_alloc(table->rht_entry_cache, GFP_ATOMIC);
 }
 
 static void nova_rht_entry_free(void *entry, void *arg)
@@ -91,7 +91,7 @@ static void nova_table_leaf_delete(
 	// Remove the entry first to make it invisible to other threads.
 	int ret = rhashtable_remove_fast(rht, &entry->node, nova_rht_params);
 	BUG_ON(ret < 0);
-	task = kmalloc(sizeof(struct rht_entry_free_task), GFP_KERNEL);
+	task = kmalloc(sizeof(struct rht_entry_free_task), GFP_ATOMIC);
 	if (task) {
 		task->allocator = table->entry_allocator;
 		task->entry = entry;
@@ -492,9 +492,12 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
 	int ret = 0;
+	unsigned long irq_flags = 0;
 	INIT_TIMING(time);
 
 	NOVA_START_TIMING(incr_continuous_t, time);
+	// Unlock here because it seems that wprotect will affect prefetching
+	nova_memunlock(sbi, &irq_flags);
 	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
 		ret = copy_from_user_incr(sbi, wp);
 		if (ret < 0)
@@ -502,6 +505,7 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 		wp->ubuf += PAGE_SIZE;
 		wp->len -= PAGE_SIZE;
 	}
+	nova_memlock(sbi, &irq_flags);
 	NOVA_END_TIMING(incr_continuous_t, time);
 	return ret;
 }
@@ -524,7 +528,7 @@ static void *table_save_local_arg_factory(void *factory_arg) {
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct table_save_local_arg *local_arg = kmalloc(
-		sizeof(struct table_save_local_arg), GFP_KERNEL);
+		sizeof(struct table_save_local_arg), GFP_ATOMIC);
 	local_arg->cur = 0;
 	local_arg->end = 0;
 	local_arg->rec = nova_sbi_blocknr_to_addr(
