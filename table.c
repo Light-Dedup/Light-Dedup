@@ -214,10 +214,8 @@ retry:
 	nova_memlock_range(sb, &pentry->refcount,
 		sizeof(pentry->refcount), &irq_flags);
 	rcu_read_unlock();
-	if (wp->base.refcount == 0) {
-		schedule();
-		goto retry;
-	}
+	if (wp->base.refcount == 0)
+		return -EAGAIN;
 	wp->base.refcount += 1;
 	new_dirty_fpentry(wp->last_ref_entries, pentry);
 	wp->last_accessed = pentry;
@@ -344,8 +342,8 @@ int nova_table_upsert_decr1(
 	return 0;
 }
 
-int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
-	struct nova_write_para_normal *wp)
+static int nova_fp_table_incr_atomic(struct nova_mm_table *table,
+	const void *addr, struct nova_write_para_normal *wp)
 {
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -357,6 +355,19 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	wp->addr = addr;
 	ret = nova_table_upsert_normal(table, wp);
 	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
+	return ret;
+}
+
+int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
+	struct nova_write_para_normal *wp)
+{
+	int ret;
+	while (1) {
+		ret = nova_fp_table_incr_atomic(table, addr, wp);
+		if (likely(ret != -EAGAIN))
+			break;
+		schedule();
+	};
 	return ret;
 }
 
@@ -544,7 +555,8 @@ static int copy_from_user_incr(struct nova_sb_info *sbi,
 	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 	if (ret)
 		return -EFAULT;
-	ret = nova_fp_table_incr(&sbi->meta_table.metas, wp->kbuf, &wp->normal);
+	ret = nova_fp_table_incr_atomic(&sbi->meta_table.metas, wp->kbuf,
+		&wp->normal);
 	if (ret < 0)
 		return ret;
 	attach_blocknr(wp, wp->normal.blocknr);
@@ -799,6 +811,16 @@ get_last_accessed(struct nova_write_para_continuous *wp, bool check)
 	return last_pentry;
 }
 
+static int handle_last_accessed_pentry(struct nova_sb_info *sbi,
+	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
+{
+	if (pentry) {
+		return handle_hint(sbi, wp, &pentry->next_hint);
+	} else {
+		return copy_from_user_incr(sbi, wp);
+	}
+}
+
 int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
@@ -813,10 +835,13 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	nova_memunlock(sbi, &irq_flags);
 	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
 		last_pentry = get_last_accessed(wp, !first);
-		if (last_pentry) {
-			ret = handle_hint(sbi, wp, &last_pentry->next_hint);
-		} else {
-			ret = copy_from_user_incr(sbi, wp);
+		while (1) {
+			ret = handle_last_accessed_pentry(sbi, wp, last_pentry);
+			if (likely(ret != -EAGAIN))
+				break;
+			nova_memlock(sbi, &irq_flags);
+			schedule();
+			nova_memunlock(sbi, &irq_flags);
 		}
 		if (ret < 0)
 			break;
