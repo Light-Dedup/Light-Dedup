@@ -287,10 +287,8 @@ retry:
 	nova_memlock_range(sb, &pentry->refcount,
 		sizeof(pentry->refcount), &irq_flags);
 	rcu_read_unlock();
-	if (wp->base.refcount == 0) {
-		schedule();
-		goto retry;
-	}
+	if (wp->base.refcount == 0)
+		return -EAGAIN;
 	wp->base.refcount += 1;
 	if (!in_the_same_cacheline(wp->last_ref_entry, pentry))
 		nova_flush_entry_if_not_null(wp->last_ref_entry, false);
@@ -441,8 +439,8 @@ int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
 	return ret;
 }
 
-int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
-	struct nova_write_para_normal *wp)
+static int nova_fp_table_incr_atomic(struct nova_mm_table *table,
+	const void *addr, struct nova_write_para_normal *wp)
 {
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
@@ -454,6 +452,19 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	wp->addr = addr;
 	ret = nova_table_upsert_normal(table, wp);
 	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
+	return ret;
+}
+
+int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
+	struct nova_write_para_normal *wp)
+{
+	int ret;
+	while (1) {
+		ret = nova_fp_table_incr_atomic(table, addr, wp);
+		if (likely(ret != -EAGAIN))
+			break;
+		schedule();
+	};
 	return ret;
 }
 
@@ -481,7 +492,8 @@ static int copy_from_user_incr(struct nova_sb_info *sbi,
 	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 	if (ret)
 		return -EFAULT;
-	ret = nova_fp_table_incr(&sbi->meta_table.metas, wp->kbuf, &wp->normal);
+	ret = nova_fp_table_incr_atomic(&sbi->meta_table.metas, wp->kbuf,
+		&wp->normal);
 	if (ret < 0)
 		return ret;
 	attach_blocknr(wp, wp->normal.blocknr);
@@ -499,7 +511,14 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	// Unlock here because it seems that wprotect will affect prefetching
 	nova_memunlock(sbi, &irq_flags);
 	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
-		ret = copy_from_user_incr(sbi, wp);
+		while (1) {
+			ret = copy_from_user_incr(sbi, wp);
+			if (likely(ret != -EAGAIN))
+				break;
+			nova_memlock(sbi, &irq_flags);
+			schedule();
+			nova_memunlock(sbi, &irq_flags);
+		}
 		if (ret < 0)
 			break;
 		wp->ubuf += PAGE_SIZE;
