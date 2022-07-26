@@ -9,6 +9,16 @@
 
 // #define static _Static_assert(1, "2333");
 
+static inline void prefetcht0(const void *x)
+{
+	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
+}
+
+static inline void prefetcht2(const void *x)
+{
+	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
+}
+
 struct nova_rht_entry {
 	struct rhash_head node;
 	struct nova_fp fp;
@@ -221,11 +231,14 @@ fail0:
 // True: Not equal. False: Equal
 static bool cmp_content(struct super_block *sb, unsigned long blocknr, const void *addr) {
 	INIT_TIMING(memcmp_time);
-	const void *content;
+	const char *content;
+	size_t i;
 	bool res;
 	NOVA_START_TIMING(memcmp_t, memcmp_time);
 	content = nova_blocknr_to_addr(sb, blocknr);
-	res = cmp64(content, addr);
+	for (i = 0; i < PAGE_SIZE; i += 64)
+		prefetcht0(content + i);
+	res = cmp64((const uint64_t *)content, addr);
 	NOVA_END_TIMING(memcmp_t, memcmp_time);
 	if (res) {
 		print(content);
