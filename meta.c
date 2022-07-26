@@ -18,6 +18,7 @@ int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
 		ret = -ENOMEM;
 		goto err_out1;
 	}
+	atomic64_set(&table->thread_num, 0);
 	ret = nova_table_init(sb, &table->metas, nelem_hint);
 	if (ret < 0)
 		goto err_out2;
