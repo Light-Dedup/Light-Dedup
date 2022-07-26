@@ -10,6 +10,16 @@
 
 // #define static _Static_assert(1, "2333");
 
+static inline void prefetcht0(const void *x)
+{
+	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
+}
+
+static inline void prefetcht2(const void *x)
+{
+	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
+}
+
 struct nova_rht_entry {
 	struct rhash_head node;
 	struct nova_fp_partial fp_partial;
@@ -449,16 +459,6 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 		schedule();
 	};
 	return ret;
-}
-
-static inline void prefetcht0(const void *x)
-{
-	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
-}
-
-static inline void prefetcht2(const void *x)
-{
-	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
 }
 
 static inline void incr_stream_trust_degree(
