@@ -232,17 +232,9 @@ fail0:
 static bool cmp_content(struct super_block *sb, unsigned long blocknr, const void *addr) {
 	INIT_TIMING(memcmp_time);
 	const char *content;
-	size_t i;
 	bool res;
 	NOVA_START_TIMING(memcmp_t, memcmp_time);
 	content = nova_blocknr_to_addr(sb, blocknr);
-	for (i = 0; i < 16; ++i)
-		prefetcht0(content + i * 256);
-	for (i = 0; i < 16; ++i) {
-		prefetcht0(content + i * 256 + 64);
-		prefetcht0(content + i * 256 + 64 * 2);
-		prefetcht0(content + i * 256 + 64 * 3);
-	}
 	res = cmp64((const uint64_t *)content, addr);
 	NOVA_END_TIMING(memcmp_t, memcmp_time);
 	if (res) {
