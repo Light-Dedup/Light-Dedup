@@ -489,16 +489,6 @@ static inline void prefetcht0(const void *x)
 	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
 }
 
-void prefetch_block(const char *block) {
-	size_t i;
-	INIT_TIMING(prefetch_block_time);
-	NOVA_START_TIMING(prefetch_block_t, prefetch_block_time);
-	for (i = 0; i < 8 * 256; i += 256) {
-		prefetcht0(block + i);
-	}
-	NOVA_END_TIMING(prefetch_block_t, prefetch_block_time);
-}
-
 static inline void incr_stream_trust_degree(
 	struct nova_write_para_continuous *wp)
 {
@@ -734,25 +724,81 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 	return 0;
 }
 
+static inline void prefetch_stage_1(struct nova_write_para_continuous *wp)
+{
+	size_t i;
+	INIT_TIMING(time);
+
+	if (wp->block_prefetching == NULL)
+		return;
+	NOVA_START_TIMING(prefetch_stage_1_t, time);
+	for (i = 0; i < 8; ++i) {
+		prefetcht0(wp->block_prefetching + i * 256);
+	}
+	NOVA_END_TIMING(prefetch_stage_1_t, time);
+}
+
+static inline void prefetch_stage_2(struct nova_write_para_continuous *wp)
+{
+	size_t i;
+	INIT_TIMING(time);
+
+	if (wp->block_prefetching == NULL)
+		return;
+	NOVA_START_TIMING(prefetch_stage_2_t, time);
+	for (i = 8; i < 16; ++i) {
+		prefetcht0(wp->block_prefetching + i * 256);
+	}
+	NOVA_END_TIMING(prefetch_stage_2_t, time);
+	wp->block_prefetching = NULL;
+}
+
 // Return whether the block is deduplicated successfully.
 static int check_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
 {
+	struct nova_mm_table *table = &sbi->meta_table.metas;
 	unsigned long blocknr;
 	int64_t ret;
+	INIT_TIMING(copy_from_user_time);
+	INIT_TIMING(incr_ref_time);
 
+	// Ensure that the block will not be freed while we are reading it.
+	rcu_read_lock();
 	if (wp->stream_trust_degree == TRUST_DEGREE_MAX) {
-		// Ensure that the block will not be freed while we are reading it.
-		rcu_read_lock();
 		blocknr = le64_to_cpu(pentry->blocknr);
 		if (blocknr != 0) {
-			prefetch_block(nova_sbi_blocknr_to_addr(sbi, blocknr));
+			wp->block_prefetching =
+				nova_sbi_blocknr_to_addr(sbi, blocknr);
 		}
-		rcu_read_unlock();
 	}
-	ret = copy_from_user_incr(sbi, wp);
-	if (ret < 0)
+
+	prefetch_stage_1(wp);
+
+	NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
+	ret = copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE);
+	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
+	if (ret) {
+		rcu_read_unlock();
+		return -EFAULT;
+	}
+
+	NOVA_START_TIMING(incr_ref_t, incr_ref_time);
+	ret = nova_fp_calc(&sbi->meta_table.fp_ctx, wp->kbuf,
+		&wp->normal.base.fp);
+	BUG_ON(ret);
+
+	prefetch_stage_2(wp);
+
+	wp->normal.addr = wp->kbuf;
+	ret = nova_table_upsert_normal(table, &wp->normal);
+	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
+	if (ret < 0) {
+		rcu_read_unlock();
 		return ret;
+	}
+
+	attach_blocknr(wp, wp->normal.blocknr);
 
 	// It is guaranteed that the last accessed entry will not be freed, because
 	// we are referencing it.
