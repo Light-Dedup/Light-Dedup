@@ -12,6 +12,7 @@ struct nova_meta_table {
 
     struct nova_mm_table      metas;
 	struct entry_allocator entry_allocator;
+	atomic64_t thread_num;
 };
 
 int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
