@@ -126,7 +126,7 @@ static int alloc_and_fill_block(
 	struct nova_write_para_normal *wp)
 {
 	void *xmem;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(memcpy_time);
 
 	wp->blocknr = nova_new_data_block(sb);
@@ -134,11 +134,11 @@ static int alloc_and_fill_block(
 		return -ENOSPC;
 	// printk("%s: Block %ld allocated", __func__, wp->blocknr);
 	xmem = nova_blocknr_to_addr(sb, wp->blocknr);
-	nova_memunlock_block(sb, xmem, &irq_flags);
+	// nova_memunlock_block(sb, xmem, &irq_flags);
 	NOVA_START_TIMING(memcpy_data_block_t, memcpy_time);
 	memcpy_flushcache((char *)xmem, (const char *)wp->addr, 4096);
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
-	nova_memlock_block(sb, xmem, &irq_flags);
+	// nova_memlock_block(sb, xmem, &irq_flags);
 	// wp->refcount = wp->base.delta;
 	// printk("xmem = %pK", xmem);
 	return 0;
@@ -257,7 +257,7 @@ static int upsert_block(struct nova_mm_table *table,
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	int ret;
 	INIT_TIMING(mem_bucket_find_time);
 
@@ -294,11 +294,11 @@ retry:
 		// 	*(uint64_t *)addr, entry->fp_strong.u64s[0], entry->fp_strong.u64s[1], entry->fp_strong.u64s[2], entry->fp_strong.u64s[3]);
 	}
 	wp->blocknr = blocknr;// retrieval block info
-	nova_memunlock_range(sb, &pentry->refcount,
-		sizeof(pentry->refcount), &irq_flags);
+	// nova_memunlock_range(sb, &pentry->refcount,
+	// 	sizeof(pentry->refcount), &irq_flags);
 	wp->base.refcount = atomic64_fetch_add_unless(&pentry->refcount, 1, 0);
-	nova_memlock_range(sb, &pentry->refcount,
-		sizeof(pentry->refcount), &irq_flags);
+	// nova_memlock_range(sb, &pentry->refcount,
+	// 	sizeof(pentry->refcount), &irq_flags);
 	rcu_read_unlock();
 	if (wp->base.refcount == 0)
 		return -EAGAIN;
