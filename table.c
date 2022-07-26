@@ -781,8 +781,6 @@ static int check_hint(struct nova_sb_info *sbi,
 		}
 	}
 
-	prefetch_stage_1(wp);
-
 	NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
 	ret = copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE);
 	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
@@ -790,6 +788,8 @@ static int check_hint(struct nova_sb_info *sbi,
 		rcu_read_unlock();
 		return -EFAULT;
 	}
+
+	prefetch_stage_1(wp);
 
 	NOVA_START_TIMING(incr_ref_t, incr_ref_time);
 	ret = nova_fp_calc(&sbi->meta_table.fp_ctx, wp->kbuf,
