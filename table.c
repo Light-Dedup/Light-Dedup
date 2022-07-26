@@ -11,6 +11,16 @@
 
 #define NOVA_TABLE_NOT_FOUND ((uint64_t)-1)
 
+static inline void prefetcht0(const void *x)
+{
+	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
+}
+
+static inline void prefetcht2(const void *x)
+{
+	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
+}
+
 struct nova_write_para_entry {
 	struct nova_write_para_base base;
 	struct nova_pmm_entry *pentry;
@@ -149,11 +159,14 @@ static void print_bucket_entry(
 // True: Not equal. False: Equal
 static bool cmp_content(struct super_block *sb, unsigned long blocknr, const void *addr) {
 	INIT_TIMING(memcmp_time);
-	const void *content;
+	const char *content;
+	size_t i;
 	bool res;
 	NOVA_START_TIMING(memcmp_t, memcmp_time);
 	content = nova_blocknr_to_addr(sb, blocknr);
-	res = cmp64(content, addr);
+	for (i = 0; i < PAGE_SIZE; i += 64)
+		prefetcht0(content + i);
+	res = cmp64((const uint64_t *)content, addr);
 	NOVA_END_TIMING(memcmp_t, memcmp_time);
 	if (res) {
 		print(content);
@@ -369,16 +382,6 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 		schedule();
 	};
 	return ret;
-}
-
-static inline void prefetcht0(const void *x)
-{
-	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
-}
-
-static inline void prefetcht2(const void *x)
-{
-	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
 }
 
 static inline void incr_stream_trust_degree(
