@@ -675,6 +675,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	sbi = NOVA_SB(env.sb);
 	table = &sbi->meta_table;
+	atomic64_fetch_add_relaxed(1, &table->thread_num);
 
 	wp.ubuf = buf;
 	wp.len = len;
@@ -684,7 +685,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	wp.kbuf = kmem_cache_alloc(table->kbuf_cache, GFP_KERNEL);
 	if (wp.kbuf == NULL) {
 		ret = -ENOMEM;
-		goto err_out0;
+		goto err_out1;
 	}
 
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
@@ -705,64 +706,64 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		ret = nova_handle_head_tail_blocks(env.sb, env.inode, env.pos,
 			bytes, wp.kbuf);
 		if (ret)
-			goto err_out1;
+			goto err_out2;
 		/* Now copy from user buf */
 		NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
 		if (copy_from_user(wp.kbuf + offset, wp.ubuf, bytes)) {
 			NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 			ret = -EFAULT;
-			goto err_out1;
+			goto err_out2;
 		}
 		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 		wp.ubuf += bytes;
 		wp.len -= bytes;
 		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp.normal);
 		if (ret < 0)
-			goto err_out1;
+			goto err_out2;
 		wp.blocknr = wp.normal.blocknr;
 		wp.num = 1;
 		ret = advance(&env, bytes, &wp);
 		if (ret < 0)
-			goto err_out1;
+			goto err_out2;
 	}
 	while (wp.len >= env.sb->s_blocksize) {
 		ret = nova_fp_table_incr_continuous(sbi, &wp);
 		if (ret < 0)
-			goto err_out1;
+			goto err_out2;
 		ret = advance(&env, wp.num * env.sb->s_blocksize, &wp);
 		if (ret < 0)
-			goto err_out1;
+			goto err_out2;
 	}
 	// At most 2 iterations
 	while (wp.num != 0) {
 		ret = advance(&env, wp.num * env.sb->s_blocksize, &wp);
 		if (ret < 0)
-			goto err_out1;
+			goto err_out2;
 	}
 	if (wp.len != 0) {
 		bytes = wp.len;
 		ret = nova_handle_head_tail_blocks(env.sb, env.inode, env.pos, bytes,
 			wp.kbuf);
 		if (ret)
-			goto err_out1;
+			goto err_out2;
 		/* Now copy from user buf */
 		NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
 		if (copy_from_user(wp.kbuf, wp.ubuf, bytes)) {
 			NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 			ret = -EFAULT;
-			goto err_out1;
+			goto err_out2;
 		}
 		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 		wp.ubuf += bytes;
 		wp.len -= bytes;
 		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp.normal);
 		if (ret < 0)
-			goto err_out1;
+			goto err_out2;
 		wp.blocknr = wp.normal.blocknr;
 		wp.num = 1;
 		ret = advance(&env, bytes, &wp);
 		if (ret < 0)
-			goto err_out1;
+			goto err_out2;
 	}
 	nova_flush_entry_if_not_null(wp.normal.last_ref_entries[0], false);
 	nova_flush_entry_if_not_null(wp.normal.last_ref_entries[1], false);
@@ -787,7 +788,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	/* Free the overlap blocks after the write is committed */
 	ret = nova_reassign_file_tree(env.sb, env.sih, env.begin_tail);
 	if (ret)
-		goto err_out1;
+		goto err_out2;
 
 	env.inode->i_blocks = env.sih->i_blocks;
 
@@ -804,8 +805,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	env.sih->trans_id++;
 	NOVA_STATS_ADD(cow_write_bytes, env.written);
 	kmem_cache_free(table->kbuf_cache, wp.kbuf);
+	atomic64_fetch_sub_relaxed(1, &table->thread_num);
 	return env.written;
-err_out1:
+err_out2:
 	// TODO: Make sure that the clean up does not fail.
 	if (wp.blocknr_next != 0) {
 		BUG_ON(nova_deref_blocks(env.sb, wp.blocknr_next, 1) < 0);
@@ -813,6 +815,8 @@ err_out1:
 	BUG_ON(nova_cleanup_incomplete_write(env.sb, env.sih,
 		wp.blocknr, wp.num, env.begin_tail, env.update.tail) < 0);
 	kmem_cache_free(table->kbuf_cache, wp.kbuf);
+err_out1:
+	atomic64_fetch_sub_relaxed(1, &table->thread_num);
 err_out0:
 	NOVA_END_TIMING(do_cow_write_t, cow_write_time);
 	return ret;
