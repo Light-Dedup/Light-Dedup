@@ -524,14 +524,14 @@ void nova_write_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu,
 	struct nova_pmm_entry *pentry, struct nova_fp fp, unsigned long blocknr)
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct super_block *sb = meta_table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	unsigned long irq_flags = 0;
+	// struct nova_meta_table *meta_table =
+	// 	container_of(allocator, struct nova_meta_table, entry_allocator);
+	// struct super_block *sb = meta_table->sblock;
+	// struct nova_sb_info *sbi = NOVA_SB(sb);
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(write_new_entry_time);
 
-	nova_memunlock(sbi, &irq_flags);
+	// nova_memunlock(sbi, &irq_flags);
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
 	atomic64_set(&pentry->refcount, 1);
@@ -542,7 +542,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	pentry->blocknr = cpu_to_le64(blocknr);
 	++allocator_cpu->allocated; // Commit the allocation
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
-	nova_memlock(sbi, &irq_flags);
+	// nova_memlock(sbi, &irq_flags);
 }
 
 // Can be called in softirq context
