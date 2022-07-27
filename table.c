@@ -749,15 +749,8 @@ static int check_hint(struct nova_sb_info *sbi,
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
 	NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
-	// Prefetch with stride 256B first in case that this block have
-	// not been prefetched yet.
-	for (i = 0; i < PAGE_SIZE; i += 256)
+	for (i = 0; i < PAGE_SIZE; i += 64)
 		prefetcht0(addr + i);
-	for (i = 0; i < PAGE_SIZE; i += 256) {
-		prefetcht0(addr + i + 64);
-		prefetcht0(addr + i + 64 * 2);
-		prefetcht0(addr + i + 64 * 3);
-	}
 	NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 
 	NOVA_START_TIMING(cmp_user_t, cmp_user_time);
