@@ -814,14 +814,21 @@ static int check_hint(struct nova_sb_info *sbi,
 		// The hinted fpentry has already been released
 		return 0;
 	}
-	handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 	// It is guaranteed that the block will not be freed,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
+	handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 	NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
-	for (i = 0; i < PAGE_SIZE; i += 64)
+	// Prefetch with stride 256B first in case that this block have
+	// not been prefetched yet.
+	for (i = 0; i < PAGE_SIZE; i += 256)
 		prefetcht0(addr + i);
+	for (i = 0; i < PAGE_SIZE; i += 256) {
+		prefetcht0(addr + i + 64);
+		prefetcht0(addr + i + 64 * 2);
+		prefetcht0(addr + i + 64 * 3);
+	}
 	NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 
 	prefetch_next_stage_1(wp);
