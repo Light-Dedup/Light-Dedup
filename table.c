@@ -741,7 +741,6 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, atomic64_t *next_hint)
 {
-	struct nova_meta_table *table = &sbi->meta_table;
 	uint64_t hint = le64_to_cpu(atomic64_read(next_hint));
 	u64 offset = hint & HINT_OFFSET_MASK;
 	uint8_t trust_degree = hint & TRUST_DEGREE_MASK;
@@ -754,9 +753,6 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 		return;
 	// Do not prefetch across syscall.
 	if (wp->len < PAGE_SIZE * 2)
-		return;
-	// Do not prefetch if there are many threads reading/writing NVM
-	if (atomic64_read(&table->thread_num) >= 6)
 		return;
 	pentry = nova_sbi_get_block(sbi, offset);
 	blocknr = le64_to_cpu(pentry->blocknr);
@@ -800,6 +796,7 @@ static inline void prefetch_next_stage_2(struct nova_write_para_continuous *wp)
 static int check_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
 {
+	struct nova_meta_table *table = &sbi->meta_table;
 	unsigned long blocknr;
 	const char *addr;
 	size_t i;
@@ -818,15 +815,31 @@ static int check_hint(struct nova_sb_info *sbi,
 		// The hinted fpentry has already been released
 		return 0;
 	}
-	handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 	// It is guaranteed that the block will not be freed,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
-	NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
-	for (i = 0; i < PAGE_SIZE; i += 64)
-		prefetcht0(addr + i);
-	NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
+	if (atomic64_read(&table->thread_num) < 6) {
+		handle_hint_of_hint(sbi, wp, &pentry->next_hint);
+		NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
+		// Prefetch with stride 256B first in case that this block have
+		// not been prefetched yet.
+		for (i = 0; i < PAGE_SIZE; i += 256)
+			prefetcht0(addr + i);
+		for (i = 0; i < PAGE_SIZE; i += 256) {
+			prefetcht0(addr + i + 64);
+			prefetcht0(addr + i + 64 * 2);
+			prefetcht0(addr + i + 64 * 3);
+		}
+		NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
+	} else {
+		// Do not prefetch with stride 256B if there are many threads
+		// reading/writing NVM
+		NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
+		for (i = 0; i < PAGE_SIZE; i += 64)
+			prefetcht0(addr + i);
+		NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
+	}
 
 	prefetch_next_stage_1(wp);
 
