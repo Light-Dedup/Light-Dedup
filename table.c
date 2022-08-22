@@ -86,7 +86,8 @@ static void rht_entry_free(struct rcu_head *head)
 	struct kmem_cache *rht_entry_cache = table->rht_entry_cache;
 	struct nova_rht_entry *entry = task->entry;
 	struct nova_pmm_entry *pentry = entry->pentry;
-	unsigned long blocknr = pentry->blocknr;
+	unsigned long blocknr = le64_to_cpu(pentry->blocknr);
+	BUG_ON(blocknr == 0);
 	nova_free_data_block(sb, blocknr);
 	nova_free_entry(task->allocator, pentry);
 	nova_rht_entry_free(entry, rht_entry_cache);
