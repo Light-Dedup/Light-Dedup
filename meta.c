@@ -89,11 +89,12 @@ void nova_meta_table_save(struct nova_meta_table *table)
 		NOVA_RECOVER_META_FLAG_COMPLETE, true);
 }
 
-long nova_meta_table_decr_refcount(struct nova_meta_table *table,
-	const void *addr, unsigned long blocknr)
+long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr) 
 {
+	struct super_block *sb = table->sblock;
+	const void *addr = nova_blocknr_to_addr(sb, blocknr);
 	struct nova_write_para_normal wp;
-	int    retval;
+	long    retval;
 	INIT_TIMING(decr_ref_time);
 
 	BUG_ON(blocknr == 0);
@@ -104,18 +105,13 @@ long nova_meta_table_decr_refcount(struct nova_meta_table *table,
 	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
 	retval = nova_table_deref_block(&table->metas, &wp);
 	NOVA_END_TIMING(decr_ref_t, decr_ref_time);
-	return retval < 0 ? retval : wp.base.refcount;
-}
-
-long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr) 
-{
-	struct super_block *sb = table->sblock;
-	long    retval;
-
-	retval = nova_meta_table_decr_refcount(table, nova_blocknr_to_addr(sb, blocknr), blocknr);
-	if (retval < 0)
+	if (retval < 0) {
 		BUG_ON(retval != -EIO);
-	return retval;
+		return retval;
+	} else {
+		BUG_ON(retval != 0);
+		return wp.base.refcount;
+	}
 }
 
 long nova_meta_table_decr1(struct nova_meta_table *table, const void *addr, unsigned long blocknr)
