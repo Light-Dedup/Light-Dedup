@@ -93,11 +93,14 @@ long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 {
 	struct super_block *sb = table->sblock;
 	const void *addr = nova_blocknr_to_addr(sb, blocknr);
+	size_t i;
 	struct nova_write_para_normal wp;
 	long    retval;
 	INIT_TIMING(decr_ref_time);
 
 	BUG_ON(blocknr == 0);
+	for (i = 0; i < 64; ++i)
+		prefetcht0(addr + i * 64);
 	BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
 
 	wp.addr = addr;
