@@ -189,6 +189,7 @@ const char *Timingstring[TIMING_NUM] = {
 	"scan_fp_entry_table",
 	"upsert_fp_entry",
 	"invalidate_unused_fp_entry",
+	"request_table_decr_async",
 
 	/* xatable */
 	"=================== xatable ===================",

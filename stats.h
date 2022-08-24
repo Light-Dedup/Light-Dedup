@@ -193,6 +193,7 @@ enum timing_category {
 	scan_fp_entry_table_t,
 	upsert_fp_entry_t,
 	invalidate_unused_fp_entry_t,
+	table_decr_async_t,
 
 	/* xatable */
 	xatable_title_t,
