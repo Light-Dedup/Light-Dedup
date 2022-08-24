@@ -223,7 +223,6 @@ int nova_meta_table_decrers_init(struct super_block* sb) {
 		param->cpu = cpu;
 		param->sb = sb;
 
-		/* bind thread to specific cpu */
 		table->decrer_threads[cpu] = kthread_create(table_decrer_thread, 
 													param,  
 													"table_decrer_thread_%d", 
@@ -232,7 +231,10 @@ int nova_meta_table_decrers_init(struct super_block* sb) {
 			nova_err(sb, "Can't create decrer_threads");
 			BUG_ON(1);
 		}
-		kthread_bind(table->decrer_threads[cpu], cpu);
+
+		/* NOTE: do not bind this */
+		/* bind thread to specific cpu */
+		// kthread_bind(table->decrer_threads[cpu], cpu);
 
 		wake_up_process(table->decrer_threads[cpu]);
 	}
@@ -274,13 +276,14 @@ int nova_meta_table_decrers_destroy(struct super_block* sb) {
 }
 
 /* return the decrer id */
-long nova_meta_table_decr_async(struct nova_meta_table *table, unsigned long blocknr) 
+long nova_meta_table_decr_try_async(struct nova_meta_table *table, unsigned long blocknr) 
 {
 	int cpu;
 	struct nova_meta_table_decr_param param;
 	struct nova_meta_table_decrer_per_cpu *decrer_cpu;
-	int ret = 0, tries = 0;
-	int fifo_len = 0;
+	int ret = 0; 
+	// int tries = 0;
+	// int fifo_len = 0;
 	INIT_TIMING(request_decr_time);
 	NOVA_START_TIMING(table_decr_async_t, request_decr_time);
 	/* do not need disable preempt */
@@ -289,22 +292,34 @@ long nova_meta_table_decr_async(struct nova_meta_table *table, unsigned long blo
 	param.table = table;
 	param.blocknr = blocknr;
 
-try:
+	// try:
+	// 	ret = kfifo_in_spinlocked(&decrer_cpu->workqueue, 
+	// 							  &param, 
+	// 							  1, 
+	// 							  &decrer_cpu->wqlock);
+	// 	if (unlikely(ret == 0)) {
+	// 		wakeup_table_decrer(table, cpu);
+	// 		tries++;
+	// 		schedule();
+	// 		goto try;
+	// 	}
+
+	// 	/* we do not need lock here */
+	// 	fifo_len = kfifo_len(&decrer_cpu->workqueue);
+	// 	if (fifo_len != 0 && fifo_len % MAX_DECRER_DQ_SIZE == 0);
+	// 		wakeup_table_decrer(table, cpu);
+	
 	ret = kfifo_in_spinlocked(&decrer_cpu->workqueue, 
 							  &param, 
 							  1, 
 							  &decrer_cpu->wqlock);
 	if (unlikely(ret == 0)) {
+		/* process */
 		wakeup_table_decrer(table, cpu);
-		tries++;
-		schedule();
-		goto try;
+		/* fall back */
+		nova_meta_table_decr(table, blocknr);
 	}
 
-	/* we do not need lock here */
-	fifo_len = kfifo_len(&decrer_cpu->workqueue);
-	if (fifo_len != 0 && fifo_len % MAX_DECRER_DQ_SIZE == 0);
-		wakeup_table_decrer(table, cpu);
 	NOVA_END_TIMING(table_decr_async_t, request_decr_time);
 	return cpu;
 }
