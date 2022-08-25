@@ -81,9 +81,9 @@ void nova_meta_table_save(struct nova_meta_table *table)
 	struct super_block *sb = table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
-	/* sync rcu to make sure all the rcu recycles are done */
+	/* rcu_barrier_tasks to make sure all the rht recycles are done */
 	nova_meta_table_decrers_destroy(sb);
-	synchronize_rcu();
+	rcu_barrier();
 	table->sblock = NULL;
 	nova_fp_strong_ctx_free(&table->fp_ctx);
 	kmem_cache_destroy(table->kbuf_cache);

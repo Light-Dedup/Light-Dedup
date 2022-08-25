@@ -18,3 +18,4 @@ modules.order
 
 ioctl_test
 ioctl_table_stat
+crash
