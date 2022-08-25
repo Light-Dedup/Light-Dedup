@@ -5,17 +5,19 @@ if [ ! $1 ]; then
 else
     timing=$1
 fi
-make -j$(nproc)
+
+sleep 5
+
 echo umounting...
-sudo umount /mnt/pmem
+umount /mnt/pmem0
 echo Removing the old kernel module...
-sudo rmmod nova
+rmmod nova
 echo Inserting the new kernel module...
-sudo insmod nova.ko measure_timing=$timing
+insmod nova.ko measure_timing=$timing
 
 sleep 1
 
 echo mounting...
-sudo mount -t NOVA -o init -o wprotect,data_cow /dev/pmem0 /mnt/pmem
-#sudo mount -t NOVA -o init -o wprotect /dev/pmem0 /mnt/pmem
-#sudo mount -t NOVA -o init /dev/pmem0 /mnt/pmem
+mount -t NOVA -o init -o wprotect,data_cow /dev/pmem0 /mnt/pmem0
+#mount -t NOVA -o init -o wprotect /dev/pmem0 /mnt/pmem0
+#mount -t NOVA -o init /dev/pmem0 /mnt/pmem0
