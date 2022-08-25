@@ -292,9 +292,13 @@ long nova_meta_table_decr_try_async(struct nova_meta_table *table, unsigned long
 	struct nova_meta_table_decr_param param;
 	struct nova_meta_table_decrer_per_cpu *decrer_cpu;
 	int ret = 0; 
-	// int tries = 0;
+	int tries = 0;
 	// int fifo_len = 0;
+
 	INIT_TIMING(request_decr_time);
+	INIT_TIMING(enqueue_time);
+	INIT_TIMING(fallback_time);
+
 	NOVA_START_TIMING(table_decr_async_t, request_decr_time);
 	/* do not need disable preempt */
 	cpu = nova_get_cpuid(table->sblock);
@@ -302,33 +306,41 @@ long nova_meta_table_decr_try_async(struct nova_meta_table *table, unsigned long
 	param.table = table;
 	param.blocknr = blocknr;
 
-	// try:
-	// 	ret = kfifo_in_spinlocked(&decrer_cpu->workqueue, 
-	// 							  &param, 
-	// 							  1, 
-	// 							  &decrer_cpu->wqlock);
-	// 	if (unlikely(ret == 0)) {
-	// 		wakeup_table_decrer(table, cpu);
-	// 		tries++;
-	// 		schedule();
-	// 		goto try;
-	// 	}
-
-	// 	/* we do not need lock here */
-	// 	fifo_len = kfifo_len(&decrer_cpu->workqueue);
-	// 	if (fifo_len != 0 && fifo_len % MAX_DECRER_DQ_SIZE == 0);
-	// 		wakeup_table_decrer(table, cpu);
-	
+try:
+	NOVA_START_TIMING(request_enqueue_t, enqueue_time);
 	ret = kfifo_in_spinlocked(&decrer_cpu->workqueue, 
 							  &param, 
 							  1, 
 							  &decrer_cpu->wqlock);
+	NOVA_END_TIMING(request_enqueue_t, enqueue_time);
+	
 	if (unlikely(ret == 0)) {
-		/* process */
 		wakeup_table_decrer(table, cpu);
-		/* fall back */
-		nova_meta_table_decr(table, blocknr);
+		tries++;
+		schedule();
+		goto try;
 	}
+
+	/* we do not need lock here */
+	// fifo_len = kfifo_len(&decrer_cpu->workqueue);
+	// if (fifo_len != 0 && fifo_len % MAX_DECRER_DQ_SIZE == 0);
+	// 	wakeup_table_decrer(table, cpu);
+	
+	// NOVA_START_TIMING(request_enqueue_t, enqueue_time);
+	// ret = kfifo_in_spinlocked(&decrer_cpu->workqueue, 
+	// 						  &param, 
+	// 						  1, 
+	// 						  &decrer_cpu->wqlock);
+	// NOVA_END_TIMING(request_enqueue_t, enqueue_time);
+
+	// if (unlikely(ret == 0)) {
+	// 	NOVA_START_TIMING(decr_fallback_t, fallback_time);
+	// 	/* process */
+	// 	wakeup_table_decrer(table, cpu);
+	// 	/* fall back */
+	// 	nova_meta_table_decr(table, blocknr);
+	// 	NOVA_END_TIMING(decr_fallback_t, fallback_time);
+	// }
 
 	NOVA_END_TIMING(table_decr_async_t, request_decr_time);
 	return cpu;

@@ -194,7 +194,9 @@ enum timing_category {
 	upsert_fp_entry_t,
 	invalidate_unused_fp_entry_t,
 	table_decr_async_t,
-
+	request_enqueue_t,
+	decr_fallback_t,
+	
 	/* xatable */
 	xatable_title_t,
 	xatable_store_t,
