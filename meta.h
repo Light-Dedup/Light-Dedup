@@ -36,7 +36,7 @@ struct nova_meta_table {
 };
 
 struct table_decrer_local_wb_per_cpu {
-	struct table_decr_item items[MAX_DECRER_LWB_SIZE];
+	struct table_decr_item items[MAX_DECRER_LWB_NUM];
 	int capacity;
 };
 DECLARE_PER_CPU(struct table_decrer_local_wb_per_cpu, table_decrer_local_wb_per_cpu);

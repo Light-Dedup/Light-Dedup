@@ -217,7 +217,7 @@ int nova_meta_table_decrers_init(struct super_block* sb) {
 	/* init global structures */
 	spin_lock_init(&table->gwq_lock);
 	ret = kfifo_alloc(&table->global_wq, 
-					  MAX_DECRER_GWQ_SIZE(sbi) * sizeof(struct table_decr_item), 
+					  MAX_DECRER_GWQ_SIZE(sbi), 
 					  GFP_KERNEL);
 	if (ret) {
 		goto err_out0;
@@ -306,8 +306,8 @@ int nova_meta_table_decrers_destroy(struct super_block* sb) {
 			nova_meta_table_decr(item->table, item->blocknr);
 		}
 	}
-
-	nova_info("Commit %d decr job in global buffer", kfifo_len(&table->global_wq) / DECR_ITEM_SIZE);
+	
+	nova_info("Commit %ld decr job in global buffer", kfifo_len(&table->global_wq) / DECR_ITEM_SIZE);
 	/* flush global queue */
 	while(kfifo_len(&table->global_wq) != 0) {
 		table_decrer_execute_global(table);
