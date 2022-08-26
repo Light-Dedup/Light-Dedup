@@ -195,6 +195,9 @@ struct nova_sb_info {
 	unsigned long first_counter_block_start;
 	unsigned long entry_refcount_record_start;
 
+	unsigned long decr_buf_start;
+	unsigned long decr_buf_size;
+	
 	struct nova_meta_table meta_table;
 };
 

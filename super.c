@@ -179,6 +179,11 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	// The number of valid entries is at most sbi->num_blocks.
 	sbi->block_start += ((sbi->num_blocks * sizeof(struct nova_entry_refcount_record) - 1) >> PAGE_SHIFT) + 1;
 
+	// Layout the in-NVM queue buffer, which is used for the decers.
+	sbi->decr_buf_start = sbi->block_start;
+	sbi->block_start += ((sbi->num_blocks * PERSIST_DECR_ITEM_SIZE - 1) >> PAGE_SHIFT) + 1;
+	sbi->decr_buf_size = ((sbi->block_start - sbi->decr_buf_start) << PAGE_SHIFT);
+
 	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
 		"num_blocks %lu, block_start %lu, block_end %lu\n",
 		__func__, sbi->s_bdev->bd_disk->disk_name,

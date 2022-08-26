@@ -177,6 +177,32 @@ out:
 	return ret;
 }
 
+static int table_decrer_execute_global_nvm(struct nova_meta_table *table) {
+	int ret, i;
+	unsigned long items[MAX_DECRER_PROCESS_BATCH];
+	unsigned long blocknr;
+	int out_num;
+
+	ret = kfifo_out_spinlocked(&table->global_wq_nvm, 
+							   items, 
+				    		   MAX_DECRER_PROCESS_BATCH * PERSIST_DECR_ITEM_SIZE, 
+							   &table->gwq_lock_nvm);
+	if (ret < 0) {
+		nova_dbg("%s: kfifo_out_spinlocked failed %d", __func__, ret);
+		goto out;	
+	}
+
+	out_num = ret / PERSIST_DECR_ITEM_SIZE;
+
+	for (i = 0; i < out_num; i++) {
+		blocknr = items[i];
+		nova_meta_table_decr(table, blocknr);
+	}
+
+out:
+	return ret;
+}
+
 struct table_decrer_param {
 	int id;
 	struct super_block *sb;
@@ -189,7 +215,6 @@ static int table_decrer_thread(void *arg)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_meta_table *table = &sbi->meta_table;
 	int id = param->id;
-	
 
 	nova_dbg("Running {decr}er thread %d\n", id);
 	for (;;) {
@@ -199,6 +224,9 @@ static int table_decrer_thread(void *arg)
 			break;
 
 		table_decrer_execute_global(table);
+
+		if (kfifo_len(&table->global_wq_nvm) != 0)
+			table_decrer_execute_global_nvm(table);
 	}
 	nova_dbg("{Decr}er thread %d exit\n", id);
 	kfree(param);
@@ -214,11 +242,19 @@ int nova_meta_table_decrers_init(struct super_block* sb) {
 	struct table_decrer_local_wb_per_cpu *decrer_lwb_cpu;
 	struct table_decrer_param *param;
 	
-	/* init global structures */
+	/* init global structures, in-dram and in-nvm queue: gwq and gwq_nvm */
 	spin_lock_init(&table->gwq_lock);
 	ret = kfifo_alloc(&table->global_wq, 
 					  MAX_DECRER_GWQ_SIZE(sbi), 
 					  GFP_KERNEL);
+	if (ret) {
+		goto err_out0;
+	}
+	
+	spin_lock_init(&table->gwq_lock_nvm);
+	ret = kfifo_init(&table->global_wq_nvm, 
+			   		 (char *)nova_sbi_blocknr_to_addr(sbi, sbi->decr_buf_start), 
+			   		 sbi->decr_buf_size);
 	if (ret) {
 		goto err_out0;
 	}
@@ -313,6 +349,12 @@ int nova_meta_table_decrers_destroy(struct super_block* sb) {
 		table_decrer_execute_global(table);
 	}
 
+	nova_info("Commit %ld decr job in global nvm buffer", kfifo_len(&table->global_wq_nvm) / PERSIST_DECR_ITEM_SIZE);
+	/* flush global nvm queue */
+	while(kfifo_len(&table->global_wq_nvm) != 0) {
+		table_decrer_execute_global_nvm(table);
+	}
+
 	kfifo_free(&table->global_wq);
 	if (table->decrer_threads)
 		kfree(table->decrer_threads);
@@ -348,6 +390,8 @@ static int commit_local_wb(struct nova_meta_table *table,
 	int ret, i;
 	struct table_decr_item *item;
 	int in_num;
+	unsigned long flags;
+
 	INIT_TIMING(enqueue_time);
 	INIT_TIMING(fallback_time);
 
@@ -361,16 +405,31 @@ static int commit_local_wb(struct nova_meta_table *table,
 	
 	in_num = ret / DECR_ITEM_SIZE;
 
-	/* fall back for now */
+	// /* fall back for now */
+	// if (unlikely(in_num != decrer_lwb_cpu->capacity)) {
+	// 	NOVA_START_TIMING(decr_fallback_t, fallback_time);
+	// 	for (i = in_num; i < decrer_lwb_cpu->capacity; i++) {
+	// 		item = &decrer_lwb_cpu->items[i];
+	// 		nova_meta_table_decr(item->table, item->blocknr);		
+	// 	}
+	// 	NOVA_END_TIMING(decr_fallback_t, fallback_time);
+	// }
+
+	/* digest to NVM */
 	if (unlikely(in_num != decrer_lwb_cpu->capacity)) {
-		NOVA_START_TIMING(decr_fallback_t, fallback_time);
-		for (i = ret; i < decrer_lwb_cpu->capacity; i++) {
+		spin_lock_irqsave(&table->gwq_lock_nvm, flags); 
+		/* TODO: memunlock/lock this area */
+		for (i = in_num; i < decrer_lwb_cpu->capacity; i++) {
 			item = &decrer_lwb_cpu->items[i];
-			nova_meta_table_decr(item->table, item->blocknr);		
+			ret = kfifo_in(&table->global_wq_nvm, 
+						   &item->blocknr, 
+						   PERSIST_DECR_ITEM_SIZE); 
+			/* since we've allocated enough entry */
+			BUG_ON(ret == 0);
 		}
-		NOVA_END_TIMING(decr_fallback_t, fallback_time);
+		spin_unlock_irqrestore(&table->gwq_lock_nvm, flags); 
 	}
-	
+
 	decrer_lwb_cpu->capacity = 0;
 	return 0;
 }

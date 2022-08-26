@@ -7,11 +7,13 @@
 #include "linux/kfifo.h"
 
 struct table_decr_item {
+	/* TODO: REMOVE this */
 	struct nova_meta_table *table; 
 	unsigned long blocknr;
 };
 
 #define DECR_ITEM_SIZE					(sizeof(struct table_decr_item))
+#define PERSIST_DECR_ITEM_SIZE			(sizeof(unsigned long))
 #define MAX_DECRER						8		/* consumers */
 #define MAX_DECRER_LWB_NUM				32
 #define MAX_DECRER_LWB_SIZE				(MAX_DECRER_LWB_NUM * DECR_ITEM_SIZE)	/* local write buffer */
@@ -31,6 +33,8 @@ struct nova_meta_table {
 	atomic64_t thread_num;
 	spinlock_t gwq_lock;
 	struct kfifo global_wq;
+	spinlock_t gwq_lock_nvm;
+	struct kfifo global_wq_nvm;
 	struct task_struct **decrer_threads;
 	wait_queue_head_t *decrer_waitqs;
 };
