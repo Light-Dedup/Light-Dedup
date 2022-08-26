@@ -6,6 +6,21 @@
 #include "table.h"
 #include "linux/kfifo.h"
 
+struct table_decr_item {
+	struct nova_meta_table *table; 
+	unsigned long blocknr;
+};
+
+#define DECR_ITEM_SIZE					(sizeof(struct table_decr_item))
+#define MAX_DECRER						8		/* consumers */
+#define MAX_DECRER_LWB_NUM				32
+#define MAX_DECRER_LWB_SIZE				(MAX_DECRER_LWB_NUM * DECR_ITEM_SIZE)	/* local write buffer */
+#define MAX_DECRER_GWQ_SIZE(sbi)		(sbi->cpus * MAX_DECRER_LWB_SIZE) /* global write queue */ 
+#define MAX_DECRER_PROCESS_BATCH		32
+#define MAX_DECRER_PROCESS_BSIZE 		(MAX_DECRER_PROCESS_BATCH * DECR_ITEM_SIZE) 		/* process batch size */
+#define WAKE_UP_THRESHOLD(sbi)			(MAX_DECRER_GWQ_SIZE(sbi) / 2)	/* wake up threshold */
+
+
 struct nova_meta_table {
     struct super_block   		*sblock;
 	struct kmem_cache *kbuf_cache;
@@ -14,24 +29,17 @@ struct nova_meta_table {
     struct nova_mm_table      metas;
 	struct entry_allocator entry_allocator;
 	atomic64_t thread_num;
+	spinlock_t gwq_lock;
+	struct kfifo global_wq;
 	struct task_struct **decrer_threads;
 	wait_queue_head_t *decrer_waitqs;
 };
 
-#define MAX_DECRER_WQ_SIZE		32
-#define MAX_DECRER_DQ_SIZE		32
-
-struct nova_meta_table_decr_param {
-	struct nova_meta_table *table; 
-	unsigned long blocknr;
+struct table_decrer_local_wb_per_cpu {
+	struct table_decr_item items[MAX_DECRER_LWB_SIZE];
+	int capacity;
 };
-
-struct nova_meta_table_decrer_per_cpu {
-	spinlock_t wqlock;
-	DECLARE_KFIFO(workqueue, struct nova_meta_table_decr_param, 
-				  MAX_DECRER_WQ_SIZE);
-};
-DECLARE_PER_CPU(struct nova_meta_table_decrer_per_cpu, nova_meta_table_decrer_per_cpu);
+DECLARE_PER_CPU(struct table_decrer_local_wb_per_cpu, table_decrer_local_wb_per_cpu);
 
 int nova_meta_table_decrers_init(struct super_block* sb);
 int nova_meta_table_decrers_destroy(struct super_block* sb);
