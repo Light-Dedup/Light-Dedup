@@ -180,9 +180,11 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	sbi->block_start += ((sbi->num_blocks * sizeof(struct nova_entry_refcount_record) - 1) >> PAGE_SHIFT) + 1;
 
 	// Layout the in-NVM queue buffer, which is used for the decers.
-	sbi->decr_buf_start = sbi->block_start;
-	sbi->block_start += ((sbi->num_blocks * PERSIST_DECR_ITEM_SIZE - 1) >> PAGE_SHIFT) + 1;
-	sbi->decr_buf_size = ((sbi->block_start - sbi->decr_buf_start) << PAGE_SHIFT);
+	sbi->global_wq_head_start = sbi->block_start;
+	sbi->block_start += ((sizeof(struct kfifo) - 1) >> PAGE_SHIFT) + 1;
+	sbi->global_wq_nvm_start = sbi->block_start;
+	sbi->block_start += ((sbi->num_blocks * DECR_ITEM_SIZE - 1) >> PAGE_SHIFT) + 1;
+	sbi->global_wq_nvm_size = ((sbi->block_start - sbi->global_wq_nvm_start) << PAGE_SHIFT);
 
 	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
 		"num_blocks %lu, block_start %lu, block_end %lu\n",

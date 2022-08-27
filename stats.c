@@ -191,7 +191,7 @@ const char *Timingstring[TIMING_NUM] = {
 	"invalidate_unused_fp_entry",
 	"request_table_decr_async",
 	"request_enqueue",
-	"decr_fallback",
+	"request_ennvmqueue",
 
 	/* xatable */
 	"=================== xatable ===================",

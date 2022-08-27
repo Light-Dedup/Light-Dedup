@@ -7,20 +7,17 @@
 #include "linux/kfifo.h"
 
 struct table_decr_item {
-	/* TODO: REMOVE this */
-	struct nova_meta_table *table; 
 	unsigned long blocknr;
 };
 
 #define DECR_ITEM_SIZE					(sizeof(struct table_decr_item))
-#define PERSIST_DECR_ITEM_SIZE			(sizeof(unsigned long))
 #define MAX_DECRER						8		/* consumers */
 #define MAX_DECRER_LWB_NUM				32
 #define MAX_DECRER_LWB_SIZE				(MAX_DECRER_LWB_NUM * DECR_ITEM_SIZE)	/* local write buffer */
 #define MAX_DECRER_GWQ_SIZE(sbi)		(sbi->cpus * MAX_DECRER_LWB_SIZE) /* global write queue */ 
 #define MAX_DECRER_PROCESS_BATCH		32
 #define MAX_DECRER_PROCESS_BSIZE 		(MAX_DECRER_PROCESS_BATCH * DECR_ITEM_SIZE) 		/* process batch size */
-#define WAKE_UP_THRESHOLD(sbi)			(MAX_DECRER_GWQ_SIZE(sbi) / 2)	/* wake up threshold */
+#define WAKE_UP_THRESHOLD(sbi)			(MAX_DECRER_GWQ_SIZE(sbi) / 4)	/* wake up threshold */
 
 
 struct nova_meta_table {
@@ -45,7 +42,7 @@ struct table_decrer_local_wb_per_cpu {
 };
 DECLARE_PER_CPU(struct table_decrer_local_wb_per_cpu, table_decrer_local_wb_per_cpu);
 
-int nova_meta_table_decrers_init(struct super_block* sb);
+int nova_meta_table_decrers_init(struct super_block* sb, bool recovery);
 int nova_meta_table_decrers_destroy(struct super_block* sb);
 int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
 	size_t nelem_hint);

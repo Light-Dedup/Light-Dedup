@@ -1755,6 +1755,7 @@ int nova_recovery(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_super_block *super = sbi->nova_sb;
 	bool value = false;
+	unsigned long flags = 0;
 	int ret = 0;
 	INIT_TIMING(start);
 	INIT_TIMING(end);
@@ -1789,8 +1790,16 @@ int nova_recovery(struct super_block *sb)
 		ret = nova_failure_recovery(sb);
 		if (ret)
 			goto out;
+		
+		/* reset state of in NVM write queue */
+		nova_memunlock_gwq_nvm(sb, &flags);
+		kfifo_init((struct kfifo *)nova_sbi_blocknr_to_addr(sbi, sbi->global_wq_head_start),
+				   nova_sbi_blocknr_to_addr(sbi, sbi->global_wq_nvm_start),
+				   sbi->global_wq_nvm_size);
+		nova_memlock_gwq_nvm(sb, &flags);
 	}
-
+	/* restore decrers */
+	nova_meta_table_decrers_init(sb, true);
 out:
 	NOVA_END_TIMING(recovery_t, start);
 	if (measure_timing == 0) {

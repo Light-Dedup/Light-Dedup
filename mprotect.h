@@ -250,6 +250,23 @@ static inline void nova_memlock_block(struct super_block *sb, void *bp, unsigned
 		__nova_memlock_range(bp, sb->s_blocksize, flags);
 }
 
+static inline void nova_memunlock_gwq_nvm(struct super_block *sb, unsigned long *flags)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	void *addr = nova_sbi_blocknr_to_addr(sbi, sbi->global_wq_head_start);
+	/* kfifo is only 24 bytes => 1 page consumed */
+	if (nova_is_protected(NOVA_SB(sb)))
+		__nova_memunlock_range(addr, PAGE_SIZE + sbi->global_wq_nvm_size, flags);
+}
+
+static inline void nova_memlock_gwq_nvm(struct super_block *sb, unsigned long *flags)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	void *addr = nova_sbi_blocknr_to_addr(sbi, sbi->global_wq_head_start);
+	if (nova_is_protected(NOVA_SB(sb)))
+		__nova_memlock_range(addr, PAGE_SIZE + sbi->global_wq_nvm_size, flags);
+}
+
 #define nova_ntstore_val(addr, val)	\
 	do {												\
 		typeof(*addr) tmp = val;						\
