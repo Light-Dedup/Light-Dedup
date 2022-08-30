@@ -178,9 +178,9 @@ static int table_decrer_execute_global(struct nova_meta_table *table, bool nvm) 
 
 	for (i = 0; i < out_num; i++) {
 		item = &items[i];
-		if (nvm) {
-			nova_dbg("%s: retrieve from nvm %ld", __func__, item->blocknr);		
-		}
+		// if (nvm) {
+		// 	nova_dbg("%s: retrieve from nvm %ld", __func__, item->blocknr);		
+		// }
 		nova_meta_table_decr(table, item->blocknr);
 	}
 
