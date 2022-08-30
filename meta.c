@@ -178,6 +178,9 @@ static int table_decrer_execute_global(struct nova_meta_table *table, bool nvm) 
 
 	for (i = 0; i < out_num; i++) {
 		item = &items[i];
+		if (nvm) {
+			nova_dbg("%s: retrieve from nvm %ld", __func__, item->blocknr);		
+		}
 		nova_meta_table_decr(table, item->blocknr);
 	}
 
@@ -410,7 +413,7 @@ static int commit_local_wb(struct nova_meta_table *table,
 		for (i = in_num; i < decrer_lwb_cpu->capacity; i++) {
 			item = &decrer_lwb_cpu->items[i];
 			ret = kfifo_in(&table->global_wq_nvm, 
-						   &item, 
+						   item, 
 						   DECR_ITEM_SIZE); 
 			/* since we've allocated enough entry */
 			BUG_ON(ret == 0);
