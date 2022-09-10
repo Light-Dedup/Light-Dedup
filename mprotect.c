@@ -389,6 +389,7 @@ int nova_mmap_to_new_blocks(struct vm_area_struct *vma,
 
 		entry_size = cpu_to_le64(inode->i_size);
 
+		// TODO: Restrict the number of blocks
 		nova_init_file_write_entry(sb, sih, &entry_data,
 					epoch_id, entry_pgoff, copy_blocks,
 					blocknr, time, entry_size);
