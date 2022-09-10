@@ -10,16 +10,6 @@
 
 // #define static _Static_assert(1, "2333");
 
-static inline void prefetcht0(const void *x)
-{
-	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
-}
-
-static inline void prefetcht2(const void *x)
-{
-	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
-}
-
 struct nova_rht_entry {
 	struct rhash_head node;
 	struct nova_fp fp;
@@ -86,7 +76,8 @@ static void rht_entry_free(struct rcu_head *head)
 	struct kmem_cache *rht_entry_cache = table->rht_entry_cache;
 	struct nova_rht_entry *entry = task->entry;
 	struct nova_pmm_entry *pentry = entry->pentry;
-	unsigned long blocknr = pentry->blocknr;
+	unsigned long blocknr = le64_to_cpu(pentry->blocknr);
+	BUG_ON(blocknr == 0);
 	nova_free_data_block(sb, blocknr);
 	nova_free_entry(task->allocator, pentry);
 	nova_rht_entry_free(entry, rht_entry_cache);
@@ -518,30 +509,13 @@ static inline bool hint_trustable(uint8_t trust_degree)
 	return trust_degree >= HINT_TRUST_DEGREE_THRESHOLD;
 }
 
-// The original offset is 0
-// Return 0: Successful
-// Return x (!= 0): The offset has been changed, and the new hint is x.
-static uint64_t __update_offset(atomic64_t *next_hint, u64 offset,
-	uint8_t trust_degree)
+// Return the original persistent hint.
+static u64 __update_hint(atomic64_t *next_hint, u64 old_hint, u64 new_hint)
 {
-	__le64 old_hint = cpu_to_le64(trust_degree);
-	__le64 tmp;
-	uint64_t hint;
-
-	while (1) {
-		hint = offset | trust_degree;
-		tmp = atomic64_cmpxchg_relaxed(next_hint, old_hint,
-			cpu_to_le64(hint));
-		if (tmp == old_hint)
-			return 0;
-		hint = le64_to_cpu(tmp);
-		if ((hint & HINT_OFFSET_MASK) != 0) {
-			// The hinted fpentry has been changed.
-			return hint;
-		}
-		trust_degree = hint & TRUST_DEGREE_MASK;
-		old_hint = tmp;
-	}
+	return le64_to_cpu(atomic64_cmpxchg_relaxed(
+		next_hint,
+		cpu_to_le64(old_hint),
+		cpu_to_le64(new_hint)));
 }
 
 static inline bool trust_degree_out_of_bound(uint8_t trust_degree)
@@ -681,9 +655,10 @@ static int copy_from_user_incr(struct nova_sb_info *sbi,
 
 static int handle_no_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, atomic64_t *next_hint,
-	uint8_t trust_degree)
+	u64 old_hint)
 {
 	u64 offset;
+	uint8_t trust_degree;
 	uint64_t hint;
 	int ret;
 	// unsigned long irq_flags = 0;
@@ -697,7 +672,8 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
 	// nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
 	// 	&irq_flags);
-	hint = __update_offset(next_hint, offset, trust_degree);
+	hint = __update_hint(next_hint, old_hint,
+		offset | HINT_TRUST_DEGREE_THRESHOLD);
 	if ((hint & HINT_OFFSET_MASK) == offset) {
 		trust_degree = hint & TRUST_DEGREE_MASK;
 		__incr_trust_degree(next_hint, offset, trust_degree);
@@ -836,8 +812,7 @@ static int handle_hint(struct nova_sb_info *sbi,
 
 	if (offset == 0) {
 		// Actually no hint
-		return handle_no_hint(sbi, wp, next_hint,
-			trust_degree);
+		return handle_no_hint(sbi, wp, next_hint, hint);
 	}
 	if (!hint_trustable(trust_degree)) {
 		return handle_not_trust(sbi, wp, next_hint,
