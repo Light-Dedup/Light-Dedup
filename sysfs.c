@@ -177,7 +177,7 @@ static int nova_seq_IO_show(struct seq_file *seq, void *v)
 	seq_printf(seq, "hints of fpentry: hit %llu, miss %llu, no hint %llu, "
 		"not trusted then hit %llu, not trusted then miss %llu\n",
 		IOstats[predict_hit], IOstats[predict_miss], IOstats[no_hint],
-		IOstats[hint_not_trusted_miss], IOstats[hint_not_trusted_hit]);
+		IOstats[hint_not_trusted_hit], IOstats[hint_not_trusted_miss]);
 	seq_printf(seq, "Prefetch hit: %llu\n", IOstats[prefetch_hit]);
 
 	seq_puts(seq, "\n");
