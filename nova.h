@@ -115,6 +115,15 @@ extern unsigned int blk_type_to_size[NOVA_BLOCK_TYPE_MAX];
 #define	IS_MAP_WRITE(p)	((p) & (MMAP_WRITE_BIT))
 #define	MMAP_ADDR(p)	((p) & (PAGE_MASK))
 
+static inline void prefetcht0(const void *x)
+{
+	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
+}
+
+static inline void prefetcht2(const void *x)
+{
+	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
+}
 
 /* Mask out flags that are inappropriate for the given type of inode. */
 static inline __le32 nova_mask_flags(umode_t mode, __le32 flags)
