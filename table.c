@@ -677,7 +677,8 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
 	// nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
 	// 	&irq_flags);
-	hint = __update_hint(next_hint, old_hint, offset);
+	hint = __update_hint(next_hint, old_hint,
+		offset | HINT_TRUST_DEGREE_THRESHOLD);
 	if ((hint & HINT_OFFSET_MASK) == offset) {
 		trust_degree = hint & TRUST_DEGREE_MASK;
 		__incr_trust_degree(next_hint, offset, trust_degree);
