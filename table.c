@@ -9,16 +9,6 @@
 
 // #define static _Static_assert(1, "2333");
 
-static inline void prefetcht0(const void *x)
-{
-	asm volatile("prefetcht0 %0" : : "m" (*(const char *)x));
-}
-
-static inline void prefetcht2(const void *x)
-{
-	asm volatile("prefetcht2 %0" : : "m" (*(const char *)x));
-}
-
 struct nova_rht_entry {
 	struct rhash_head node;
 	struct nova_fp fp;
@@ -85,7 +75,8 @@ static void rht_entry_free(struct rcu_head *head)
 	struct kmem_cache *rht_entry_cache = table->rht_entry_cache;
 	struct nova_rht_entry *entry = task->entry;
 	struct nova_pmm_entry *pentry = entry->pentry;
-	unsigned long blocknr = pentry->blocknr;
+	unsigned long blocknr = le64_to_cpu(pentry->blocknr);
+	BUG_ON(blocknr == 0);
 	nova_free_data_block(sb, blocknr);
 	nova_free_entry(task->allocator, pentry);
 	nova_rht_entry_free(entry, rht_entry_cache);
