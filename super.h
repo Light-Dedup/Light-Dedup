@@ -209,14 +209,6 @@ static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)
 }
 
 static inline long
-nova_block_decr(struct super_block *sb, unsigned long blocknr)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_meta_table *table = &sbi->meta_table;
-	return nova_meta_table_decr_try_async(table, blocknr);
-}
-
-static inline long
 nova_deref_blocks(struct super_block *sb, unsigned long blocknr,
 	unsigned long num)
 {
