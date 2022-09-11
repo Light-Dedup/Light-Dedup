@@ -75,7 +75,7 @@ static void rht_entry_free(struct rcu_head *head)
 	struct kmem_cache *rht_entry_cache = table->rht_entry_cache;
 	struct nova_rht_entry *entry = task->entry;
 	struct nova_pmm_entry *pentry = entry->pentry;
-	unsigned long blocknr = le64_to_cpu(pentry->blocknr);
+	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	nova_free_data_block(sb, blocknr);
 	nova_free_entry(task->allocator, pentry);
@@ -92,6 +92,7 @@ static void nova_table_leaf_delete(
 	// Remove the entry first to make it invisible to other threads.
 	int ret = rhashtable_remove_fast(rht, &entry->node, nova_rht_params);
 	BUG_ON(ret < 0);
+	nova_pmm_entry_mark_to_be_freed(entry->pentry);
 	task = kmalloc(sizeof(struct rht_entry_free_task), GFP_ATOMIC);
 	if (task) {
 		task->allocator = table->entry_allocator;
@@ -212,7 +213,7 @@ static int nova_table_leaf_insert(
 	// 	wp->blocknr, fp.value, rht);
 	return 0;
 fail2:
-	nova_free_data_block(sb, pentry->blocknr);
+	nova_free_data_block(sb, nova_pmm_entry_blocknr(pentry));
 	nova_free_entry(table->entry_allocator, pentry);
 fail1:
 	nova_rht_entry_free(entry, table->rht_entry_cache);
@@ -277,7 +278,7 @@ retry:
 	}
 	pentry = entry->pentry;
 	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	if (cmp_content(sb, blocknr, wp->addr)) {
 		rcu_read_unlock();
 		nova_dbg("fp:%llx rentry.fp:%llx",wp->base.fp.value, entry->pentry->fp.value);
@@ -335,7 +336,7 @@ int nova_table_deref_block(struct nova_mm_table *table,
 	}
 	pentry = entry->pentry;
 	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	if (blocknr != wp->blocknr) {
 		// Collision happened. Just free it.
 		rcu_read_unlock();
@@ -399,7 +400,7 @@ int nova_table_upsert_decr1(
 	}
 	pentry = entry->pentry;
 	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	if (blocknr != wp->blocknr) {
 		rcu_read_unlock();
 		// Collision happened. Just free it.
@@ -702,7 +703,7 @@ static int __table_recover_func(struct nova_mm_table *table,
 			continue;
 		pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
 			le64_to_cpu(rec[i].entry_offset));
-		BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
+		BUG_ON(nova_pmm_entry_is_free(pentry));
 		ret = nova_table_insert_entry(table, pentry->fp,
 			pentry);
 		if (ret < 0)
