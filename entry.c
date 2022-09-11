@@ -173,12 +173,12 @@ static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
 	int ret;
 
 	for (; pentry < pentry_end; ++pentry) {
-		if (pentry->flag != NOVA_LEAF_ENTRY_MAGIC)
+		if (nova_pmm_entry_is_free(pentry))
 			continue;
 		// Impossible to conflict
 		++count;
 		ret = xa_err(xatable_store(
-			xat, le64_to_cpu(pentry->blocknr), pentry, GFP_KERNEL));
+			xat, nova_pmm_entry_blocknr(pentry), pentry, GFP_KERNEL));
 		if (ret < 0)
 			return ret;
 		// atomic64_set(&pentry->refcount, 0);
@@ -516,7 +516,7 @@ nova_alloc_entry(struct entry_allocator *allocator,
 			pentry = nova_sbi_blocknr_to_addr(
 				sbi, new_region_blocknr);
 		}
-	} while (pentry->flag == NOVA_LEAF_ENTRY_MAGIC);
+	} while (!nova_pmm_entry_is_free(pentry));
 	allocator_cpu->top_entry = pentry;
 	NOVA_END_TIMING(alloc_entry_t, alloc_entry_time);
 	return pentry;
@@ -529,13 +529,17 @@ void nova_write_entry(struct entry_allocator *allocator,
 		container_of(allocator, struct nova_meta_table, entry_allocator);
 	struct super_block *sb = meta_table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_pmm_entry_info info = nova_pmm_entry_get_info(pentry);
 	unsigned long irq_flags = 0;
 	INIT_TIMING(write_new_entry_time);
+
+	BUG_ON(info.blocknr != 0);
+	info.blocknr = blocknr;
 
 	nova_memunlock(sbi, &irq_flags);
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
-	pentry->blocknr = cpu_to_le64(blocknr);
+	pentry->info = cpu_to_le64(info.value);
 	atomic64_set(&pentry->refcount, 1);
 	wmb();
 	BUG_ON(pentry->flag != 0);
@@ -574,7 +578,7 @@ void nova_free_entry(struct entry_allocator *allocator,
 		spin_unlock_bh(&allocator->lock);
 	}
 	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-	nova_unlock_write_flush(sbi, &pentry->flag, 0, true);
+	nova_unlock_write_flush(sbi, &pentry->info, 0, true);
 }
 
 static inline void
