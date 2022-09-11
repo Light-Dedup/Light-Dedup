@@ -76,7 +76,7 @@ static void rht_entry_free(struct rcu_head *head)
 	struct kmem_cache *rht_entry_cache = table->rht_entry_cache;
 	struct nova_rht_entry *entry = task->entry;
 	struct nova_pmm_entry *pentry = entry->pentry;
-	unsigned long blocknr = le64_to_cpu(pentry->blocknr);
+	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	nova_free_data_block(sb, blocknr);
 	nova_free_entry(task->allocator, pentry);
@@ -102,6 +102,7 @@ static void nova_table_leaf_delete(
 	// Remove the entry first to make it invisible to other threads.
 	int ret = rhashtable_remove_fast(rht, &entry->node, nova_rht_params);
 	BUG_ON(ret < 0);
+	nova_pmm_entry_mark_to_be_freed(entry->pentry);
 	task = kmalloc(sizeof(struct rht_entry_free_task), GFP_ATOMIC);
 	if (task) {
 		task->allocator = table->entry_allocator;
@@ -224,7 +225,7 @@ static int nova_table_leaf_insert(
 	// 	"fpentry offset = %p\n", wp->blocknr, fp.value, rht, pentry);
 	return 0;
 fail2:
-	nova_free_data_block(sb, pentry->blocknr);
+	nova_free_data_block(sb, nova_pmm_entry_blocknr(pentry));
 	nova_free_entry(table->entry_allocator, pentry);
 fail1:
 	nova_rht_entry_free(entry, table->rht_entry_cache);
@@ -288,7 +289,7 @@ retry:
 		return ret;
 	}
 	pentry = entry->pentry;
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	if (cmp_content(sb, blocknr, wp->addr)) {
 		rcu_read_unlock();
@@ -347,8 +348,8 @@ int nova_table_deref_block(struct nova_mm_table *table,
 		return 0;
 	}
 	pentry = entry->pentry;
-	BUG_ON(pentry->blocknr == 0);
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
+	BUG_ON(blocknr == 0);
 	if (blocknr != wp->blocknr) {
 		// Collision happened. Just free it.
 		rcu_read_unlock();
@@ -414,7 +415,7 @@ int nova_table_upsert_decr1(
 		return 0;
 	}
 	pentry = entry->pentry;
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	if (blocknr != wp->blocknr) {
 		rcu_read_unlock();
@@ -730,7 +731,9 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	if (wp->len < PAGE_SIZE * 2)
 		return;
 	pentry = nova_sbi_get_block(sbi, offset);
-	blocknr = le64_to_cpu(pentry->blocknr);
+	if (nova_pmm_entry_is_to_be_freed(pentry))
+		return;
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	if (blocknr) {
 		wp->block_prefetching = nova_sbi_blocknr_to_addr(sbi, blocknr);
 		wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
@@ -767,6 +770,7 @@ static inline void prefetch_next_stage_2(struct nova_write_para_continuous *wp)
 	wp->block_prefetching = NULL;
 }
 
+// The caller should hold rcu_read_lock
 // Return whether the block is deduplicated successfully.
 static int check_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
@@ -778,12 +782,8 @@ static int check_hint(struct nova_sb_info *sbi,
 	// unsigned long irq_flags = 0;
 	INIT_TIMING(prefetch_cmp_time);
 
-	// To make sure that pentry will not be released while we
-	// are reading its content.
-	rcu_read_lock();
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	if (blocknr == 0) {
-		rcu_read_unlock();
 		// The hinted fpentry has already been released
 		return 0;
 	}
@@ -826,7 +826,7 @@ static int check_hint(struct nova_sb_info *sbi,
 		// printk("Prediction hit! blocknr = %ld, pentry = %p\n", blocknr, pentry);
 		ret = 1;
 	}
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	if (blocknr == wp->prefetched_blocknr[1] ||
 			blocknr == wp->prefetched_blocknr[0]) {
 		// The hit counts of prefetching is slightly underestimated
@@ -855,7 +855,15 @@ static int handle_hint(struct nova_sb_info *sbi,
 			offset, trust_degree);
 	}
 	pentry = nova_sbi_get_block(sbi, offset);
+	if (nova_pmm_entry_is_to_be_freed(pentry))
+		return handle_no_hint(sbi, wp, next_hint, hint);
+
+	// To make sure that pentry will not be released while we
+	// are reading its content.
+	rcu_read_lock();
 	ret = check_hint(sbi, wp, pentry);
+	rcu_read_unlock();
+
 	if (ret < 0)
 		return ret;
 	if (ret == 1) {
@@ -1100,7 +1108,7 @@ static int __table_recover_func(struct nova_mm_table *table,
 			continue;
 		pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
 			le64_to_cpu(rec[i].entry_offset));
-		BUG_ON(pentry->blocknr == 0);
+		BUG_ON(nova_pmm_entry_is_free(pentry));
 		ret = nova_table_insert_entry(table, pentry->fp,
 			pentry);
 		if (ret < 0)
