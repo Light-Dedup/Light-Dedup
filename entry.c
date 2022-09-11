@@ -67,7 +67,7 @@ entrynr_t nova_alloc_entry(struct entry_allocator *allocator, struct nova_fp fp)
 	entrynr_t i = offset;
 	do {
 		index = base + i;
-		if (pentries[index].blocknr == 0)
+		if (nova_pmm_entry_is_free(pentries + index))
 			return index;
 		++i;
 		i &= ENTRY_PER_REGION - 1;
@@ -82,8 +82,12 @@ void nova_write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	struct super_block *sb = meta_table->sblock;
 	struct nova_pmm_entry *pentries = meta_table->pentries;
 	struct nova_pmm_entry *pentry = pentries + entrynr;
+	struct nova_pmm_entry_info info = nova_pmm_entry_get_info(pentry);
 	unsigned long irq_flags = 0;
 	INIT_TIMING(write_new_entry_time);
+
+	BUG_ON(info.blocknr != 0);
+	info.blocknr = blocknr;
 
 	nova_memunlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
@@ -92,8 +96,7 @@ void nova_write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	atomic64_set(&pentry->next_hint,
 		cpu_to_le64(HINT_TRUST_DEGREE_THRESHOLD));
 	wmb();
-	BUG_ON(pentry->blocknr != 0);
-	pentry->blocknr = cpu_to_le64(blocknr);
+	pentry->info = cpu_to_le64(info.value);
 	nova_flush_buffer(pentry, sizeof(*pentry), true);
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
@@ -107,8 +110,8 @@ void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 	struct nova_pmm_entry *pentry = meta_table->pentries + entrynr;
 
 	spin_lock(&allocator->lock);
-	BUG_ON(pentry->blocknr == 0);
-	nova_unlock_write_flush(sbi, &pentry->blocknr, 0, true);
+	BUG_ON(pentry->info == 0);
+	nova_unlock_write_flush(sbi, &pentry->info, 0, true);
 	spin_unlock(&allocator->lock);
 }
 

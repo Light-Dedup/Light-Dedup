@@ -26,7 +26,7 @@ static uint64_t nova_table_leaf_find(
 	entrynr_t i = offset;
 	do {
 		index = base + i;
-		if (pentries[index].blocknr != 0)
+		if (!nova_pmm_entry_is_free(pentries + index))
 			if (nova_fp_equal(fp, &pentries[index].fp))
 				return index;
 		++i;
@@ -200,7 +200,7 @@ retry:
 		return ret;
 	}
 	pentry = pentries + leaf_index;
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	if (cmp_content(sb, blocknr, wp->addr)) {
 		rcu_read_unlock();
@@ -257,7 +257,7 @@ int nova_table_deref_block(struct nova_mm_table *table,
 		return 0;
 	}
 	pentry = pentries + leaf_index;
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	if (blocknr != wp->blocknr) {
 		// Collision happened. Just free it.
@@ -321,7 +321,7 @@ int nova_table_upsert_decr1(
 		return 0;
 	}
 	pentry = pentries + leaf_index;
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	if (blocknr != wp->blocknr) {
 		rcu_read_unlock();
@@ -610,7 +610,9 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	if (wp->len < PAGE_SIZE * 2)
 		return;
 	pentry = nova_sbi_get_block(sbi, offset);
-	blocknr = le64_to_cpu(pentry->blocknr);
+	if (nova_pmm_entry_is_to_be_freed(pentry))
+		return;
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	if (blocknr) {
 		wp->block_prefetching = nova_sbi_blocknr_to_addr(sbi, blocknr);
 		wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
@@ -662,7 +664,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	INIT_TIMING(cmp_user_time);
 	INIT_TIMING(hit_incr_ref_time);
 
-	blocknr = le64_to_cpu(pentry->blocknr);
+	blocknr = nova_pmm_entry_blocknr(pentry);
 	if (blocknr == 0) {
 		// The hinted fpentry has already been released
 		return 0;
@@ -754,6 +756,8 @@ static int handle_hint(struct nova_sb_info *sbi,
 			offset, trust_degree);
 	}
 	pentry = nova_sbi_get_block(sbi, offset);
+	if (nova_pmm_entry_is_to_be_freed(pentry))
+		return handle_no_hint(sbi, wp, next_hint, hint);
 
 	// To make sure that pentry will not be released while we
 	// are reading its content.
