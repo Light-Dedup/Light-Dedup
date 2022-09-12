@@ -32,6 +32,10 @@ static inline unsigned long min_ul(unsigned long a, unsigned long b)
 {
 	return a < b ? a : b;
 }
+static inline size_t min_usize(size_t a, size_t b)
+{
+	return a < b ? a : b;
+}
 static inline uint16_t min_u16(uint16_t a, uint16_t b)
 {
 	return a < b ? a : b;
