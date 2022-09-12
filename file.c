@@ -682,11 +682,13 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	wp.blocknr = 0;
 	wp.num = 0;
 	wp.blocknr_next = 0;
-	wp.kbuf = kmem_cache_alloc(table->kbuf_cache, GFP_KERNEL);
+	wp.kbuf = allocate_kbuf(len);
 	if (wp.kbuf == NULL) {
 		ret = -ENOMEM;
 		goto err_out1;
 	}
+	wp.kstart = 0;
+	wp.klen = 0;
 
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
 			__func__, env.inode->i_ino, env.pos, len);
@@ -734,12 +736,20 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		if (ret < 0)
 			goto err_out2;
 	}
-	// At most 2 iterations
-	while (wp.num != 0) {
+	while (wp.klen > 0) {
+		ret = nova_fp_table_incr_continuous_kbuf(sbi, &wp);
+		if (ret < 0)
+			goto err_out2;
 		ret = advance(&env, wp.num * env.sb->s_blocksize, &wp);
 		if (ret < 0)
 			goto err_out2;
 	}
+	if (wp.num != 0) {
+		ret = advance(&env, wp.num * env.sb->s_blocksize, &wp);
+		if (ret < 0)
+			goto err_out2;
+	}
+	BUG_ON(wp.num != 0);
 	if (wp.len != 0) {
 		bytes = wp.len;
 		ret = nova_handle_head_tail_blocks(env.sb, env.inode, env.pos, bytes,
@@ -804,7 +814,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	env.sih->trans_id++;
 	NOVA_STATS_ADD(cow_write_bytes, env.written);
-	kmem_cache_free(table->kbuf_cache, wp.kbuf);
+	free_kbuf(wp.kbuf);
 	atomic64_fetch_sub_relaxed(1, &table->thread_num);
 	return env.written;
 err_out2:
@@ -814,7 +824,7 @@ err_out2:
 	}
 	BUG_ON(nova_cleanup_incomplete_write(env.sb, env.sih,
 		wp.blocknr, wp.num, env.begin_tail, env.update.tail) < 0);
-	kmem_cache_free(table->kbuf_cache, wp.kbuf);
+	free_kbuf(wp.kbuf);
 err_out1:
 	atomic64_fetch_sub_relaxed(1, &table->thread_num);
 err_out0:
