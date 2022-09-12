@@ -6,7 +6,6 @@
 #include "arithmetic.h"
 #include "multithread.h"
 #include "rhashtable-ext.h"
-#include "uaccess-ext.h"
 
 // #define static _Static_assert(1, "2333");
 
@@ -603,15 +602,9 @@ static int copy_from_user_incr(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
 	int ret;
-	INIT_TIMING(copy_from_user_time);
 
-	NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
-	ret = copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE);
-	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
-	if (ret)
-		return -EFAULT;
-	ret = nova_fp_table_incr_atomic(&sbi->meta_table.metas, wp->kbuf,
-		&wp->normal);
+	ret = nova_fp_table_incr_atomic(&sbi->meta_table.metas,
+		wp->kbuf + wp->kstart, &wp->normal);
 	if (ret < 0)
 		return ret;
 	attach_blocknr(wp, wp->normal.blocknr);
@@ -779,13 +772,12 @@ static int check_hint(struct nova_sb_info *sbi,
 	prefetch_next_stage_1(wp);
 
 	NOVA_START_TIMING(cmp_user_t, cmp_user_time);
-	ret = cmp_user_generic_const_8B_aligned(wp->ubuf, addr, PAGE_SIZE);
+	ret = cmp64((const uint64_t *)(wp->kbuf + wp->kstart),
+		(const uint64_t *)addr);
 	NOVA_END_TIMING(cmp_user_t, cmp_user_time);
 
 	prefetch_next_stage_2(wp);
 
-	if (ret < 0)
-		return -EFAULT;
 	if (ret != 0) {
 		// printk("Prediction miss: %lld\n", ret);
 		// BUG_ON(copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE));
@@ -897,7 +889,7 @@ static int handle_last_accessed_pentry(struct nova_sb_info *sbi,
 	}
 }
 
-int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
+int nova_fp_table_incr_continuous_kbuf(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
 	struct nova_pmm_entry *last_pentry;
@@ -909,7 +901,7 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	NOVA_START_TIMING(incr_continuous_t, time);
 	// Unlock here because it seems that wprotect will affect prefetching
 	nova_memunlock(sbi, &irq_flags);
-	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
+	while (wp->blocknr_next == 0 && wp->klen > 0) {
 		last_pentry = get_last_accessed(wp, !first);
 		while (1) {
 			ret = handle_last_accessed_pentry(sbi, wp, last_pentry);
@@ -921,13 +913,60 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 		}
 		if (ret < 0)
 			break;
-		wp->ubuf += PAGE_SIZE;
-		wp->len -= PAGE_SIZE;
+		wp->kstart = (wp->kstart + PAGE_SIZE) % KBUF_LEN_MAX;
+		wp->klen -= PAGE_SIZE;
 		first = false;
 	}
 	nova_memlock(sbi, &irq_flags);
 	NOVA_END_TIMING(incr_continuous_t, time);
 	return ret;
+}
+
+int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
+	struct nova_write_para_continuous *wp)
+{
+	size_t to_copy;
+	size_t start;
+	size_t n;
+	int ret;
+	INIT_TIMING(copy_from_user_time);
+
+	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
+		NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
+		// to_copy = min_usize(to_copy, KBUF_LEN - wp->klen);
+		to_copy = wp->len & ~(PAGE_SIZE - 1);
+		start = wp->kstart + wp->klen;
+		if (start >= KBUF_LEN_MAX) {
+			start -= KBUF_LEN_MAX;
+			n = min_usize(wp->kstart - start, to_copy);
+			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
+				return -EFAULT;
+			wp->klen += n;
+			wp->len -= n;
+			wp->ubuf += n;
+		} else {
+			n = min_usize(KBUF_LEN_MAX - start, to_copy);
+			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
+				return -EFAULT;
+			wp->klen += n;
+			wp->len -= n;
+			wp->ubuf += n;
+			if (n < to_copy) {
+				to_copy -= n;
+				n = min_usize(wp->kstart, to_copy);
+				if (copy_from_user(wp->kbuf, wp->ubuf, n))
+					return -EFAULT;
+				wp->klen += n;
+				wp->len -= n;
+				wp->ubuf += n;
+			}
+		}
+		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
+		ret = nova_fp_table_incr_continuous_kbuf(sbi, wp);
+		if (ret < 0)
+			return ret;
+	}
+	return 0;
 }
 
 struct table_save_local_arg {
