@@ -10,19 +10,11 @@ int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
 	ret = nova_fp_strong_ctx_init(&table->fp_ctx);
 	if (ret < 0)
 		goto err_out0;
-	table->kbuf_cache = kmem_cache_create_usercopy(
-		"nova_kbuf_cache", PAGE_SIZE, 8, TABLE_KMEM_CACHE_FLAGS, 0, PAGE_SIZE, NULL);
-	if (table->kbuf_cache == NULL) {
-		ret = -ENOMEM;
-		goto err_out1;
-	}
 	atomic64_set(&table->thread_num, 0);
 	ret = nova_table_init(sb, &table->metas, nelem_hint);
 	if (ret < 0)
-		goto err_out2;
+		goto err_out1;
 	return 0;
-err_out2:
-	kmem_cache_destroy(table->kbuf_cache);
 err_out1:
 	nova_fp_strong_ctx_free(&table->fp_ctx);
 err_out0:
@@ -31,7 +23,6 @@ err_out0:
 void nova_meta_table_free(struct nova_meta_table *table)
 {
 	nova_fp_strong_ctx_free(&table->fp_ctx);
-	kmem_cache_destroy(table->kbuf_cache);
 	nova_table_free(&table->metas);
 }
 int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sb)
@@ -82,7 +73,6 @@ void nova_meta_table_save(struct nova_meta_table *table)
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	table->sblock = NULL;
 	nova_fp_strong_ctx_free(&table->fp_ctx);
-	kmem_cache_destroy(table->kbuf_cache);
 	nova_table_save(&table->metas);
 	nova_save_entry_allocator(sb, &table->entry_allocator);
 	nova_unlock_write_flush(sbi, &recover_meta->saved,
