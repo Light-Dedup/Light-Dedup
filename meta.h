@@ -8,13 +8,24 @@
 struct nova_meta_table {
     struct super_block   		*sblock;
 	struct nova_pmm_entry *pentries;
-	struct kmem_cache *kbuf_cache;
 	struct nova_fp_strong_ctx fp_ctx;
 
     struct nova_mm_table      metas;
 	struct entry_allocator entry_allocator;
 	atomic64_t thread_num;
 };
+
+static inline void *allocate_kbuf(size_t len)
+{
+	if (len > KBUF_LEN_MAX) {
+		return kmalloc(KBUF_LEN_MAX, GFP_KERNEL);
+	} else {
+		return kmalloc(len & ~(PAGE_SIZE - 1), GFP_KERNEL);
+	}
+}
+static inline void free_kbuf(void *kbuf) {
+	kfree(kbuf);
+}
 
 int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
 	size_t nelem_hint);

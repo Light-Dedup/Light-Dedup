@@ -52,6 +52,8 @@ struct nova_write_para_rewrite {
 	unsigned long offset, len;
 };
 
+#define KBUF_LEN_MAX (PAGE_SIZE * 256)
+
 struct nova_write_para_continuous {
 	const char __user *ubuf;
 	size_t len;
@@ -62,6 +64,8 @@ struct nova_write_para_continuous {
 	struct nova_write_para_normal normal;
 	// Used internally
 	char *kbuf;
+	size_t kstart;
+	size_t klen; // At most KBUF_LEN_MAX
 	const char *block_prefetching;
 	// Depends on the results of previous hints.
 	// [-4, 3]
@@ -83,6 +87,8 @@ int nova_table_insert_entry(struct nova_mm_table *rht, struct nova_fp fp,
 int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	struct nova_write_para_normal *wp);
 
+int nova_fp_table_incr_continuous_kbuf(struct nova_sb_info *sbi,
+	struct nova_write_para_continuous *wp);
 int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp);
 
