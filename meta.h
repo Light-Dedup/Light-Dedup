@@ -22,7 +22,6 @@ struct table_decr_item {
 
 struct nova_meta_table {
     struct super_block   		*sblock;
-	struct kmem_cache *kbuf_cache;
 	struct nova_fp_strong_ctx fp_ctx;
 
     struct nova_mm_table      metas;
@@ -36,6 +35,18 @@ struct nova_meta_table {
 	wait_queue_head_t *decrer_waitqs;
 };
 
+static inline void *allocate_kbuf(size_t len)
+{
+	if (len > KBUF_LEN_MAX) {
+		return kmalloc(KBUF_LEN_MAX, GFP_KERNEL);
+	} else {
+		return kmalloc(len & ~(PAGE_SIZE - 1), GFP_KERNEL);
+	}
+}
+static inline void free_kbuf(void *kbuf) {
+	kfree(kbuf);
+}
+
 struct table_decrer_local_wb_per_cpu {
 	struct table_decr_item items[MAX_DECRER_LWB_NUM];
 	int capacity;
@@ -44,6 +55,7 @@ DECLARE_PER_CPU(struct table_decrer_local_wb_per_cpu, table_decrer_local_wb_per_
 
 int nova_meta_table_decrers_init(struct super_block* sb, bool recovery);
 int nova_meta_table_decrers_destroy(struct super_block* sb);
+
 int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
 	size_t nelem_hint);
 void nova_meta_table_free(struct nova_meta_table *table);
