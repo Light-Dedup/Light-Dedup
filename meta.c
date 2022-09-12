@@ -105,7 +105,7 @@ long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 	pentry = nova_blocknr_pmm_entry(sb, blocknr);
 	BUG_ON(pentry == NULL);
 	wp.base.fp = pentry->fp;
-
+	wp.pentry = pentry;
 	wp.addr = addr;
 	wp.blocknr = blocknr;
 	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
