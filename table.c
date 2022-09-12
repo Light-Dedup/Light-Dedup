@@ -739,7 +739,6 @@ static int check_hint(struct nova_sb_info *sbi,
 	struct nova_mm_table *table = &sbi->meta_table.metas;
 	unsigned long blocknr;
 	int64_t ret;
-	INIT_TIMING(copy_from_user_time);
 	INIT_TIMING(incr_ref_time);
 
 	if (wp->stream_trust_degree == TRUST_DEGREE_MAX) {
@@ -750,22 +749,16 @@ static int check_hint(struct nova_sb_info *sbi,
 		}
 	}
 
-	NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
-	ret = copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE);
-	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
-	if (ret)
-		return -EFAULT;
-
 	prefetch_stage_1(wp);
 
 	NOVA_START_TIMING(incr_ref_t, incr_ref_time);
-	ret = nova_fp_calc(&sbi->meta_table.fp_ctx, wp->kbuf,
+	ret = nova_fp_calc(&sbi->meta_table.fp_ctx, wp->kbuf + wp->kstart,
 		&wp->normal.base.fp);
 	BUG_ON(ret);
 
 	prefetch_stage_2(wp);
 
-	wp->normal.addr = wp->kbuf;
+	wp->normal.addr = wp->kbuf + wp->kstart;
 	ret = nova_table_upsert_normal(table, &wp->normal);
 	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
 	if (ret < 0)
