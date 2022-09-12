@@ -185,6 +185,9 @@ static int nova_get_nvmm_info(struct super_block *sb,
 	sbi->global_wq_nvm_start = sbi->block_start;
 	sbi->block_start += ((sbi->num_blocks * DECR_ITEM_SIZE - 1) >> PAGE_SHIFT) + 1;
 	sbi->global_wq_nvm_size = ((sbi->block_start - sbi->global_wq_nvm_start) << PAGE_SHIFT);
+	
+	sbi->deref_table = sbi->block_start;
+	sbi->block_start += ((sbi->num_blocks * sizeof(struct nova_pmm_entry*) - 1) >> PAGE_SHIFT) + 1;
 
 	nova_dbg("%s: dev %s, phys_addr 0x%llx, virt_addr 0x%lx, size %ld, "
 		"num_blocks %lu, block_start %lu, block_end %lu\n",
