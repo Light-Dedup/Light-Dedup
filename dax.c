@@ -631,7 +631,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 
 	NOVA_START_TIMING(inplace_write_t, inplace_write_time);
 
-	kbuf = kmem_cache_alloc(table->kbuf_cache, GFP_KERNEL);
+	kbuf = allocate_kbuf(len);
 	if (kbuf == NULL) {
 		ret = -ENOMEM;
 		goto out;
@@ -822,7 +822,7 @@ protected:
 	sih->trans_id++;
 out:
 	if (kbuf)
-		kmem_cache_free(table->kbuf_cache, kbuf);
+		free_kbuf(kbuf);
 	if (ret < 0) {
 		long ret2;
 		ret2 = nova_cleanup_incomplete_write(sb, sih, new_blocknr, 1,
