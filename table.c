@@ -162,6 +162,17 @@ static int rewrite_block(
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	return 0;
 }
+static inline void
+nova_assign_pmm_entry_to_blocknr(struct super_block *sb, struct nova_pmm_entry *pentry) 
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
+	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
+	unsigned long flags = 0;
+	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+	deref_table[blocknr] = pentry;
+	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+}
 static void assign_entry(
 	struct nova_rht_entry *entry,
 	struct nova_pmm_entry *pentry,
@@ -206,6 +217,7 @@ static int nova_table_leaf_insert(
 	}
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr);
+	nova_assign_pmm_entry_to_blocknr(sb, pentry);
 	put_cpu();
 	assign_entry(entry, pentry, fp);
 	NOVA_START_TIMING(index_insert_new_entry_t,
