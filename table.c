@@ -162,6 +162,14 @@ static int rewrite_block(
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	return 0;
 }
+static inline void
+nova_assign_pmm_entry_to_blocknr(struct super_block *sb, struct nova_pmm_entry *pentry) 
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_pmm_entry **deref_table = sbi->deref_table;
+	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
+	deref_table[blocknr] = pentry;
+}
 static void assign_entry(
 	struct nova_rht_entry *entry,
 	struct nova_pmm_entry *pentry,
@@ -206,6 +214,7 @@ static int nova_table_leaf_insert(
 	}
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr);
+	nova_assign_pmm_entry_to_blocknr(sb, pentry);
 	put_cpu();
 	assign_entry(entry, pentry, fp);
 	NOVA_START_TIMING(index_insert_new_entry_t,
@@ -323,37 +332,37 @@ int nova_table_deref_block(struct nova_mm_table *table,
 	unsigned long blocknr;
 	INIT_TIMING(mem_bucket_find_time);
 
-	rcu_read_lock();
-	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
-	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	// We have to hold the read lock because if it is a hash collision,
-	// then the entry, pentry, and blocknr could be freed by another thread.
-	if (entry == NULL) {
-		rcu_read_unlock();
-		// printk("Block with fp %llx not found in rhashtable %p\n",
-		// 	wp->base.fp.value, rht);
-		// Collision happened. Just free it.
-		printk("Block %ld can not be found in the hash table.", wp->blocknr);
-		wp->base.refcount = 0;
-		wp->last_accessed = NULL;
-		return 0;
-	}
-	pentry = entry->pentry;
+	pentry = wp->pentry;
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	if (blocknr != wp->blocknr) {
 		// Collision happened. Just free it.
-		rcu_read_unlock();
+		// rcu_read_unlock();
 		printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n", __func__, blocknr, wp->blocknr);
 		wp->base.refcount = 0;
 		wp->last_accessed = NULL;
 		return 0;
 	}
-	rcu_read_unlock();
 	wp->base.refcount = atomic64_add_return(-1, &entry->pentry->refcount);
 	BUG_ON(wp->base.refcount < 0);
 	if (wp->base.refcount == 0) {
+		rcu_read_lock();
+		NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+		entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
+		NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+		// We have to hold the read lock because if it is a hash collision,
+		// then the entry, pentry, and blocknr could be freed by another thread.
+		if (entry == NULL) {
+			rcu_read_unlock();
+			// printk("Block with fp %llx not found in rhashtable %p\n",
+			// 	wp->base.fp.value, rht);
+			// Collision happened. Just free it.
+			printk("Block %ld can not be found in the hash table.", wp->blocknr);
+			wp->base.refcount = 0;
+			wp->last_accessed = NULL;
+			return 0;
+		}
+		rcu_read_unlock();
 		// Now only we can free the entry,
 		// because there are no any other deleter.
 		wp->last_accessed = NULL;
@@ -1074,6 +1083,7 @@ static void table_save(struct nova_mm_table *table)
 
 void nova_table_free(struct nova_mm_table *table)
 {
+	vfree(NOVA_SB(table->sblock)->deref_table);
 	rhashtable_free_and_destroy(&table->rht, nova_rht_entry_free,
 		table->rht_entry_cache);
 	kmem_cache_destroy(table->rht_entry_cache);
@@ -1099,6 +1109,10 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
 
 	NOVA_START_TIMING(table_init_t, table_init_time);
 	printk("psb = %p\n", psb);
+
+	sbi->deref_table =
+		vmalloc(sbi->num_blocks * sizeof(sbi->deref_table[0]));
+	BUG_ON(sbi->deref_table == NULL);
 
 	table->sblock = sb;
 	table->entry_allocator = &sbi->meta_table.entry_allocator;
