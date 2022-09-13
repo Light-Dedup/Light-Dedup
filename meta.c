@@ -89,7 +89,6 @@ long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 {
 	struct super_block *sb = table->sblock;
 	const void *addr = nova_blocknr_to_addr(sb, blocknr);
-	size_t i;
 	struct nova_write_para_normal wp;
 	long    retval;
 	INIT_TIMING(decr_ref_time);
