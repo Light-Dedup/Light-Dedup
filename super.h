@@ -2,7 +2,6 @@
 #define __SUPER_H
 
 #include "meta.h"
-
 /*
  * Structure of the NOVA super block in PMEM
  *
@@ -197,6 +196,7 @@ struct nova_sb_info {
 	unsigned long entry_table_start;
 	unsigned long region_valid_entry_count_start;
 	unsigned long entry_refcount_record_start;
+	unsigned long deref_table;
 
 	struct nova_meta_table meta_table;
 };

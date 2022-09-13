@@ -102,6 +102,16 @@ void nova_write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
 }
 
+static inline void
+nova_clear_pmm_entry_at_blocknr(struct super_block *sb, struct nova_pmm_entry *pentry, unsigned long blocknr) 
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
+	unsigned long flags = 0;
+	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+	deref_table[blocknr] = NULL;
+	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+}
 void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table, entry_allocator);
@@ -111,6 +121,8 @@ void nova_free_entry(struct entry_allocator *allocator, entrynr_t entrynr) {
 
 	spin_lock(&allocator->lock);
 	BUG_ON(pentry->info == 0);
+	nova_clear_pmm_entry_at_blocknr(meta_table->sblock, pentry,
+		nova_pmm_entry_blocknr(pentry));
 	nova_unlock_write_flush(sbi, &pentry->info, 0, true);
 	spin_unlock(&allocator->lock);
 }

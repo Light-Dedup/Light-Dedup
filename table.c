@@ -99,6 +99,17 @@ static int rewrite_block(
 	return 0;
 }
 
+static inline void
+nova_assign_pmm_entry_to_blocknr(struct super_block *sb, struct nova_pmm_entry *pentry) 
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
+	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
+	unsigned long flags = 0;
+	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+	deref_table[blocknr] = pentry;
+	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+}
 static int nova_table_leaf_insert(
 	struct nova_mm_table *table,
 	struct nova_write_para_normal *wp,
@@ -117,13 +128,16 @@ static int nova_table_leaf_insert(
 		return retval;
 	spin_lock(&allocator->lock);
 	entrynr = nova_alloc_entry(allocator, fp);
-	if (entrynr != REGION_FULL)
-		nova_write_entry(allocator, entrynr, fp, wp->blocknr);
-	else
+	if (entrynr == REGION_FULL) {
 		++allocator->entry_collision;
+		spin_unlock(&allocator->lock);
+		return 0;
+	}
+	nova_write_entry(allocator, entrynr, fp, wp->blocknr);
+	pentry = pentries + entrynr;
+	nova_assign_pmm_entry_to_blocknr(sb, pentry);
 	spin_unlock(&allocator->lock);
 
-	pentry = pentries + entrynr;
 	new_dirty_fpentry(wp->last_new_entries, pentry);
 	wp->last_accessed = pentry;
 	return 0;
@@ -242,32 +256,18 @@ int nova_table_deref_block(struct nova_mm_table *table,
 	unsigned long irq_flags = 0;
 	INIT_TIMING(mem_bucket_find_time);
 
-	rcu_read_lock();
-	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	leaf_index = nova_table_leaf_find(table, pentries, &wp->base.fp);
-	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-	if (leaf_index == NOVA_TABLE_NOT_FOUND) {
-		rcu_read_unlock();
-		// printk("Block with fp %llx not found in rhashtable %p\n",
-		// 	wp->base.fp.value, rht);
-		// Collision happened. Just free it.
-		printk("Block %ld can not be found in the hash table.", wp->blocknr);
-		wp->base.refcount = 0;
-		wp->last_accessed = NULL;
-		return 0;
-	}
-	pentry = pentries + leaf_index;
+	pentry = wp->pentry;
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	if (blocknr != wp->blocknr) {
 		// Collision happened. Just free it.
-		rcu_read_unlock();
+		// rcu_read_unlock();
 		printk("%s: Blocknr mismatch: blocknr = %ld, expected %ld\n", __func__, blocknr, wp->blocknr);
 		wp->base.refcount = 0;
 		wp->last_accessed = NULL;
 		return 0;
 	}
-	rcu_read_unlock();
+	// rcu_read_unlock();
 	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
 		&irq_flags);
 	wp->base.refcount = atomic64_add_return(-1, &pentry->refcount);
@@ -275,6 +275,22 @@ int nova_table_deref_block(struct nova_mm_table *table,
 		&irq_flags);
 	BUG_ON(wp->base.refcount < 0);
 	if (wp->base.refcount == 0) {
+		rcu_read_lock();
+		NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+		leaf_index = nova_table_leaf_find(table, pentries, &wp->base.fp);
+		NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+		if (leaf_index == NOVA_TABLE_NOT_FOUND) {
+			rcu_read_unlock();
+			// printk("Block with fp %llx not found in rhashtable %p\n",
+			// 	wp->base.fp.value, rht);
+			// Collision happened. Just free it.
+			printk("Block %ld can not be found in the hash table.", wp->blocknr);
+			wp->base.refcount = 0;
+			wp->last_accessed = NULL;
+			return 0;
+		}
+		pentry = pentries + leaf_index;
+		rcu_read_unlock();
 		// Now only we can free the entry,
 		// because there are no any other deleter.
 		wp->last_accessed = NULL;

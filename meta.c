@@ -80,7 +80,13 @@ void nova_meta_table_save(struct nova_meta_table *table)
 	nova_unlock_write_flush(sbi, &recover_meta->saved,
 		NOVA_RECOVER_META_FLAG_COMPLETE, true);
 }
-
+static inline struct nova_pmm_entry*
+nova_blocknr_pmm_entry(struct super_block *sb, unsigned long blocknr)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
+	return deref_table[blocknr];
+}
 long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr) 
 {
 	struct super_block *sb = table->sblock;
@@ -89,12 +95,15 @@ long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 	struct nova_write_para_normal wp;
 	long    retval;
 	INIT_TIMING(decr_ref_time);
-
+	struct nova_pmm_entry *pentry;
 	BUG_ON(blocknr == 0);
-	for (i = 0; i < 64; ++i)
-		prefetcht0(addr + i * 64);
-	BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
-
+	// for (i = 0; i < 64; ++i)
+	// 	prefetcht0(addr + i * 64);
+	// BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
+	pentry = nova_blocknr_pmm_entry(sb, blocknr);
+	BUG_ON(pentry == NULL);
+	wp.base.fp = pentry->fp;
+	wp.pentry = pentry;
 	wp.addr = addr;
 	wp.blocknr = blocknr;
 	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
