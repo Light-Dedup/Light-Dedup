@@ -446,7 +446,16 @@ void nova_write_entry(struct entry_allocator *allocator,
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock(sbi, &irq_flags);
 }
-
+static inline void
+nova_clear_pmm_entry_at_blocknr(struct super_block *sb, struct nova_pmm_entry *pentry, unsigned long blocknr) 
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
+	unsigned long flags = 0;
+	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+	deref_table[blocknr] = NULL;
+	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+}
 // Can be called in softirq context
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
@@ -465,6 +474,8 @@ void nova_free_entry(struct entry_allocator *allocator,
 	) < 0);
 	spin_unlock_bh(&allocator->lock);
 	BUG_ON(pentry->info == 0);
+	nova_clear_pmm_entry_at_blocknr(meta_table->sblock, pentry,
+		nova_pmm_entry_blocknr(pentry));
 	nova_unlock_write_flush(sbi, &pentry->info, 0, true);
 }
 
