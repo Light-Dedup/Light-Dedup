@@ -2,7 +2,6 @@
 #define __SUPER_H
 
 #include "meta.h"
-
 /*
  * Structure of the NOVA super block in PMEM
  *
@@ -194,6 +193,7 @@ struct nova_sb_info {
 	unsigned long region_blocknr_start;
 	unsigned long first_counter_block_start;
 	unsigned long entry_refcount_record_start;
+	unsigned long deref_table;
 
 	/* dump kfifo header */
 	unsigned long global_wq_head_start;	
