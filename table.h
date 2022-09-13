@@ -67,6 +67,7 @@ struct nova_write_para_normal {
 	struct nova_write_para_base base;
 	const void *addr;
 	unsigned long blocknr;
+	struct nova_pmm_entry *pentry;
 	// Last not flushed referenced entry. The fpentry should be flushed before
 	// committing the corresponding write entry to guarantee persistency,
 	// so that the corresponding block will not be regarded as a block
