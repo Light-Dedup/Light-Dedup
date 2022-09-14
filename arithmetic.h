@@ -49,5 +49,9 @@ static inline unsigned long max_ul(unsigned long a, unsigned long b)
 {
 	return a < b ? b : a;
 }
+static inline size_t max_usize(size_t a, size_t b)
+{
+	return a < b ? b : a;
+}
 
 #endif // __ARITHMETIC_H
