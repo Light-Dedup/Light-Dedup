@@ -2,6 +2,7 @@
 #ifndef __NOVA_META_H
 #define __NOVA_META_H
 
+#include "arithmetic.h"
 #include "nova_def.h"
 #include "table.h"
 #include "linux/kfifo.h"
@@ -40,7 +41,8 @@ static inline void *allocate_kbuf(size_t len)
 	if (len > KBUF_LEN_MAX) {
 		return kmalloc(KBUF_LEN_MAX, GFP_KERNEL);
 	} else {
-		return kmalloc(len & ~(PAGE_SIZE - 1), GFP_KERNEL);
+		size_t size = max_usize(len & ~(PAGE_SIZE - 1), PAGE_SIZE);
+		return kmalloc(size, GFP_KERNEL);
 	}
 }
 static inline void free_kbuf(void *kbuf) {
