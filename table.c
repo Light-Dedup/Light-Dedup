@@ -69,10 +69,7 @@ nova_clear_pmm_entry_at_blocknr(struct super_block *sb, unsigned long blocknr)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_pmm_entry **deref_table = sbi->deref_table;
-	unsigned long flags = 0;
-	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
 	deref_table[blocknr] = NULL;
-	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
 }
 
 static void rht_entry_free(struct rcu_head *head)
@@ -348,7 +345,7 @@ int nova_table_deref_block(struct nova_mm_table *table,
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	BUG_ON(blocknr != wp->blocknr);
-	wp->base.refcount = atomic64_add_return(-1, &entry->pentry->refcount);
+	wp->base.refcount = atomic64_add_return(-1, &pentry->refcount);
 	BUG_ON(wp->base.refcount < 0);
 	if (wp->base.refcount == 0) {
 		rcu_read_lock();
