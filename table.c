@@ -67,6 +67,17 @@ struct rht_entry_free_task {
 	struct nova_rht_entry *entry;
 };
 
+static inline void
+nova_clear_pmm_entry_at_blocknr(struct super_block *sb, unsigned long blocknr) 
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
+	unsigned long flags = 0;
+	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+	deref_table[blocknr] = NULL;
+	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+}
+
 static void rht_entry_free(struct rcu_head *head)
 {
 	struct rht_entry_free_task *task =
@@ -80,6 +91,7 @@ static void rht_entry_free(struct rcu_head *head)
 	struct nova_pmm_entry *pentry = entry->pentry;
 	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
+	nova_clear_pmm_entry_at_blocknr(sb, blocknr);
 	nova_free_data_block(sb, blocknr);
 	nova_free_entry(task->allocator, pentry);
 	nova_rht_entry_free(entry, rht_entry_cache);
