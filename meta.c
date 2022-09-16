@@ -98,7 +98,10 @@ long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 	// 	prefetcht0(addr + i * 64);
 	// BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
 	pentry = nova_blocknr_pmm_entry(sb, blocknr);
-	BUG_ON(pentry == NULL);
+	if (pentry == NULL) {
+		printk("Block without deduplication: %lu\n", blocknr);
+		return 0;
+	}
 	wp.base.fp = pentry->fp;
 	wp.pentry = pentry;
 	wp.addr = addr;

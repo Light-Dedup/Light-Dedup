@@ -75,23 +75,28 @@ nova_clear_pmm_entry_at_blocknr(struct super_block *sb, unsigned long blocknr)
 	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
 }
 
-static void rht_entry_free(struct rcu_head *head)
+static void __rht_entry_free(struct entry_allocator *allocator,
+	struct nova_rht_entry *entry)
 {
-	struct rht_entry_free_task *task =
-		container_of(head, struct rht_entry_free_task, head);
-	struct nova_meta_table *meta_table = container_of(task->allocator,
+	struct nova_meta_table *meta_table = container_of(allocator,
 		struct nova_meta_table, entry_allocator);
 	struct super_block *sb = meta_table->sblock;
 	struct nova_mm_table *table = &meta_table->metas;
 	struct kmem_cache *rht_entry_cache = table->rht_entry_cache;
-	struct nova_rht_entry *entry = task->entry;
 	struct nova_pmm_entry *pentry = entry->pentry;
 	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	nova_clear_pmm_entry_at_blocknr(sb, blocknr);
 	nova_free_data_block(sb, blocknr);
-	nova_free_entry(task->allocator, pentry);
+	nova_free_entry(allocator, pentry);
 	nova_rht_entry_free(entry, rht_entry_cache);
+}
+
+static void rht_entry_free(struct rcu_head *head)
+{
+	struct rht_entry_free_task *task =
+		container_of(head, struct rht_entry_free_task, head);
+	__rht_entry_free(task->allocator, task->entry);
 	kfree(task);
 }
 
@@ -122,8 +127,7 @@ static void nova_table_leaf_delete(
 	} else {
 		// printk(KERN_ERR "%s: Fail to allocate task\n", __func__);
 		synchronize_rcu();
-		nova_free_entry(table->entry_allocator, entry->pentry);
-		nova_rht_entry_free(entry, table->rht_entry_cache);
+		__rht_entry_free(table->entry_allocator, entry);
 	}
 }
 
@@ -229,8 +233,8 @@ static int nova_table_leaf_insert(
 	}
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr);
-	nova_assign_pmm_entry_to_blocknr(sb, pentry);
 	put_cpu();
+	nova_assign_pmm_entry_to_blocknr(sb, pentry);
 	assign_entry(entry, pentry, fp);
 	NOVA_START_TIMING(index_insert_new_entry_t,
 		index_insert_new_entry_time);
@@ -248,6 +252,7 @@ static int nova_table_leaf_insert(
 	// 	"fpentry offset = %p\n", wp->blocknr, fp.value, rht, pentry);
 	return 0;
 fail2:
+	nova_clear_pmm_entry_at_blocknr(sb, wp->blocknr);
 	nova_free_data_block(sb, nova_pmm_entry_blocknr(pentry));
 	nova_free_entry(table->entry_allocator, pentry);
 fail1:
