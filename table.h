@@ -108,8 +108,8 @@ struct nova_write_para_continuous {
 	uint8_t stream_trust_degree;
 };
 
-int nova_table_deref_block(struct nova_mm_table *table,
-	struct nova_write_para_normal *wp);
+void nova_table_deref_block(struct nova_mm_table *table,
+	struct nova_pmm_entry *pentry);
 int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp);
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp);
 // refcount-- only if refcount == 1
