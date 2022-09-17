@@ -15,19 +15,9 @@ struct nova_sb_info;
 typedef uint64_t entrynr_t;
 typedef uint32_t regionnr_t;
 
-struct nova_pmm_entry_info {
-	union {
-		struct {
-			u64 blocknr: 63;
-			u64 to_be_freed;
-		};
-		u64 value;
-	};
-};
-
 struct nova_pmm_entry {
 	struct nova_fp fp;	// TODO: cpu_to_le64?
-	__le64 info;
+	__le64 blocknr;
 	atomic64_t refcount;
 	// Lowest 3 bits are unsigned trust degree (<= 7). Initially 4.
 	// For each result matching the hint, the trust degree += 1
@@ -49,30 +39,20 @@ _Static_assert(sizeof(atomic64_t) == 8, "atomic64_t not 8B!");
 #define REAL_ENTRY_PER_REGION \
 	((REGION_SIZE - sizeof(__le64)) / sizeof(struct nova_pmm_entry))
 
-static inline struct nova_pmm_entry_info
-nova_pmm_entry_get_info(const struct nova_pmm_entry *pentry)
-{
-	struct nova_pmm_entry_info ret;
-	ret.value = le64_to_cpu(pentry->info);
-	return ret;
-}
 static inline unsigned long
 nova_pmm_entry_blocknr(const struct nova_pmm_entry *pentry)
 {
-	return nova_pmm_entry_get_info(pentry).blocknr;
+	return le64_to_cpu(pentry->blocknr);
+}
+static inline bool
+nova_pmm_entry_is_freed_or_to_be_freed(const struct nova_pmm_entry *pentry)
+{
+	return atomic64_read(&pentry->refcount) == 0;
 }
 static inline void
 nova_pmm_entry_mark_to_be_freed(struct nova_pmm_entry *pentry)
 {
-	struct nova_pmm_entry_info info = nova_pmm_entry_get_info(pentry);
-	BUG_ON(info.to_be_freed == true);
-	info.to_be_freed = true;
-	pentry->info = cpu_to_le64(info.value);
-}
-static inline bool
-nova_pmm_entry_is_to_be_freed(const struct nova_pmm_entry *pentry)
-{
-	return nova_pmm_entry_get_info(pentry).to_be_freed;
+	BUG_ON(!nova_pmm_entry_is_freed_or_to_be_freed(pentry));
 }
 static inline bool
 nova_pmm_entry_is_free(const struct nova_pmm_entry *pentry)
