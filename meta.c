@@ -97,6 +97,7 @@ void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 	pentry = nova_blocknr_pmm_entry(sb, blocknr);
 	if (pentry == NULL) {
 		printk("Block without deduplication: %lu\n", blocknr);
+		nova_free_data_block(sb, blocknr);
 		return;
 	}
 	BUG_ON(nova_pmm_entry_blocknr(pentry) != blocknr);
