@@ -187,8 +187,7 @@ static inline int nova_background_clean_write_entry(struct super_block *sb,
 	struct nova_inode_info_header *sih, u64 epoch_id)
 {
 	if (w_entry->deleted == 0 && w_entry->delete_epoch_id <= epoch_id) {
-		// TODO: Handle error.
-		BUG_ON(nova_deref_blocks(sb, w_entry->nvmm, w_entry->num_pages) < 0);
+		nova_deref_blocks(sb, w_entry->nvmm, w_entry->num_pages);
 		w_entry->deleted = 1;
 	}
 
