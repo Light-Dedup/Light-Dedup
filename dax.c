@@ -178,12 +178,9 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 	struct nova_file_write_entry *entryc, entry_copy;
 	u64 curr_p = begin_tail;
 	size_t entry_size = sizeof(struct nova_file_write_entry);
-	int ret;
 
 	if (blocknr > 0 && allocated > 0) {
-		ret = nova_deref_blocks(sb, blocknr, allocated);
-		if (ret < 0)
-			return ret;
+		nova_deref_blocks(sb, blocknr, allocated);
 	}
 
 	if (begin_tail == 0 || end_tail == 0)
@@ -223,9 +220,7 @@ int nova_cleanup_incomplete_write(struct super_block *sb,
 		}
 
 		blocknr = entryc->block >> PAGE_SHIFT;
-		ret = nova_deref_blocks(sb, blocknr, entryc->num_pages);
-		if (ret < 0)
-			return ret;
+		nova_deref_blocks(sb, blocknr, entryc->num_pages);
 		curr_p += entry_size;
 	}
 

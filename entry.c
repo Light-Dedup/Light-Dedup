@@ -529,21 +529,18 @@ void nova_write_entry(struct entry_allocator *allocator,
 		container_of(allocator, struct nova_meta_table, entry_allocator);
 	struct super_block *sb = meta_table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_pmm_entry_info info = nova_pmm_entry_get_info(pentry);
 	unsigned long irq_flags = 0;
 	INIT_TIMING(write_new_entry_time);
 
-	BUG_ON(info.blocknr != 0);
-	info.blocknr = blocknr;
+	BUG_ON(atomic64_read(&pentry->refcount) != 0);
 
 	nova_memunlock(sbi, &irq_flags);
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
-	pentry->info = cpu_to_le64(info.value);
-	atomic64_set(&pentry->refcount, 1);
+	BUG_ON(pentry->blocknr != 0);
+	pentry->blocknr = cpu_to_le64(blocknr);
 	wmb();
-	BUG_ON(pentry->flag != 0);
-	pentry->flag = NOVA_LEAF_ENTRY_MAGIC;
+	atomic64_set(&pentry->refcount, 1);
 	if (!in_the_same_cacheline(allocator_cpu->last_entry, pentry))
 		flush_last_entry(allocator_cpu);
 	allocator_cpu->last_entry = pentry;
@@ -577,8 +574,8 @@ void nova_free_entry(struct entry_allocator *allocator,
 		) < 0);
 		spin_unlock_bh(&allocator->lock);
 	}
-	BUG_ON(pentry->flag != NOVA_LEAF_ENTRY_MAGIC);
-	nova_unlock_write_flush(sbi, &pentry->info, 0, true);
+	BUG_ON(atomic64_read(&pentry->refcount) != 0);
+	nova_unlock_write_flush(sbi, &pentry->blocknr, 0, true);
 }
 
 static inline void
