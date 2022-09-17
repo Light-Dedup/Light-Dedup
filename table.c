@@ -179,18 +179,18 @@ static int nova_table_leaf_insert(
 	retval = get_new_block(sb,wp);
 	if(retval < 0)
 		return retval;
-	spin_lock(&allocator->lock);
+	spin_lock_bh(&allocator->lock);
 	entrynr = nova_alloc_entry(allocator, fp);
 	if (entrynr == REGION_FULL) {
 		++allocator->entry_collision;
-		spin_unlock(&allocator->lock);
+		spin_unlock_bh(&allocator->lock);
 		wp->last_accessed = NULL;
 		return 0;
 	}
 	pentry = pentries + entrynr;
 	nova_assign_pmm_entry_to_blocknr(sb, wp->blocknr, pentry);
 	nova_write_entry(allocator, entrynr, fp, wp->blocknr);
-	spin_unlock(&allocator->lock);
+	spin_unlock_bh(&allocator->lock);
 
 	new_dirty_fpentry(wp->last_new_entries, pentry);
 	wp->last_accessed = pentry;

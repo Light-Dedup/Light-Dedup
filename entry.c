@@ -126,10 +126,10 @@ void nova_free_entry(struct entry_allocator *allocator,
 	struct super_block *sb = meta_table->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	spin_lock(&allocator->lock);
+	spin_lock_bh(&allocator->lock);
 	BUG_ON(atomic64_read(&pentry->refcount) != 0);
 	nova_unlock_write_flush(sbi, &pentry->blocknr, 0, true);
-	spin_unlock(&allocator->lock);
+	spin_unlock_bh(&allocator->lock);
 }
 
 void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *allocator)

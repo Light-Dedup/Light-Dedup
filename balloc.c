@@ -385,6 +385,7 @@ int nova_find_free_slot(struct rb_root *tree, unsigned long range_low,
 	return 0;
 }
 
+// Used in softirq context
 static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	int num, unsigned short btype, int log_page)
 {
@@ -416,7 +417,7 @@ static int nova_free_blocks(struct super_block *sb, unsigned long blocknr,
 	}
 
 	free_list = nova_get_free_list(sb, cpuid);
-	spin_lock(&free_list->s_lock);
+	spin_lock_bh(&free_list->s_lock);
 
 	tree = &(free_list->block_free_tree);
 
@@ -500,7 +501,7 @@ block_found:
 	}
 
 out:
-	spin_unlock(&free_list->s_lock);
+	spin_unlock_bh(&free_list->s_lock);
 	if (new_node_used == 0)
 		nova_free_blocknode(curr_node);
 
@@ -531,6 +532,7 @@ int nova_free_data_blocks(struct super_block *sb,
 
 	return ret;
 }
+// Used in softirq context
 int nova_free_data_block(struct super_block *sb,
 	unsigned long blocknr)
 {
@@ -936,7 +938,7 @@ static int nova_new_blocks(struct super_block *sb, unsigned long *blocknr,
 
 retry:
 	free_list = nova_get_free_list(sb, cpuid);
-	spin_lock(&free_list->s_lock);
+	spin_lock_bh(&free_list->s_lock);
 
 	if (not_enough_blocks(free_list, num_blocks, atype)) {
 		nova_dbgv("%s: cpu %d, free_blocks %lu, required %lu, "
@@ -948,7 +950,7 @@ retry:
 			/* Allocate anyway */
 			goto alloc;
 
-		spin_unlock(&free_list->s_lock);
+		spin_unlock_bh(&free_list->s_lock);
 		cpuid = nova_get_candidate_free_list(sb);
 		retried++;
 		goto retry;
@@ -967,7 +969,7 @@ alloc:
 		}
 	}
 
-	spin_unlock(&free_list->s_lock);
+	spin_unlock_bh(&free_list->s_lock);
 
 	if (ret_blocks <= 0 || new_blocknr == 0) {
 		nova_dbgv("%s: not able to allocate %d blocks. "

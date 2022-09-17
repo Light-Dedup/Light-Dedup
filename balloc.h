@@ -5,6 +5,7 @@
 
 /* DRAM structure to hold a list of free PMEM blocks */
 struct free_list {
+	// Used in softirq context
 	spinlock_t s_lock;
 	struct rb_root	block_free_tree;
 	struct nova_range_node *first_node; // lowest address free range

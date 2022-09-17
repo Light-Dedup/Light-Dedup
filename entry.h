@@ -64,6 +64,7 @@ nova_pmm_entry_is_free(const struct nova_pmm_entry *pentry)
 struct entry_allocator {
 	unsigned long num_entry;
 	unsigned long entry_collision;
+	// Used in softirq context
   spinlock_t lock;
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \
