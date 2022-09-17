@@ -102,6 +102,7 @@ long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 		printk("Block without deduplication: %lu\n", blocknr);
 		return 0;
 	}
+	BUG_ON(nova_pmm_entry_blocknr(pentry) != blocknr);
 	wp.base.fp = pentry->fp;
 	wp.pentry = pentry;
 	wp.addr = addr;
