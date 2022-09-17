@@ -165,9 +165,7 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 
 	nova_dbgv("%s: pgoff %lu, free %u blocks\n",
 				__func__, pgoff, num_free);
-	ret = nova_deref_blocks(sb, old_nvmm, num_free);
-	if (ret < 0)
-		goto out;
+	nova_deref_blocks(sb, old_nvmm, num_free);
 
 out:
 	sih->i_blocks -= num_free;

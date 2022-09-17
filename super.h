@@ -208,7 +208,7 @@ static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)
 	return sb->s_fs_info;
 }
 
-static inline long
+static inline void
 nova_deref_blocks(struct super_block *sb, unsigned long blocknr,
 	unsigned long num)
 {
@@ -217,12 +217,10 @@ nova_deref_blocks(struct super_block *sb, unsigned long blocknr,
 	long ret;
 	while (num) {
 		ret = nova_meta_table_decr_try_async(table, blocknr);
-		if (ret < 0)
-			return ret;
+		BUG_ON(ret < 0);
 		num -= 1;
 		blocknr += 1;
 	}
-	return 0;
 }
 
 static inline struct nova_super_block
