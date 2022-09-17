@@ -85,12 +85,9 @@ nova_blocknr_pmm_entry(struct super_block *sb, unsigned long blocknr)
 	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
 	return deref_table[blocknr];
 }
-long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr) 
+void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 {
 	struct super_block *sb = table->sblock;
-	const void *addr = nova_blocknr_to_addr(sb, blocknr);
-	struct nova_write_para_normal wp;
-	long    retval;
 	INIT_TIMING(decr_ref_time);
 	struct nova_pmm_entry *pentry;
 	BUG_ON(blocknr == 0);
@@ -100,23 +97,12 @@ long nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 	pentry = nova_blocknr_pmm_entry(sb, blocknr);
 	if (pentry == NULL) {
 		printk("Block without deduplication: %lu\n", blocknr);
-		return 0;
+		return;
 	}
 	BUG_ON(nova_pmm_entry_blocknr(pentry) != blocknr);
-	wp.base.fp = pentry->fp;
-	wp.pentry = pentry;
-	wp.addr = addr;
-	wp.blocknr = blocknr;
 	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
-	retval = nova_table_deref_block(&table->metas, &wp);
+	nova_table_deref_block(&table->metas, pentry);
 	NOVA_END_TIMING(decr_ref_t, decr_ref_time);
-	if (retval < 0) {
-		BUG_ON(retval != -EIO);
-		return retval;
-	} else {
-		BUG_ON(retval != 0);
-		return wp.base.refcount;
-	}
 }
 
 long nova_meta_table_decr1(struct nova_meta_table *table, const void *addr, unsigned long blocknr)
