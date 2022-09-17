@@ -799,7 +799,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 err_out2:
 	// TODO: Make sure that the clean up does not fail.
 	if (wp.blocknr_next != 0) {
-		BUG_ON(nova_deref_blocks(env.sb, wp.blocknr_next, 1) < 0);
+		nova_deref_blocks(env.sb, wp.blocknr_next, 1);
 	}
 	BUG_ON(nova_cleanup_incomplete_write(env.sb, env.sih,
 		wp.blocknr, wp.num, env.begin_tail, env.update.tail) < 0);
