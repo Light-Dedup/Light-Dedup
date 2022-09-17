@@ -76,6 +76,7 @@ nova_clear_pmm_entry_at_blocknr(struct super_block *sb, unsigned long blocknr)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
 	unsigned long flags = 0;
+	BUG_ON(deref_table[blocknr] == 0);
 	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
 	deref_table[blocknr] = NULL;
 	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
@@ -400,34 +401,32 @@ retry:
 	return 0;
 }
 
-int nova_table_deref_block(struct nova_mm_table *table,
-	struct nova_write_para_normal *wp)
+void nova_table_deref_block(struct nova_mm_table *table,
+	struct nova_pmm_entry *pentry)
 {
 	struct super_block *sb = table->sblock;
 	struct rhashtable *rht = &table->rht;
 	struct nova_rht_entry *entry;
-	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
+	int64_t refcount;
 	unsigned long irq_flags = 0;
 	INIT_TIMING(mem_bucket_find_time);
 
-	pentry = wp->pentry;
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
-	BUG_ON(blocknr != wp->blocknr);
 	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
 		&irq_flags);
-	wp->base.refcount = atomic64_add_return(-1, &pentry->refcount);
+	refcount = atomic64_add_return(-1, &pentry->refcount);
 	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
 		&irq_flags);
-	BUG_ON(wp->base.refcount < 0);
-	if (wp->base.refcount == 0) {
+	BUG_ON(refcount < 0);
+	if (refcount == 0) {
 		bool hit;
 		// Now only we can free the entry,
 		// because there are no any other deleter.
 		rcu_read_lock();
 		NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-		entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
+		entry = rhashtable_lookup(rht, &pentry->fp, nova_rht_params);
 		NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 		hit = (entry != NULL && entry->pentry == pentry);
 		rcu_read_unlock();
@@ -438,12 +437,9 @@ int nova_table_deref_block(struct nova_mm_table *table,
 			// hashtable, but is referenced by hints.
 			free_pentry(table, pentry);
 		}
-		wp->last_accessed = NULL;
-		return 0;
+	} else {
+		nova_flush_entry(table->entry_allocator, pentry);
 	}
-	nova_flush_entry(table->entry_allocator, pentry);
-	wp->last_accessed = pentry;
-	return 0;
 }
 
 // Upsert : update or insert
