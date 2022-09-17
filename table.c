@@ -733,6 +733,8 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 	if (ret < 0)
 		return ret;
 	NOVA_STATS_ADD(no_hint, 1);
+	if (unlikely(wp->normal.last_accessed == NULL))
+		return 0;
 	offset = nova_get_addr_off(sbi, wp->normal.last_accessed);
 	NOVA_START_TIMING(update_hint_t, update_hint_time);
 	// nova_sbi_memunlock_range(sbi, next_hint, sizeof(*next_hint),
@@ -759,6 +761,8 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 	ret = copy_from_user_incr(sbi, wp);
 	if (ret < 0)
 		return ret;
+	if (unlikely(wp->normal.last_accessed == NULL))
+		return 0;
 	offset_new = nova_get_addr_off(sbi, wp->normal.last_accessed);
 	if (offset_new == offset) {
 		NOVA_STATS_ADD(hint_not_trusted_hit, 1);
@@ -955,6 +959,8 @@ static int handle_hint(struct nova_sb_info *sbi,
 	ret = copy_from_user_incr(sbi, wp);
 	if (ret < 0)
 		return ret;
+	if (unlikely(wp->normal.last_accessed == NULL))
+		return 0;
 	decr_trust_degree(sbi, next_hint, offset,
 		nova_get_addr_off(sbi, wp->normal.last_accessed),
 		trust_degree);
