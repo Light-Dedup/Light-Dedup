@@ -274,7 +274,7 @@ static int nova_table_leaf_insert(
 	assign_entry(entry, pentry, fp);
 	NOVA_START_TIMING(index_insert_new_entry_t,
 		index_insert_new_entry_time);
-	ret = rhashtable_lookup_insert_key(rht, &fp, &entry->node,
+	ret = rhashtable_lookup_insert_key(rht, fp, &entry->node,
 		nova_rht_params);
 	NOVA_END_TIMING(index_insert_new_entry_t, index_insert_new_entry_time);
 	if (ret < 0) {
