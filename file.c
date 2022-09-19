@@ -23,6 +23,7 @@
 #include "nova.h"
 #include "inode.h"
 
+DEFINE_PER_CPU(struct nova_pmm_entry *, last_new_fpentry_per_cpu);
 
 static inline int nova_can_set_blocksize_hint(struct inode *inode,
 	struct nova_inode *pi, loff_t new_size)
@@ -609,7 +610,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	struct nova_inode inode_copy;
 	size_t offset, bytes;
 	unsigned long num_blocks;
+	void **kbuf_p;
 	struct nova_write_para_continuous wp;
+	int cpu;
 	unsigned long irq_flags = 0;
 	ssize_t ret;
 	INIT_TIMING(cow_write_time);
@@ -678,17 +681,22 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	wp.blocknr = 0;
 	wp.num = 0;
 	wp.blocknr_next = 0;
-	wp.kbuf = allocate_kbuf(len);
-	if (wp.kbuf == NULL) {
+	kbuf_p = generic_cache_alloc(&table->kbuf_cache, GFP_KERNEL);
+	if (kbuf_p == NULL) {
 		ret = -ENOMEM;
 		goto err_out1;
 	}
+	wp.kbuf = *kbuf_p;
 	wp.kstart = 0;
 	wp.klen = 0;
 
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
 			__func__, env.inode->i_ino, env.pos, len);
 
+	cpu = get_cpu();
+	wp.normal.last_new_entries[0] = per_cpu(last_new_fpentry_per_cpu, cpu);
+	wp.normal.last_new_entries[1] = NULL_PENTRY;
+	put_cpu();
 	wp.normal.last_ref_entry = NULL_PENTRY;
 	if (offset != 0) {
 		bytes = env.sb->s_blocksize - offset;
@@ -765,6 +773,13 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto err_out2;
 	}
 	nova_flush_entry_if_not_null(wp.normal.last_ref_entry, false);
+	cpu = get_cpu();
+	per_cpu(last_new_fpentry_per_cpu, cpu) = wp.normal.last_new_entries[0];
+	put_cpu();
+	if (!in_the_same_cacheline(wp.normal.last_new_entries[0],
+			wp.normal.last_new_entries[1]))
+		nova_flush_entry_if_not_null(wp.normal.last_new_entries[1],
+			false);
 
 	env.sih->i_blocks += (num_blocks <<
 		(blk_type_to_shift[env.sih->i_blk_type] -
@@ -793,7 +808,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	env.sih->trans_id++;
 	NOVA_STATS_ADD(cow_write_bytes, env.written);
-	free_kbuf(wp.kbuf);
+	generic_cache_free(&table->kbuf_cache, kbuf_p);
 	atomic64_fetch_sub_relaxed(1, &table->thread_num);
 	return env.written;
 err_out2:
@@ -803,7 +818,7 @@ err_out2:
 	}
 	BUG_ON(nova_cleanup_incomplete_write(env.sb, env.sih,
 		wp.blocknr, wp.num, env.begin_tail, env.update.tail) < 0);
-	free_kbuf(wp.kbuf);
+	generic_cache_free(&table->kbuf_cache, kbuf_p);
 err_out1:
 	atomic64_fetch_sub_relaxed(1, &table->thread_num);
 err_out0:

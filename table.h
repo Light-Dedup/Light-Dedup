@@ -73,13 +73,18 @@ struct nova_write_para_normal {
 	// so that the corresponding block will not be regarded as a block
 	// without deduplication.
 	struct nova_pmm_entry *last_ref_entry;
+	// Two last not flushed newly allocated entries.
+	// 0 is the last. 1 is the second to last.
+	// Maintained here to make sure that the newly allocated entry is
+	// flushed after its hint is written.
+	struct nova_pmm_entry *last_new_entries[2];
 };
 struct nova_write_para_rewrite {
 	struct nova_write_para_normal normal;
 	unsigned long offset, len;
 };
 
-#define KBUF_LEN_MAX (PAGE_SIZE * 256)
+#define KBUF_LEN (PAGE_SIZE * 512)
 
 struct nova_write_para_continuous {
 	const char __user *ubuf;
@@ -92,7 +97,7 @@ struct nova_write_para_continuous {
 	// Used internally
 	char *kbuf;
 	size_t kstart;
-	size_t klen; // At most KBUF_LEN_MAX
+	size_t klen; // At most KBUF_LEN
 };
 
 void nova_table_deref_block(struct nova_mm_table *table,
