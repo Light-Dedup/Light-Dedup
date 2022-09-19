@@ -8,6 +8,8 @@
 // If the number of free entries in a region is greater or equal to FREE_THRESHOLD, then the region is regarded as free.
 #define FREE_THRESHOLD (REAL_ENTRY_PER_REGION / 2)
 
+DECLARE_PER_CPU(struct nova_pmm_entry *, last_new_fpentry_per_cpu);
+
 DEFINE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);
 
 static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocator *allocator)
@@ -23,8 +25,8 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 		allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
 		// The first allocation will trigger a new_region request.
 		allocator_cpu->top_entry = NULL_PENTRY;
-		allocator_cpu->last_entry = NULL_PENTRY;
 		allocator_cpu->allocated = 0;
+		per_cpu(last_new_fpentry_per_cpu, cpu) = NULL_PENTRY;
 	}
 	spin_lock_init(&allocator->lock);
 	return 0;
@@ -339,12 +341,6 @@ err_out:
 	return ret;
 }
 
-static inline void flush_last_entry(struct entry_allocator_cpu *allocator_cpu)
-{
-	// TODO: Does flush need memunlock?
-	if (allocator_cpu->last_entry != NULL_PENTRY)
-		nova_flush_cacheline(allocator_cpu->last_entry, true);
-}
 void nova_flush_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
@@ -539,11 +535,6 @@ void nova_write_entry(struct entry_allocator *allocator,
 	pentry->fp = fp;
 	BUG_ON(pentry->blocknr != 0);
 	pentry->blocknr = cpu_to_le64(blocknr);
-	wmb();
-	atomic64_set(&pentry->refcount, 1);
-	if (!in_the_same_cacheline(allocator_cpu->last_entry, pentry))
-		flush_last_entry(allocator_cpu);
-	allocator_cpu->last_entry = pentry;
 	++allocator_cpu->allocated; // Commit the allocation
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock(sbi, &irq_flags);
@@ -624,7 +615,8 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 	NOVA_START_TIMING(save_entry_allocator_t, save_entry_allocator_time);
 	for_each_possible_cpu(cpu) {
 		allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
-		flush_last_entry(allocator_cpu);
+		nova_flush_entry_if_not_null(
+			per_cpu(last_new_fpentry_per_cpu, cpu), false);
 		if (allocator_cpu->top_entry != NULL_PENTRY) {
 			add_valid_count(&allocator->valid_entry,
 				nova_get_addr_off(

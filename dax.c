@@ -614,6 +614,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 	u64 file_size;
 	u32 time;
 	ssize_t ret;
+	char **kbuf_p = NULL;
 	char *kbuf = NULL;
 	struct nova_write_para_normal wp;
 	unsigned long irq_flags = 0;
@@ -624,11 +625,12 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 
 	NOVA_START_TIMING(inplace_write_t, inplace_write_time);
 
-	kbuf = allocate_kbuf(len);
-	if (kbuf == NULL) {
+	kbuf_p = (char **)generic_cache_alloc(&table->kbuf_cache, GFP_KERNEL);
+	if (kbuf_p == NULL) {
 		ret = -ENOMEM;
 		goto out;
 	}
+	kbuf = *kbuf_p;
 
 	if (!access_ok(buf, len)) {
 		ret = -EFAULT;
@@ -812,8 +814,7 @@ protected:
 
 	sih->trans_id++;
 out:
-	if (kbuf)
-		free_kbuf(kbuf);
+	generic_cache_free(&table->kbuf_cache, (void **)kbuf_p);
 	if (ret < 0) {
 		long ret2;
 		ret2 = nova_cleanup_incomplete_write(sb, sih, new_blocknr, 1,

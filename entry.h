@@ -35,14 +35,14 @@ nova_pmm_entry_blocknr(const struct nova_pmm_entry *pentry)
 	return le64_to_cpu(pentry->blocknr);
 }
 static inline bool
-nova_pmm_entry_is_freed_or_to_be_freed(const struct nova_pmm_entry *pentry)
+nova_pmm_entry_is_readable(const struct nova_pmm_entry *pentry)
 {
-	return atomic64_read(&pentry->refcount) == 0;
+	return atomic64_read(&pentry->refcount) != 0;
 }
 static inline void
 nova_pmm_entry_mark_to_be_freed(struct nova_pmm_entry *pentry)
 {
-	BUG_ON(!nova_pmm_entry_is_freed_or_to_be_freed(pentry));
+	BUG_ON(nova_pmm_entry_is_readable(pentry));
 }
 static inline bool
 nova_pmm_entry_is_free(const struct nova_pmm_entry *pentry)
@@ -52,10 +52,6 @@ nova_pmm_entry_is_free(const struct nova_pmm_entry *pentry)
 
 struct entry_allocator_cpu {
 	struct nova_pmm_entry *top_entry; // Last allocated entry.
-	// Last not flushed entry.
-	// Note that the newly allocated entry is always not flushed
-	// immediately.
-	struct nova_pmm_entry *last_entry;
 	int16_t allocated;
 };
 DECLARE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);

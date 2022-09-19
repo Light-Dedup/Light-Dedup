@@ -115,6 +115,15 @@ static void rcu_rht_entry_free(struct rcu_head *head)
 	kfree(task);
 }
 
+static inline void new_dirty_fpentry(struct nova_pmm_entry *last_pentries[2],
+	struct nova_pmm_entry *pentry)
+{
+	if (!in_the_same_cacheline(last_pentries[0], last_pentries[1]))
+		nova_flush_entry_if_not_null(last_pentries[1], false);
+	last_pentries[1] = last_pentries[0];
+	last_pentries[0] = pentry;
+}
+
 static void free_rht_entry(
 	struct nova_mm_table *table,
 	struct rhashtable *rht,
@@ -124,6 +133,8 @@ static void free_rht_entry(
 	// Remove the entry first to make it invisible to other threads.
 	int ret = rhashtable_remove_fast(rht, &entry->node, nova_rht_params);
 	BUG_ON(ret < 0);
+	// printk("Block %lu removed from rhashtable\n",
+	// 	nova_pmm_entry_blocknr(entry->pentry));
 	nova_pmm_entry_mark_to_be_freed(entry->pentry);
 	task = kmalloc(sizeof(struct rht_entry_free_task), GFP_ATOMIC);
 	if (task) {
@@ -242,7 +253,8 @@ static int nova_table_leaf_insert(
 	nova_assign_pmm_entry_to_blocknr(sb, wp->blocknr, pentry);
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr);
-	put_cpu();
+	put_cpu(); // Calls barrier() inside
+	// Now the pentry won't be allocated by others
 	assign_entry(entry, pentry, fp);
 	NOVA_START_TIMING(index_insert_new_entry_t,
 		index_insert_new_entry_time);
@@ -254,16 +266,20 @@ static int nova_table_leaf_insert(
 		// 	"with error code %d\n", wp->blocknr, fp.value, ret);
 		goto fail2;
 	}
-	// printk("Block %lu with fp %llx inserted into rhashtable %p\n",
-	// 	wp->blocknr, fp.value, rht);
-	return 0;
-fail2:
+	// printk("Block %lu inserted into rhashtable\n", wp->blocknr);
 	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
 		&irq_flags);
-	refcount = atomic64_add_return(-1, &pentry->refcount);
+	refcount = atomic64_cmpxchg(&pentry->refcount, 0, 1);
 	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
 		&irq_flags);
 	BUG_ON(refcount != 0);
+	new_dirty_fpentry(wp->last_new_entries, pentry);
+	// printk("Block %lu with fp %llx inserted into rhashtable %p, "
+	// 	"fpentry offset = %p\n", wp->blocknr, fp.value, rht, pentry);
+	return 0;
+fail2:
+	// The pentry can not be referenced by others, because its refcount is
+	// zero, so is not considered readable.
 	__rcu_pentry_free(table->entry_allocator, pentry);
 fail1:
 	nova_rht_entry_free(entry, table->rht_entry_cache);
@@ -373,16 +389,15 @@ void nova_table_deref_block(struct nova_mm_table *table,
 		&irq_flags);
 	BUG_ON(refcount < 0);
 	if (refcount == 0) {
-		bool hit;
 		// Now only we can free the entry,
 		// because there are no any other deleter.
 		rcu_read_lock();
 		NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
 		entry = rhashtable_lookup(rht, &pentry->fp, nova_rht_params);
 		NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
-		hit = (entry != NULL && entry->pentry == pentry);
+		BUG_ON(entry == NULL);
+		BUG_ON(entry->pentry != pentry);
 		rcu_read_unlock();
-		BUG_ON(!hit);
 		free_rht_entry(table, rht, entry);
 	} else {
 		nova_flush_entry(table->entry_allocator, pentry);
@@ -553,7 +568,7 @@ int nova_fp_table_incr_continuous_kbuf(struct nova_sb_info *sbi,
 		}
 		if (ret < 0)
 			break;
-		wp->kstart = (wp->kstart + PAGE_SIZE) % KBUF_LEN_MAX;
+		wp->kstart = (wp->kstart + PAGE_SIZE) % KBUF_LEN;
 		wp->klen -= PAGE_SIZE;
 	}
 	nova_memlock(sbi, &irq_flags);
@@ -575,8 +590,8 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 		// to_copy = min_usize(to_copy, KBUF_LEN - wp->klen);
 		to_copy = wp->len & ~(PAGE_SIZE - 1);
 		start = wp->kstart + wp->klen;
-		if (start >= KBUF_LEN_MAX) {
-			start -= KBUF_LEN_MAX;
+		if (start >= KBUF_LEN) {
+			start -= KBUF_LEN;
 			n = min_usize(wp->kstart - start, to_copy);
 			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
 				return -EFAULT;
@@ -584,7 +599,7 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 			wp->len -= n;
 			wp->ubuf += n;
 		} else {
-			n = min_usize(KBUF_LEN_MAX - start, to_copy);
+			n = min_usize(KBUF_LEN - start, to_copy);
 			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
 				return -EFAULT;
 			wp->klen += n;
