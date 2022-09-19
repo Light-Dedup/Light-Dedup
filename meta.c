@@ -2,11 +2,22 @@
 #include "meta.h"
 #include "config.h"
 
+static void *allocate_kbuf(gfp_t flags)
+{
+	return kvmalloc(KBUF_LEN, flags);
+}
+
+static void free_kbuf(void *kbuf)
+{
+	kvfree(kbuf);
+}
+
 int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
 	size_t nelem_hint)
 {
 	int ret;
 	table->sblock = sb;
+	generic_cache_init(&table->kbuf_cache, allocate_kbuf, free_kbuf);
 	ret = nova_fp_strong_ctx_init(&table->fp_ctx);
 	if (ret < 0)
 		goto err_out0;
@@ -22,6 +33,7 @@ err_out0:
 }
 void nova_meta_table_free(struct nova_meta_table *table)
 {
+	generic_cache_destroy(&table->kbuf_cache);
 	nova_fp_strong_ctx_free(&table->fp_ctx);
 	nova_table_free(&table->metas);
 }
@@ -97,6 +109,7 @@ void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 	pentry = nova_blocknr_pmm_entry(sb, blocknr);
 	if (pentry == NULL) {
 		printk("Block without deduplication: %lu\n", blocknr);
+		nova_free_data_block(sb, blocknr);
 		return;
 	}
 	BUG_ON(nova_pmm_entry_blocknr(pentry) != blocknr);

@@ -507,8 +507,6 @@ void nova_write_entry(struct entry_allocator *allocator,
 		cpu_to_le64(HINT_TRUST_DEGREE_THRESHOLD));
 	BUG_ON(pentry->blocknr != 0);
 	pentry->blocknr = cpu_to_le64(blocknr);
-	wmb();
-	atomic64_set(&pentry->refcount, 1);
 	++allocator_cpu->allocated; // Commit the allocation
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock(sbi, &irq_flags);
