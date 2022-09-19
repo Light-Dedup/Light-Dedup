@@ -759,7 +759,7 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 			!hint_trustable(trust_degree))
 		return;
 	// Do not prefetch across syscall.
-	if (wp->len < PAGE_SIZE * 2)
+	if (wp->len + wp->klen < PAGE_SIZE * 2)
 		return;
 	pentry = nova_sbi_get_block(sbi, offset);
 	if (!nova_pmm_entry_is_readable(pentry))
