@@ -174,7 +174,9 @@ static int nova_table_leaf_insert(
 	struct nova_pmm_entry *pentry;
 	struct nova_fp fp = wp->base.fp;
 	entrynr_t entrynr;
+	int64_t refcount;
 	int retval;
+	unsigned long irq_flags = 0;
 
 	retval = get_new_block(sb,wp);
 	if(retval < 0)
@@ -191,6 +193,13 @@ static int nova_table_leaf_insert(
 	nova_assign_pmm_entry_to_blocknr(sb, wp->blocknr, pentry);
 	nova_write_entry(allocator, entrynr, fp, wp->blocknr);
 	spin_unlock_bh(&allocator->lock);
+	// Now the pentry won't be allocated by others
+	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
+	refcount = atomic64_cmpxchg(&pentry->refcount, 0, 1);
+	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+		&irq_flags);
+	BUG_ON(refcount != 0);
 
 	new_dirty_fpentry(wp->last_new_entries, pentry);
 	wp->last_accessed = pentry;
@@ -659,7 +668,7 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	if (wp->len < PAGE_SIZE * 2)
 		return;
 	pentry = nova_sbi_get_block(sbi, offset);
-	if (nova_pmm_entry_is_freed_or_to_be_freed(pentry))
+	if (!nova_pmm_entry_is_readable(pentry))
 		return;
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
@@ -712,7 +721,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	INIT_TIMING(cmp_user_time);
 	INIT_TIMING(hit_incr_ref_time);
 
-	if (nova_pmm_entry_is_freed_or_to_be_freed(pentry))
+	if (!nova_pmm_entry_is_readable(pentry))
 		return 0;
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
@@ -886,7 +895,7 @@ int nova_fp_table_incr_continuous_kbuf(struct nova_sb_info *sbi,
 		}
 		if (ret < 0)
 			break;
-		wp->kstart = (wp->kstart + PAGE_SIZE) % KBUF_LEN_MAX;
+		wp->kstart = (wp->kstart + PAGE_SIZE) % KBUF_LEN;
 		wp->klen -= PAGE_SIZE;
 		first = false;
 	}
@@ -909,8 +918,8 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 		// to_copy = min_usize(to_copy, KBUF_LEN - wp->klen);
 		to_copy = wp->len & ~(PAGE_SIZE - 1);
 		start = wp->kstart + wp->klen;
-		if (start >= KBUF_LEN_MAX) {
-			start -= KBUF_LEN_MAX;
+		if (start >= KBUF_LEN) {
+			start -= KBUF_LEN;
 			n = min_usize(wp->kstart - start, to_copy);
 			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
 				return -EFAULT;
@@ -918,7 +927,7 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 			wp->len -= n;
 			wp->ubuf += n;
 		} else {
-			n = min_usize(KBUF_LEN_MAX - start, to_copy);
+			n = min_usize(KBUF_LEN - start, to_copy);
 			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
 				return -EFAULT;
 			wp->klen += n;

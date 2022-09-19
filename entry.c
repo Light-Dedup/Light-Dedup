@@ -101,9 +101,6 @@ void nova_write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 		cpu_to_le64(HINT_TRUST_DEGREE_THRESHOLD));
 	BUG_ON(pentry->blocknr != 0);
 	pentry->blocknr = cpu_to_le64(blocknr);
-	wmb();
-	atomic64_set(&pentry->refcount, 1);
-	nova_flush_buffer(pentry, sizeof(*pentry), true);
 	NOVA_END_TIMING(write_new_entry_t, write_new_entry_time);
 	nova_memlock_range(sb, pentry, sizeof(*pentry), &irq_flags);
 }
