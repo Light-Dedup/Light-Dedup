@@ -990,7 +990,7 @@ int nova_fp_table_incr_continuous_kbuf(struct nova_sb_info *sbi,
 		}
 		if (ret < 0)
 			break;
-		wp->kstart = (wp->kstart + PAGE_SIZE) % KBUF_LEN_MAX;
+		wp->kstart = (wp->kstart + PAGE_SIZE) % KBUF_LEN;
 		wp->klen -= PAGE_SIZE;
 		first = false;
 	}
@@ -1013,8 +1013,8 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 		// to_copy = min_usize(to_copy, KBUF_LEN - wp->klen);
 		to_copy = wp->len & ~(PAGE_SIZE - 1);
 		start = wp->kstart + wp->klen;
-		if (start >= KBUF_LEN_MAX) {
-			start -= KBUF_LEN_MAX;
+		if (start >= KBUF_LEN) {
+			start -= KBUF_LEN;
 			n = min_usize(wp->kstart - start, to_copy);
 			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
 				return -EFAULT;
@@ -1022,7 +1022,7 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 			wp->len -= n;
 			wp->ubuf += n;
 		} else {
-			n = min_usize(KBUF_LEN_MAX - start, to_copy);
+			n = min_usize(KBUF_LEN - start, to_copy);
 			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
 				return -EFAULT;
 			wp->klen += n;
