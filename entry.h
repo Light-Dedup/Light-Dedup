@@ -49,14 +49,14 @@ nova_pmm_entry_blocknr(const struct nova_pmm_entry *pentry)
 	return le64_to_cpu(pentry->blocknr);
 }
 static inline bool
-nova_pmm_entry_is_freed_or_to_be_freed(const struct nova_pmm_entry *pentry)
+nova_pmm_entry_is_readable(const struct nova_pmm_entry *pentry)
 {
-	return atomic64_read(&pentry->refcount) == 0;
+	return atomic64_read(&pentry->refcount) != 0;
 }
 static inline void
 nova_pmm_entry_mark_to_be_freed(struct nova_pmm_entry *pentry)
 {
-	BUG_ON(!nova_pmm_entry_is_freed_or_to_be_freed(pentry));
+	BUG_ON(nova_pmm_entry_is_readable(pentry));
 }
 static inline bool
 nova_pmm_entry_is_free(const struct nova_pmm_entry *pentry)
