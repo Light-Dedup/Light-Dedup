@@ -69,6 +69,7 @@ struct entry_allocator {
 	struct nova_pmm_entry *last_entry; // Last not flushed entry.
 	// Used in softirq context
 	spinlock_t lock;
+	__le64 *map_blocknr_to_pentry;
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \
 	((PAGE_SIZE - sizeof(__le64)) / sizeof(uint16_t))
