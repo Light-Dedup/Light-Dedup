@@ -78,6 +78,7 @@ struct nova_write_para_normal {
 	// Maintained here to make sure that the newly allocated entry is
 	// flushed after its hint is written.
 	struct nova_pmm_entry *last_new_entries[2];
+	__le64 *dirty_map_blocknr_to_pentry;
 };
 struct nova_write_para_rewrite {
 	struct nova_write_para_normal normal;
