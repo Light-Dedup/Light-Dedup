@@ -91,11 +91,11 @@ void nova_meta_table_save(struct nova_meta_table *table)
 		NOVA_RECOVER_META_FLAG_COMPLETE, true);
 }
 static inline struct nova_pmm_entry*
-nova_blocknr_pmm_entry(struct super_block *sb, unsigned long blocknr)
+nova_blocknr_pmm_entry(struct nova_meta_table *table, unsigned long blocknr)
 {
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
-	return deref_table[blocknr];
+	return nova_get_block(table->sblock,
+		le64_to_cpu(
+			table->entry_allocator.map_blocknr_to_pentry[blocknr]));
 }
 void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 {
@@ -106,7 +106,7 @@ void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 	// for (i = 0; i < 64; ++i)
 	// 	prefetcht0(addr + i * 64);
 	// BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
-	pentry = nova_blocknr_pmm_entry(sb, blocknr);
+	pentry = nova_blocknr_pmm_entry(table, blocknr);
 	if (pentry == NULL) {
 		printk("Block without deduplication: %lu\n", blocknr);
 		nova_free_data_block(sb, blocknr);

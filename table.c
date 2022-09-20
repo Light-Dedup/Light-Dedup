@@ -9,6 +9,34 @@
 
 // #define static _Static_assert(1, "2333");
 
+static inline void
+nova_assign_pmm_entry_to_blocknr(struct entry_allocator *allocator,
+	unsigned long blocknr, struct nova_pmm_entry *pentry)
+{
+	struct nova_meta_table *meta_table =
+		container_of(allocator, struct nova_meta_table,
+			entry_allocator);
+	struct nova_sb_info *sbi =
+		container_of(meta_table, struct nova_sb_info, meta_table);
+	__le64 *offset = allocator->map_blocknr_to_pentry + blocknr;
+	*offset = nova_get_addr_off(sbi, pentry);
+	nova_flush_cacheline(offset, false);
+}
+
+static inline void
+nova_clear_pmm_entry_at_blocknr(struct entry_allocator *allocator,
+	unsigned long blocknr) 
+{
+	struct nova_meta_table *meta_table =
+		container_of(allocator, struct nova_meta_table,
+			entry_allocator);
+	struct nova_sb_info *sbi =
+		container_of(meta_table, struct nova_sb_info, meta_table);
+	__le64 *offset = allocator->map_blocknr_to_pentry + blocknr;
+	BUG_ON(*offset == 0);
+	nova_unlock_write_flush(sbi, offset, 0, false);
+}
+
 struct nova_rht_entry {
 	struct rhash_head node;
 	struct nova_fp fp;
@@ -70,18 +98,6 @@ struct rht_entry_free_task {
 	struct nova_rht_entry *entry;
 };
 
-static inline void
-nova_clear_pmm_entry_at_blocknr(struct super_block *sb, unsigned long blocknr) 
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
-	unsigned long flags = 0;
-	BUG_ON(deref_table[blocknr] == 0);
-	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
-	deref_table[blocknr] = NULL;
-	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
-}
-
 static void __rcu_pentry_free(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
@@ -90,7 +106,7 @@ static void __rcu_pentry_free(struct entry_allocator *allocator,
 	struct super_block *sb = meta_table->sblock;
 	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
-	nova_clear_pmm_entry_at_blocknr(sb, blocknr);
+	nova_clear_pmm_entry_at_blocknr(allocator, blocknr);
 	nova_free_data_block(sb, blocknr);
 	nova_free_entry(allocator, pentry);
 }
@@ -160,7 +176,7 @@ static int alloc_and_fill_block(
 	struct nova_write_para_normal *wp)
 {
 	void *xmem;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(memcpy_time);
 
 	wp->blocknr = nova_new_data_block(sb);
@@ -168,13 +184,11 @@ static int alloc_and_fill_block(
 		return -ENOSPC;
 	// printk("%s: Block %ld allocated", __func__, wp->blocknr);
 	xmem = nova_blocknr_to_addr(sb, wp->blocknr);
-	nova_memunlock_block(sb, xmem, &irq_flags);
+	// nova_memunlock_block(sb, xmem, &irq_flags);
 	NOVA_START_TIMING(memcpy_data_block_t, memcpy_time);
 	memcpy_flushcache((char *)xmem, (const char *)wp->addr, 4096);
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
-	nova_memlock_block(sb, xmem, &irq_flags);
-	// wp->refcount = wp->base.delta;
-	// printk("xmem = %pK", xmem);
+	// nova_memlock_block(sb, xmem, &irq_flags);
 	return 0;
 }
 static int rewrite_block(
@@ -191,20 +205,8 @@ static int rewrite_block(
 	nova_memunlock_range(sb, xmem + wp->offset, wp->len, &irq_flags);
 	memcpy_flushcache((char *)xmem + wp->offset, (const char *)wp->normal.addr + wp->offset, wp->len);
 	nova_memlock_range(sb, xmem + wp->offset, wp->len, &irq_flags);
-	// wp->refcount = wp->base.delta;
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	return 0;
-}
-static inline void
-nova_assign_pmm_entry_to_blocknr(struct super_block *sb, unsigned long blocknr,
-	struct nova_pmm_entry *pentry)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_pmm_entry **deref_table = nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
-	unsigned long flags = 0;
-	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
-	deref_table[blocknr] = pentry;
-	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
 }
 static void assign_entry(
 	struct nova_rht_entry *entry,
@@ -228,7 +230,7 @@ static int nova_table_leaf_insert(
 	struct nova_pmm_entry *pentry;
 	int64_t refcount;
 	int ret;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(index_insert_new_entry_time);
 
 	entry = nova_rht_entry_alloc(table);
@@ -250,7 +252,8 @@ static int nova_table_leaf_insert(
 		put_cpu();
 		goto fail1;
 	}
-	nova_assign_pmm_entry_to_blocknr(sb, wp->blocknr, pentry);
+	nova_assign_pmm_entry_to_blocknr(table->entry_allocator, wp->blocknr,
+		pentry);
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr);
 	put_cpu(); // Calls barrier() inside
@@ -267,11 +270,11 @@ static int nova_table_leaf_insert(
 		goto fail2;
 	}
 	// printk("Block %lu inserted into rhashtable\n", wp->blocknr);
-	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
-		&irq_flags);
+	// nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+	// 	&irq_flags);
 	refcount = atomic64_cmpxchg(&pentry->refcount, 0, 1);
-	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
-		&irq_flags);
+	// nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+	// 	&irq_flags);
 	BUG_ON(refcount != 0);
 	new_dirty_fpentry(wp->last_new_entries, pentry);
 	wp->last_accessed = pentry;
@@ -322,7 +325,7 @@ static int upsert_block(struct nova_mm_table *table,
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	int ret;
 	INIT_TIMING(mem_bucket_find_time);
 
@@ -359,11 +362,11 @@ retry:
 		// 	*(uint64_t *)addr, entry->fp_strong.u64s[0], entry->fp_strong.u64s[1], entry->fp_strong.u64s[2], entry->fp_strong.u64s[3]);
 	}
 	wp->blocknr = blocknr;// retrieval block info
-	nova_memunlock_range(sb, &pentry->refcount,
-		sizeof(pentry->refcount), &irq_flags);
+	// nova_memunlock_range(sb, &pentry->refcount,
+	// 	sizeof(pentry->refcount), &irq_flags);
 	wp->base.refcount = atomic64_fetch_add_unless(&pentry->refcount, 1, 0);
-	nova_memlock_range(sb, &pentry->refcount,
-		sizeof(pentry->refcount), &irq_flags);
+	// nova_memlock_range(sb, &pentry->refcount,
+	// 	sizeof(pentry->refcount), &irq_flags);
 	rcu_read_unlock();
 	if (wp->base.refcount == 0)
 		return -EAGAIN;
