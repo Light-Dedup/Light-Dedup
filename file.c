@@ -703,6 +703,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	put_cpu();
 	wp.normal.last_ref_entries[0] = NULL_PENTRY;
 	wp.normal.last_ref_entries[1] = NULL_PENTRY;
+	wp.normal.dirty_map_blocknr_to_pentry = NULL;
 	if (offset != 0) {
 		bytes = env.sb->s_blocksize - offset;
 		if (bytes > wp.len)
@@ -787,6 +788,9 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	if (!in_the_same_cacheline(wp.normal.last_new_entries[0],
 			wp.normal.last_new_entries[1]))
 		nova_flush_entry_if_not_null(wp.normal.last_new_entries[1],
+			false);
+	if (wp.normal.dirty_map_blocknr_to_pentry != NULL)
+		nova_flush_cacheline(wp.normal.dirty_map_blocknr_to_pentry,
 			false);
 
 	env.sih->i_blocks += (num_blocks <<
