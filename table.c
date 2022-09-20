@@ -527,22 +527,6 @@ int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	return ret;
 }
 
-static inline void incr_stream_trust_degree(
-	struct nova_write_para_continuous *wp)
-{
-	if (wp->stream_trust_degree < TRUST_DEGREE_MAX)
-		wp->stream_trust_degree += 1;
-}
-
-static inline void decr_stream_trust_degree(
-	struct nova_write_para_continuous *wp)
-{
-	if (wp->stream_trust_degree < TRUST_DEGREE_MIN + 2)
-		wp->stream_trust_degree = TRUST_DEGREE_MIN;
-	else
-		wp->stream_trust_degree -= 2;
-}
-
 static inline bool hint_trustable(uint8_t trust_degree)
 {
 	return trust_degree >= HINT_TRUST_DEGREE_THRESHOLD;
@@ -735,73 +719,14 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 	if (offset_new == offset) {
 		NOVA_STATS_ADD(hint_not_trusted_hit, 1);
 		incr_trust_degree(sbi, next_hint, offset, trust_degree);
-		incr_stream_trust_degree(wp);
 	} else {
 		NOVA_STATS_ADD(hint_not_trusted_miss, 1);
 		decr_trust_degree(sbi, next_hint, offset, offset_new,
 			trust_degree);
-		decr_stream_trust_degree(wp);
 	}
 	return 0;
 }
 
-// The caller should hold rcu_read_lock
-static void handle_hint_of_hint(struct nova_sb_info *sbi,
-	struct nova_write_para_continuous *wp, atomic64_t *next_hint)
-{
-	uint64_t hint = le64_to_cpu(atomic64_read(next_hint));
-	u64 offset = hint & HINT_OFFSET_MASK;
-	uint8_t trust_degree = hint & TRUST_DEGREE_MASK;
-	struct nova_pmm_entry *pentry;
-	unsigned long blocknr;
-
-	// Be conservative because prefetching consumes bandwidth.
-	if (wp->stream_trust_degree != TRUST_DEGREE_MAX || offset == 0 ||
-			!hint_trustable(trust_degree))
-		return;
-	// Do not prefetch across syscall.
-	if (wp->len + wp->klen < PAGE_SIZE * 2)
-		return;
-	pentry = nova_sbi_get_block(sbi, offset);
-	if (!nova_pmm_entry_is_readable(pentry))
-		return;
-	blocknr = nova_pmm_entry_blocknr(pentry);
-	BUG_ON(blocknr == 0);
-	wp->block_prefetching = nova_sbi_blocknr_to_addr(sbi, blocknr);
-	wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
-	wp->prefetched_blocknr[0] = blocknr;
-}
-
-static inline void prefetch_next_stage_1(struct nova_write_para_continuous *wp)
-{
-	size_t i;
-	INIT_TIMING(time);
-
-	if (wp->block_prefetching == NULL)
-		return;
-	NOVA_START_TIMING(prefetch_next_stage_1_t, time);
-	for (i = 0; i < 8; ++i) {
-		prefetcht2(wp->block_prefetching + i * 256);
-	}
-	NOVA_END_TIMING(prefetch_next_stage_1_t, time);
-}
-
-static inline void prefetch_next_stage_2(struct nova_write_para_continuous *wp)
-{
-	size_t i;
-	INIT_TIMING(time);
-
-	if (wp->block_prefetching == NULL)
-		return;
-	NOVA_START_TIMING(prefetch_next_stage_2_t, time);
-	for (i = 8; i < 16; ++i) {
-		prefetcht2(wp->block_prefetching + i * 256);
-	}
-	NOVA_END_TIMING(prefetch_next_stage_2_t, time);
-	wp->block_prefetching = NULL;
-}
-
-// The caller should hold rcu_read_lock
 // Return whether the block is deduplicated successfully.
 static int check_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
@@ -823,7 +748,6 @@ static int check_hint(struct nova_sb_info *sbi,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
-	handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 	NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 	// Prefetch with stride 256B first in case that this block have
 	// not been prefetched yet.
@@ -836,14 +760,10 @@ static int check_hint(struct nova_sb_info *sbi,
 	}
 	NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 
-	prefetch_next_stage_1(wp);
-
 	NOVA_START_TIMING(cmp_user_t, cmp_user_time);
 	ret = cmp64((const uint64_t *)(wp->kbuf + wp->kstart),
 		(const uint64_t *)addr);
 	NOVA_END_TIMING(cmp_user_t, cmp_user_time);
-
-	prefetch_next_stage_2(wp);
 
 	if (ret != 0) {
 		// printk("Prediction miss: %lld\n", ret);
@@ -865,13 +785,6 @@ static int check_hint(struct nova_sb_info *sbi,
 	if (ret == false)
 		return 0;
 	// The blocknr will not be released now, because we are referencing it.
-	if (blocknr == wp->prefetched_blocknr[1] ||
-			blocknr == wp->prefetched_blocknr[0]) {
-		// The hit counts of prefetching is slightly underestimated
-		// because there is also probability that the current hint
-		// misses but the prefetched block hits.
-		NOVA_STATS_ADD(prefetch_hit, 1);
-	}
 	attach_blocknr(wp, blocknr);
 	new_dirty_fpentry(wp->normal.last_ref_entries, pentry);
 	wp->normal.last_accessed = pentry;
@@ -909,7 +822,6 @@ static int handle_hint(struct nova_sb_info *sbi,
 	if (ret == 1) {
 		NOVA_STATS_ADD(predict_hit, 1);
 		incr_trust_degree(sbi, next_hint, offset, trust_degree);
-		incr_stream_trust_degree(wp);
 		return 0;
 	}
 	NOVA_STATS_ADD(predict_miss, 1);
@@ -922,7 +834,6 @@ static int handle_hint(struct nova_sb_info *sbi,
 	decr_trust_degree(sbi, next_hint, offset,
 		nova_get_addr_off(sbi, wp->normal.last_accessed),
 		trust_degree);
-	decr_stream_trust_degree(wp);
 	return 0;
 }
 
