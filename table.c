@@ -80,6 +80,7 @@ nova_clear_pmm_entry_at_blocknr(struct super_block *sb, unsigned long blocknr)
 	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
 	deref_table[blocknr] = NULL;
 	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+	nova_flush_cacheline(deref_table + blocknr, false);
 }
 
 static void __rcu_pentry_free(struct entry_allocator *allocator,
@@ -205,6 +206,7 @@ nova_assign_pmm_entry_to_blocknr(struct super_block *sb, unsigned long blocknr,
 	nova_memunlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
 	deref_table[blocknr] = pentry;
 	nova_memlock_range(sb, deref_table + blocknr, sizeof(struct nova_pmm_entry), &flags);
+	nova_flush_cacheline(deref_table + blocknr, false);
 }
 static void assign_entry(
 	struct nova_rht_entry *entry,
