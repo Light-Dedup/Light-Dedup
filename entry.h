@@ -68,6 +68,7 @@ struct entry_allocator {
 	// Used in softirq context
 	// Key is blocknr of region
 	struct xarray valid_entry;
+	__le64 *map_blocknr_to_pentry;
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \
 	((PAGE_SIZE - sizeof(__le64)) / sizeof(uint16_t))
