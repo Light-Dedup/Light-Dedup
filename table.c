@@ -11,7 +11,8 @@
 
 static inline void
 nova_assign_pmm_entry_to_blocknr(struct entry_allocator *allocator,
-	unsigned long blocknr, struct nova_pmm_entry *pentry)
+	unsigned long blocknr, struct nova_pmm_entry *pentry,
+	struct nova_write_para_normal *wp)
 {
 	allocator->map_blocknr_to_pentry[blocknr] = pentry;
 }
@@ -241,7 +242,7 @@ static int nova_table_leaf_insert(
 		goto fail1;
 	}
 	nova_assign_pmm_entry_to_blocknr(table->entry_allocator, wp->blocknr,
-		pentry);
+		pentry, wp);
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr);
 	put_cpu(); // Calls barrier() inside
