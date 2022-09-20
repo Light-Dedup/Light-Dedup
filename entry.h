@@ -78,6 +78,12 @@ int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
 	unsigned long *bm, size_t *tot);
 
+static inline bool in_the_same_cacheline(void *a, void *b)
+{
+	return (unsigned long)a / CACHELINE_SIZE ==
+		(unsigned long)b / CACHELINE_SIZE;
+}
+
 void nova_flush_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry);
 
