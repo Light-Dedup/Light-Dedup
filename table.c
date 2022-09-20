@@ -11,7 +11,8 @@
 
 static inline void
 nova_assign_pmm_entry_to_blocknr(struct entry_allocator *allocator,
-	unsigned long blocknr, struct nova_pmm_entry *pentry)
+	unsigned long blocknr, struct nova_pmm_entry *pentry,
+	struct nova_write_para_normal *wp)
 {
 	struct nova_meta_table *meta_table =
 		container_of(allocator, struct nova_meta_table,
@@ -20,7 +21,12 @@ nova_assign_pmm_entry_to_blocknr(struct entry_allocator *allocator,
 		container_of(meta_table, struct nova_sb_info, meta_table);
 	__le64 *offset = allocator->map_blocknr_to_pentry + blocknr;
 	*offset = nova_get_addr_off(sbi, pentry);
-	nova_flush_cacheline(offset, false);
+	if (!in_the_same_cacheline(offset, wp->dirty_map_blocknr_to_pentry) &&
+		wp->dirty_map_blocknr_to_pentry != NULL)
+	{
+		nova_flush_cacheline(wp->dirty_map_blocknr_to_pentry, false);
+	}
+	wp->dirty_map_blocknr_to_pentry = offset;
 }
 
 static inline void
@@ -248,7 +254,7 @@ static int nova_table_leaf_insert(
 		goto fail1;
 	}
 	nova_assign_pmm_entry_to_blocknr(table->entry_allocator, wp->blocknr,
-		pentry);
+		pentry, wp);
 	nova_write_entry(table->entry_allocator, pentry, fp, wp->blocknr);
 	// Now the pentry won't be allocated by others
 	assign_entry(entry, pentry, fp);
