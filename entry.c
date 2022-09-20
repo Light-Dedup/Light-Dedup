@@ -18,6 +18,8 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 			HINT_TRUST_DEGREE_THRESHOLD;
 	}
 	spin_lock_init(&allocator->lock);
+	allocator->map_blocknr_to_pentry =
+		nova_sbi_blocknr_to_addr(sbi, sbi->deref_table);
 	return 0;
 }
 

@@ -66,6 +66,7 @@ struct entry_allocator {
 	unsigned long entry_collision;
 	// Used in softirq context
   spinlock_t lock;
+	__le64 *map_blocknr_to_pentry;
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \
 	((PAGE_SIZE - sizeof(__le64)) / sizeof(uint16_t))
