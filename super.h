@@ -190,8 +190,6 @@ struct nova_sb_info {
 	unsigned long	block_end;
 
 	struct nova_meta_table meta_table;
-
-	struct nova_pmm_entry **deref_table;
 };
 
 static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)

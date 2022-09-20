@@ -32,6 +32,10 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 			HINT_TRUST_DEGREE_THRESHOLD;
 	}
 	spin_lock_init(&allocator->lock);
+	allocator->map_blocknr_to_pentry =
+		vmalloc(sbi->num_blocks *
+			sizeof(allocator->map_blocknr_to_pentry[0]));
+	BUG_ON(allocator->map_blocknr_to_pentry == NULL);
 	return 0;
 }
 
@@ -168,6 +172,7 @@ void nova_free_entry_allocator(struct entry_allocator *allocator)
 		free_page((unsigned long)region);
 		region = next;
 	}
+	vfree(allocator->map_blocknr_to_pentry);
 }
 
 #if 0

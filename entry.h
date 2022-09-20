@@ -78,6 +78,7 @@ struct entry_allocator {
 	// Key is blocknr of region
 	struct xarray valid_entry;
 	void *first_region; // To free regions.
+	struct nova_pmm_entry **map_blocknr_to_pentry;
 };
 #define VALID_ENTRY_COUNTER_PER_BLOCK \
 	((PAGE_SIZE - sizeof(__le64)) / sizeof(uint16_t))

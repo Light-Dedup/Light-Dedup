@@ -9,6 +9,23 @@
 
 // #define static _Static_assert(1, "2333");
 
+static inline void
+nova_assign_pmm_entry_to_blocknr(struct entry_allocator *allocator,
+	unsigned long blocknr, struct nova_pmm_entry *pentry)
+{
+	allocator->map_blocknr_to_pentry[blocknr] = pentry;
+}
+
+static inline void
+nova_clear_pmm_entry_at_blocknr(struct entry_allocator *allocator,
+	unsigned long blocknr) 
+{
+	struct nova_pmm_entry **pentry =
+		allocator->map_blocknr_to_pentry + blocknr;
+	BUG_ON(*pentry == 0);
+	*pentry = NULL;
+}
+
 struct nova_rht_entry {
 	struct rhash_head node;
 	struct nova_fp fp;
@@ -70,15 +87,6 @@ struct rht_entry_free_task {
 	struct nova_rht_entry *entry;
 };
 
-static inline void
-nova_clear_pmm_entry_at_blocknr(struct super_block *sb, unsigned long blocknr) 
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_pmm_entry **deref_table = sbi->deref_table;
-	BUG_ON(deref_table[blocknr] == 0);
-	deref_table[blocknr] = NULL;
-}
-
 static void __rcu_pentry_free(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
@@ -87,7 +95,7 @@ static void __rcu_pentry_free(struct entry_allocator *allocator,
 	struct super_block *sb = meta_table->sblock;
 	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
-	nova_clear_pmm_entry_at_blocknr(sb, blocknr);
+	nova_clear_pmm_entry_at_blocknr(allocator, blocknr);
 	nova_free_data_block(sb, blocknr);
 	nova_free_entry(allocator, pentry);
 }
@@ -157,7 +165,7 @@ static int alloc_and_fill_block(
 	struct nova_write_para_normal *wp)
 {
 	void *xmem;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(memcpy_time);
 
 	wp->blocknr = nova_new_data_block(sb);
@@ -165,13 +173,11 @@ static int alloc_and_fill_block(
 		return -ENOSPC;
 	// printk("%s: Block %ld allocated", __func__, wp->blocknr);
 	xmem = nova_blocknr_to_addr(sb, wp->blocknr);
-	nova_memunlock_block(sb, xmem, &irq_flags);
+	// nova_memunlock_block(sb, xmem, &irq_flags);
 	NOVA_START_TIMING(memcpy_data_block_t, memcpy_time);
 	memcpy_flushcache((char *)xmem, (const char *)wp->addr, 4096);
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
-	nova_memlock_block(sb, xmem, &irq_flags);
-	// wp->refcount = wp->base.delta;
-	// printk("xmem = %pK", xmem);
+	// nova_memlock_block(sb, xmem, &irq_flags);
 	return 0;
 }
 static int rewrite_block(
@@ -188,17 +194,8 @@ static int rewrite_block(
 	nova_memunlock_range(sb, xmem + wp->offset, wp->len, &irq_flags);
 	memcpy_flushcache((char *)xmem + wp->offset, (const char *)wp->normal.addr + wp->offset, wp->len);
 	nova_memlock_range(sb, xmem + wp->offset, wp->len, &irq_flags);
-	// wp->refcount = wp->base.delta;
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	return 0;
-}
-static inline void
-nova_assign_pmm_entry_to_blocknr(struct super_block *sb, unsigned long blocknr,
-	struct nova_pmm_entry *pentry)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_pmm_entry **deref_table = sbi->deref_table;
-	deref_table[blocknr] = pentry;
 }
 static void assign_entry(
 	struct nova_rht_entry *entry,
@@ -243,7 +240,8 @@ static int nova_table_leaf_insert(
 		put_cpu();
 		goto fail1;
 	}
-	nova_assign_pmm_entry_to_blocknr(sb, wp->blocknr, pentry);
+	nova_assign_pmm_entry_to_blocknr(table->entry_allocator, wp->blocknr,
+		pentry);
 	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr);
 	put_cpu(); // Calls barrier() inside
@@ -1099,7 +1097,6 @@ static void table_save(struct nova_mm_table *table)
 
 void nova_table_free(struct nova_mm_table *table)
 {
-	vfree(NOVA_SB(table->sblock)->deref_table);
 	rhashtable_free_and_destroy(&table->rht, nova_rht_entry_free,
 		table->rht_entry_cache);
 	kmem_cache_destroy(table->rht_entry_cache);
@@ -1125,10 +1122,6 @@ int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
 
 	NOVA_START_TIMING(table_init_t, table_init_time);
 	printk("psb = %p\n", psb);
-
-	sbi->deref_table =
-		vmalloc(sbi->num_blocks * sizeof(sbi->deref_table[0]));
-	BUG_ON(sbi->deref_table == NULL);
 
 	table->sblock = sb;
 	table->entry_allocator = &sbi->meta_table.entry_allocator;
