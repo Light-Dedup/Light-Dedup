@@ -4,12 +4,12 @@
 
 static void *allocate_kbuf(gfp_t flags)
 {
-	return kvmalloc(KBUF_LEN, flags);
+	return kmalloc(PAGE_SIZE, flags);
 }
 
 static void free_kbuf(void *kbuf)
 {
-	kvfree(kbuf);
+	kfree(kbuf);
 }
 
 int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
