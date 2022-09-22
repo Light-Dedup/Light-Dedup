@@ -31,10 +31,14 @@ err_out1:
 err_out0:
 	return ret;
 }
-void nova_meta_table_free(struct nova_meta_table *table)
+static void __nova_meta_table_free(struct nova_meta_table *table)
 {
 	generic_cache_destroy(&table->kbuf_cache);
 	nova_fp_strong_ctx_free(&table->fp_ctx);
+}
+void nova_meta_table_free(struct nova_meta_table *table)
+{
+	__nova_meta_table_free(table);
 	nova_table_free(&table->metas);
 }
 int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sb)
@@ -84,11 +88,11 @@ void nova_meta_table_save(struct nova_meta_table *table)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	table->sblock = NULL;
-	nova_fp_strong_ctx_free(&table->fp_ctx);
 	nova_table_save(&table->metas);
 	nova_save_entry_allocator(sb, &table->entry_allocator);
 	nova_unlock_write_flush(sbi, &recover_meta->saved,
 		NOVA_RECOVER_META_FLAG_COMPLETE, true);
+	__nova_meta_table_free(table);
 }
 static inline struct nova_pmm_entry*
 nova_blocknr_pmm_entry(struct nova_meta_table *table, unsigned long blocknr)
