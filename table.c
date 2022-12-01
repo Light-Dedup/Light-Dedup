@@ -777,6 +777,7 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	wp->block_prefetching = nova_sbi_blocknr_to_addr(sbi, blocknr);
+	NOVA_STATS_ADD(prefetch_next, 1);
 	wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
 	wp->prefetched_blocknr[0] = blocknr;
 }
