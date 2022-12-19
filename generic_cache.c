@@ -9,6 +9,7 @@ void generic_cache_init(struct generic_cache *cache, void *(*allocate)(gfp_t),
 	cache->head = NULL;
 	cache->allocate = allocate;
 	cache->free = free;
+	cache->allocated = 0;
 }
 
 static void **new_obj(struct generic_cache *cache, gfp_t flags)
@@ -30,6 +31,7 @@ void **generic_cache_alloc(struct generic_cache *cache, gfp_t flags)
 	void **ret;
 	spin_lock(&cache->lock);
 	if (cache->head == NULL) {
+		cache->allocated += 1;
 		spin_unlock(&cache->lock);
 		return new_obj(cache, flags);
 	}
@@ -55,6 +57,7 @@ void generic_cache_free(struct generic_cache *cache, void **obj_p)
 void generic_cache_destroy(struct generic_cache *cache)
 {
 	struct generic_cache_node *cur = cache->head, *next;
+	printk("Generic cache allocated %lu\n", cache->allocated);
 	while (cur != NULL) {
 		cache->free(cur->obj);
 		next = cur->next;
