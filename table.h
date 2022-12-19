@@ -85,8 +85,6 @@ struct nova_write_para_rewrite {
 	unsigned long offset, len;
 };
 
-#define KBUF_LEN (PAGE_SIZE * 512)
-
 struct nova_write_para_continuous {
 	const char __user *ubuf;
 	size_t len;
@@ -97,8 +95,6 @@ struct nova_write_para_continuous {
 	struct nova_write_para_normal normal;
 	// Used internally
 	char *kbuf;
-	size_t kstart;
-	size_t klen; // At most KBUF_LEN
 };
 
 void nova_table_deref_block(struct nova_mm_table *table,
