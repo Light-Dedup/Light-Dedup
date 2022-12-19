@@ -687,8 +687,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		goto err_out1;
 	}
 	wp.kbuf = *kbuf_p;
-	wp.kstart = 0;
-	wp.klen = 0;
 
 	nova_dbgv("%s: inode %lu, offset %lld, count %lu\n",
 			__func__, env.inode->i_ino, env.pos, len);
@@ -728,14 +726,6 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	}
 	while (wp.len >= env.sb->s_blocksize) {
 		ret = nova_fp_table_incr_continuous(sbi, &wp);
-		if (ret < 0)
-			goto err_out2;
-		ret = advance(&env, wp.num * env.sb->s_blocksize, &wp);
-		if (ret < 0)
-			goto err_out2;
-	}
-	while (wp.klen > 0) {
-		ret = nova_fp_table_incr_continuous_kbuf(sbi, &wp);
 		if (ret < 0)
 			goto err_out2;
 		ret = advance(&env, wp.num * env.sb->s_blocksize, &wp);
