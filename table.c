@@ -6,6 +6,7 @@
 #include "arithmetic.h"
 #include "multithread.h"
 #include "rhashtable-ext.h"
+#include "uaccess-ext.h"
 
 // #define static _Static_assert(1, "2333");
 
@@ -686,9 +687,15 @@ static int copy_from_user_incr(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
 	int ret;
+	INIT_TIMING(copy_from_user_time);
 
-	ret = nova_fp_table_incr_atomic(&sbi->meta_table.metas,
-		wp->kbuf + wp->kstart, &wp->normal);
+	NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
+	ret = copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE);
+	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
+	if (ret)
+		return -EFAULT;
+	ret = nova_fp_table_incr_atomic(&sbi->meta_table.metas, wp->kbuf,
+		&wp->normal);
 	if (ret < 0)
 		return ret;
 	attach_blocknr(wp, wp->normal.blocknr);
@@ -768,7 +775,7 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 			!hint_trustable(trust_degree))
 		return;
 	// Do not prefetch across syscall.
-	if (wp->len + wp->klen < PAGE_SIZE * 2)
+	if (wp->len < PAGE_SIZE * 2)
 		return;
 	pentry = nova_sbi_get_block(sbi, offset);
 	if (!nova_pmm_entry_is_readable(pentry))
@@ -776,6 +783,7 @@ static void handle_hint_of_hint(struct nova_sb_info *sbi,
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	wp->block_prefetching = nova_sbi_blocknr_to_addr(sbi, blocknr);
+	NOVA_STATS_ADD(prefetch_next, 1);
 	wp->prefetched_blocknr[1] = wp->prefetched_blocknr[0];
 	wp->prefetched_blocknr[0] = blocknr;
 }
@@ -947,84 +955,37 @@ static int handle_last_accessed_pentry(struct nova_sb_info *sbi,
 	}
 }
 
-int nova_fp_table_incr_continuous_kbuf(struct nova_sb_info *sbi,
+int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
 	struct nova_pmm_entry *last_pentry;
 	bool first = true;
 	int ret = 0;
-	unsigned long irq_flags = 0;
+	// unsigned long irq_flags = 0;
 	INIT_TIMING(time);
 
 	NOVA_START_TIMING(incr_continuous_t, time);
 	// Unlock here because it seems that wprotect will affect prefetching
-	nova_memunlock(sbi, &irq_flags);
-	while (wp->blocknr_next == 0 && wp->klen > 0) {
+	// nova_memunlock(sbi, &irq_flags);
+	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
 		last_pentry = get_last_accessed(wp, !first);
 		while (1) {
 			ret = handle_last_accessed_pentry(sbi, wp, last_pentry);
 			if (likely(ret != -EAGAIN))
 				break;
-			nova_memlock(sbi, &irq_flags);
+			// nova_memlock(sbi, &irq_flags);
 			schedule();
-			nova_memunlock(sbi, &irq_flags);
+			// nova_memunlock(sbi, &irq_flags);
 		}
 		if (ret < 0)
 			break;
-		wp->kstart = (wp->kstart + PAGE_SIZE) % KBUF_LEN;
-		wp->klen -= PAGE_SIZE;
+		wp->ubuf += PAGE_SIZE;
+		wp->len -= PAGE_SIZE;
 		first = false;
 	}
-	nova_memlock(sbi, &irq_flags);
+	// nova_memlock(sbi, &irq_flags);
 	NOVA_END_TIMING(incr_continuous_t, time);
 	return ret;
-}
-
-int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
-	struct nova_write_para_continuous *wp)
-{
-	size_t to_copy;
-	size_t start;
-	size_t n;
-	int ret;
-	INIT_TIMING(copy_from_user_time);
-
-	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
-		NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
-		// to_copy = min_usize(to_copy, KBUF_LEN - wp->klen);
-		to_copy = wp->len & ~(PAGE_SIZE - 1);
-		start = wp->kstart + wp->klen;
-		if (start >= KBUF_LEN) {
-			start -= KBUF_LEN;
-			n = min_usize(wp->kstart - start, to_copy);
-			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
-				return -EFAULT;
-			wp->klen += n;
-			wp->len -= n;
-			wp->ubuf += n;
-		} else {
-			n = min_usize(KBUF_LEN - start, to_copy);
-			if (copy_from_user(wp->kbuf + start, wp->ubuf, n))
-				return -EFAULT;
-			wp->klen += n;
-			wp->len -= n;
-			wp->ubuf += n;
-			if (n < to_copy) {
-				to_copy -= n;
-				n = min_usize(wp->kstart, to_copy);
-				if (copy_from_user(wp->kbuf, wp->ubuf, n))
-					return -EFAULT;
-				wp->klen += n;
-				wp->len -= n;
-				wp->ubuf += n;
-			}
-		}
-		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
-		ret = nova_fp_table_incr_continuous_kbuf(sbi, wp);
-		if (ret < 0)
-			return ret;
-	}
-	return 0;
 }
 
 struct table_save_local_arg {
