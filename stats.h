@@ -229,6 +229,7 @@ enum stats_category {
 	no_hint,
 	hint_not_trusted_miss,
 	hint_not_trusted_hit,
+	prefetch_next,
 	prefetch_hit,
 
 	/* Sentinel */
