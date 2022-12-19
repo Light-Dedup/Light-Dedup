@@ -13,6 +13,7 @@ struct generic_cache {
 	struct generic_cache_node *head;
 	void *(*allocate)(gfp_t);
 	void (*free)(void *);
+	size_t allocated;
 };
 
 void generic_cache_init(struct generic_cache *cache, void *(*allocate)(gfp_t),
