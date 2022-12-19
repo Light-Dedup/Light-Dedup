@@ -793,6 +793,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	struct nova_mm_table *table = &sbi->meta_table.metas;
 	unsigned long blocknr;
 	int64_t ret;
+	INIT_TIMING(copy_from_user_time);
 	INIT_TIMING(incr_ref_time);
 
 	if (!nova_pmm_entry_is_readable(pentry))
@@ -804,6 +805,12 @@ static int check_hint(struct nova_sb_info *sbi,
 				nova_sbi_blocknr_to_addr(sbi, blocknr);
 		}
 	}
+
+	NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
+	ret = copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE);
+	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
+	if (ret)
+		return -EFAULT;
 
 	prefetch_stage_1(wp);
 
