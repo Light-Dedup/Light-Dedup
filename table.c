@@ -298,7 +298,6 @@ static int upsert_block(struct nova_mm_table *table,
 	int (*get_new_block)(struct super_block *,
 		struct nova_write_para_normal *))
 {
-	struct super_block *sb = table->sblock;
 	struct rhashtable *rht = &table->rht;
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
