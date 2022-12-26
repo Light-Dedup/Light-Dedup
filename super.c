@@ -313,9 +313,10 @@ bad_opt:
 static bool nova_check_size(struct super_block *sb, unsigned long size)
 {
 	unsigned long minimum_size;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 
 	/* space required for super block and root directory.*/
-	minimum_size = (HEAD_RESERVED_BLOCKS + TAIL_RESERVED_BLOCKS + 1)
+	minimum_size = (HEAD_RESERVED_BLOCKS(sbi) + TAIL_RESERVED_BLOCKS + 1)
 			  << sb->s_blocksize_bits;
 
 	if (size < minimum_size)
@@ -501,7 +502,7 @@ static inline void set_default_opts(struct nova_sb_info *sbi)
 {
 	set_opt(sbi->s_mount_opt, HUGEIOREMAP);
 	set_opt(sbi->s_mount_opt, ERRORS_CONT);
-	sbi->head_reserved_blocks = HEAD_RESERVED_BLOCKS;
+	sbi->head_reserved_blocks = HEAD_RESERVED_BLOCKS(sbi);
 	sbi->tail_reserved_blocks = TAIL_RESERVED_BLOCKS;
 	sbi->cpus = num_online_cpus();
 	nova_info("%d cpus online\n", sbi->cpus);
@@ -628,14 +629,6 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_fs_info = sbi;
 	sbi->sb = sb;
 
-	set_default_opts(sbi);
-
-	/* Currently the log page supports 64 journal pointer pairs */
-	if (sbi->cpus > MAX_CPUS) {
-		nova_err(sb, "NOVA needs more log pointer pages to support more than "
-			  __stringify(MAX_CPUS) " cpus.\n");
-		goto out;
-	}
 
 	retval = nova_get_nvmm_info(sb, sbi);
 	if (retval) {
@@ -644,6 +637,19 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
+	sbi->fact_entry_num = sbi->initsize >> PAGE_SHIFT;
+	/* log 2 upper of num */
+	sbi->fact_entry_prefix = ilog2(sbi->fact_entry_num - 1) + 1;
+	nova_info("fact_entry_num %lu, fact_entry_prefix %d\n", sbi->fact_entry_num, sbi->fact_entry_prefix);
+	
+	set_default_opts(sbi);
+
+	/* Currently the log page supports 64 journal pointer pairs */
+	if (sbi->cpus > MAX_CPUS) {
+		nova_err(sb, "NOVA needs more log pointer pages to support more than "
+			  __stringify(MAX_CPUS) " cpus.\n");
+		goto out;
+	}
 
 	nova_dbg("measure timing %d, metadata checksum %d, wprotect %d, data checksum %d, data parity %d, DRAM checksum %d\n",
 		measure_timing, metadata_csum,

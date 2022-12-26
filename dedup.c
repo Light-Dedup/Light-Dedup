@@ -171,9 +171,10 @@ int nova_dedup_crosscheck(struct nova_file_write_entry *entry
 
 // Clear FACT, set FACT_free_table, FACT locks
 int nova_dedup_FACT_init(struct super_block *sb){
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	unsigned long i;
 	unsigned long start = 0;
-	unsigned long end = FACT_TABLE_INDEX_MAX;
+	unsigned long end = FACT_TABLE_INDEX_MAX(sbi);
 	unsigned long irq_flags=0;
 	unsigned long target_index;
 	struct fact_entry *target_entry;
@@ -182,8 +183,8 @@ int nova_dedup_FACT_init(struct super_block *sb){
 	memset(fill,0,64);
 
 	FACT_free_list = kzalloc(sizeof(struct DeNOVA_bm),GFP_KERNEL);
-	FACT_free_list->bitmap_size = FACT_TABLE_INDEX_MAX;
-	FACT_free_list->bitmap = kvzalloc(FACT_TABLE_INDEX_MAX,GFP_KERNEL);
+	FACT_free_list->bitmap_size = FACT_TABLE_INDEX_MAX(sbi);
+	FACT_free_list->bitmap = kvzalloc(FACT_TABLE_INDEX_MAX(sbi),GFP_KERNEL);
 
 	for(i =start; i<=end;i++){
 		target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + i * NOVA_FACT_ENTRY_SIZE;
@@ -198,9 +199,10 @@ int nova_dedup_FACT_init(struct super_block *sb){
 
 // For debugging, show how much FACT is utilized
 int nova_dedup_FACT_utilize(struct super_block *sb){
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	unsigned long i;
 	unsigned long start = 0;
-	unsigned long end = FACT_TABLE_INDEX_MAX;
+	unsigned long end = FACT_TABLE_INDEX_MAX(sbi);
 	unsigned long target_index;
 	struct fact_entry *target_entry;
 	int total =0;
@@ -268,8 +270,9 @@ int nova_dedup_FACT_reorder_recover(struct super_block *sb, u64 head_index, u64 
 }
 
 int nova_dedup_FACT_recovery(struct super_block *sb){
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	unsigned long i, start = 0;
-	unsigned long end = FACT_TABLE_INDEX_MAX;
+	unsigned long end = FACT_TABLE_INDEX_MAX(sbi);
 	unsigned long target_index;
 	unsigned long irq_flags=0;
 	unsigned long u_count, r_count;
@@ -278,8 +281,8 @@ int nova_dedup_FACT_recovery(struct super_block *sb){
 	struct fact_entry *target_entry;
 
 	FACT_free_list = kzalloc(sizeof(struct DeNOVA_bm),GFP_KERNEL);
-	FACT_free_list->bitmap_size = FACT_TABLE_INDEX_MAX;
-	FACT_free_list->bitmap = kvzalloc(FACT_TABLE_INDEX_MAX,GFP_KERNEL);
+	FACT_free_list->bitmap_size = FACT_TABLE_INDEX_MAX(sbi);
+	FACT_free_list->bitmap = kvzalloc(FACT_TABLE_INDEX_MAX(sbi),GFP_KERNEL);
 
 	for(i = start; i<=end;i++){
 		target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + i * NOVA_FACT_ENTRY_SIZE;
@@ -440,17 +443,17 @@ int nova_dedup_FACT_reorder(struct super_block *sb, u64 head_index){
 }
 
 // Check FACT index range(of FACT)
-int nova_dedup_FACT_index_check(u64 index){
-	if(index > FACT_TABLE_INDEX_MAX){
-		printk("FACT Index Out of Range: %llu(maximum %llu)\n",index,(unsigned long long int)FACT_TABLE_INDEX_MAX);
+int nova_dedup_FACT_index_check(struct nova_sb_info *sbi, u64 index){
+	if(index > FACT_TABLE_INDEX_MAX(sbi)){
+		printk("FACT Index Out of Range: %llu(maximum %llu)\n",index,(unsigned long long int)FACT_TABLE_INDEX_MAX(sbi));
 		return 1;
 	}
 	return 0;
 }
 
 // Check FACT index head
-int nova_dedup_FACT_index_head(u64 index){
-	if(nova_dedup_FACT_index_check(index))
+int nova_dedup_FACT_index_head(struct nova_sb_info *sbi, u64 index){
+	if(nova_dedup_FACT_index_check(sbi, index))
 		return 0;
 	if(index < FACT_TABLE_INDIRECT_AREA_START_INDEX)
 		return 0;
@@ -466,8 +469,10 @@ int nova_dedup_FACT_update_count(struct super_block *sb, u64 index){
 	unsigned long irq_flags=0;
 	u64 target_index;
 	u64 temp_index;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+
 	// Check index is in range
-	if(nova_dedup_FACT_index_check(index))
+	if(nova_dedup_FACT_index_check(sbi, index))
 		return 1;
 
 	// Read Actual Index
@@ -477,7 +482,7 @@ int nova_dedup_FACT_update_count(struct super_block *sb, u64 index){
 	target_index = target_entry->delete_entry;
 
 	// Check index is in range
-	if(nova_dedup_FACT_index_check(target_index))
+	if(nova_dedup_FACT_index_check(sbi, target_index))
 		return 1;
 
 	// Read Count of Actual Index
@@ -505,8 +510,9 @@ int nova_dedup_FACT_read(struct super_block *sb, u64 index){
 	u64 next,prev;
 	struct fact_entry* target;
 	u64 target_index;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	if(nova_dedup_FACT_index_check(index))
+	if(nova_dedup_FACT_index_check(sbi, index))
 		return 1;
 
 	target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
@@ -523,6 +529,28 @@ int nova_dedup_FACT_read(struct super_block *sb, u64 index){
 	return 0;
 }
 
+u64 __calc_FACT_index(struct nova_sb_info *sbi, struct fingerprint_lookup_data* lookup)
+{
+	u64 index = 0;
+	int complete = 0;
+	int remain = 0;
+	int i;
+
+	/* shift fingerprint with fact_entry_prefix */
+	complete = sbi->fact_entry_prefix / 8;
+	remain = sbi->fact_entry_prefix & 0x7;
+
+	for (i = 0; i < complete; i++) {
+		index = index << 8 | lookup->fingerprint[i];
+	}
+
+	if (remain) {
+		index = index << remain | lookup->fingerprint[i] >> (8 - remain);
+	}
+
+	return index;
+}
+
 int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_data* lookup){
 	unsigned long irq_flags=0;
 	struct fact_entry  te; // target entry
@@ -533,29 +561,12 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 	u64 target_index;
 	int ret=0;
 	int hop=0;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 
-	/* Index SIZE */
-	/* 4GB Environment - 19 bit */
-	if(FACT_TABLE_INDEX_MAX == 1048575){
-		index = lookup->fingerprint[0];
-		index = index << 8 | lookup->fingerprint[1];
-		index = index << 3 | ((lookup->fingerprint[2] & 224)>>5);
-	}
-	/* 64GB Environment - 23 bit */
-	else if(FACT_TABLE_INDEX_MAX == 16777215){
-		index = lookup->fingerprint[0];
-		index = index << 8 | lookup->fingerprint[1];
-		index = index << 6 | ((lookup->fingerprint[2] & 252)>>2);
-	}
-	/* 1TB, 750GB Environment - 27 bit */
-	else if(FACT_TABLE_INDEX_MAX == 196607999 || FACT_TABLE_INDEX_MAX == 268435455){    
-		index = lookup->fingerprint[0];
-		index = index << 8 | lookup->fingerprint[1];
-		index = index << 8 | lookup->fingerprint[2];
-		index = index << 3 | ((lookup->fingerprint[3] & 224)>>5);
-	}
+	index = __calc_FACT_index(sbi, lookup);
+	
 	// Index out of range
-	if(nova_dedup_FACT_index_check(index))
+	if(nova_dedup_FACT_index_check(sbi, index))
 		return 2;
 
 	head_index = index;
@@ -642,7 +653,7 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 	// Add 'delete entry'
 	if(ret == 0){
 		// Check range
-		if(nova_dedup_FACT_index_check(te.block_address))
+		if(nova_dedup_FACT_index_check(sbi, te.block_address))
 			return 2;
 
 		target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + te.block_address * NOVA_FACT_ENTRY_SIZE;
@@ -753,9 +764,10 @@ int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool 
 	u64 delete_index;
 	u64 temp_next;
 	u64 temp_prev;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
 	
 	// Check Index Range of delete entry
-	if(nova_dedup_FACT_index_check(blocknr))
+	if(nova_dedup_FACT_index_check(sbi, blocknr))
 		return 3;
 	delete_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + blocknr * NOVA_FACT_ENTRY_SIZE;
 	delete_te = (struct fact_entry*)nova_get_block(sb,delete_index);
@@ -764,7 +776,7 @@ int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool 
 
 	//nova_dedup_FACT_read(sb,index);
 	// Check Index Range of target FACT entry
-	if(nova_dedup_FACT_index_check(index)){
+	if(nova_dedup_FACT_index_check(sbi, index)){
 		printk("Error!\n");
 		return 2;
 	};
@@ -801,7 +813,7 @@ int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool 
 				nova_memlock_range(sb,pmem_te,NOVA_FACT_ENTRY_SIZE,&irq_flags);
 			}
 			// Set next->prev to prev
-			if(nova_dedup_FACT_index_head(temp_next)){ // If the next is not head (meaning it's not the last node)
+			if(nova_dedup_FACT_index_head(sbi, temp_next)){ // If the next is not head (meaning it's not the last node)
 				if(temp_prev==0)
 					temp_prev = index;
 				target_index = temp_next;
