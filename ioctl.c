@@ -23,8 +23,8 @@
 #include "dedup.h"
 
 /* ------ NOVA DEDUP by KHJ --------- */
-static int nova_dedup(struct file *filp){
-	return nova_dedup_test(filp);	
+static int nova_dedup(struct super_block *sb){
+	return nova_dedup_test(sb);	
 }
 
 long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
@@ -164,7 +164,7 @@ setversion_out:
 		return 0;
 	}
 	case NOVA_OFFLINE_DEDUP: {
-		nova_dedup(filp);
+		nova_dedup(sb);
 		return 0;
 	}
 	default:

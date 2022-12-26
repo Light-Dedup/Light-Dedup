@@ -87,11 +87,13 @@ void nova_dedup_read_emulate(unsigned long size);
 int nova_dedup_FACT_init(struct super_block *sb);
 int nova_dedup_FACT_read(struct super_block *sb, u64 index);
 
-int nova_dedup_test(struct file *);
+int nova_dedup_test(struct super_block *sb);
 int nova_dedup_queue_push(u64,u64);
 int nova_dedup_queue_init(void);
 
 int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool check);
 int nova_dedup_fingerprint(int interval, unsigned char * datapage, unsigned char *ret_fingerprint);
 
+int nova_dedup_wakeup_DD(struct nova_sb_info *sbi);
+int nova_dedup_terminate_DD(struct nova_sb_info *sbi);
 #endif

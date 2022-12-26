@@ -564,7 +564,7 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 
 	index = __calc_FACT_index(sbi, lookup);
-	
+
 	// Index out of range
 	if(nova_dedup_FACT_index_check(sbi, index))
 		return 2;
@@ -844,12 +844,7 @@ int nova_dedup_is_duplicate(struct super_block *sb, unsigned long blocknr, bool 
 
 
 /******************** DEDUPLICATION MAIN FUNCTION ********************/
-int nova_dedup_test(struct file * filp){
-	// Read Super Block
-	struct address_space *mapping = filp->f_mapping;	
-	struct inode *garbage_inode = mapping->host;
-	struct super_block *sb = garbage_inode->i_sb;
-
+int nova_dedup_test(struct super_block *sb){
 	// How many deduplications are going to be done each time?
 	int dedup_loop_count = 20000; // this is 'n'
 
@@ -1117,4 +1112,51 @@ out2:
 	crypto_free_shash(alg);
 	kfree(fingerprint);
 	return 0;
+}
+
+static int nova_dedup_DD(void *arg)
+{
+	struct nova_sb_info *sbi = (struct nova_sb_info *)arg;
+	struct super_block *sb = sbi->sb;
+	
+	allow_signal(SIGABRT);
+
+	while (true) {
+		if (sbi->dd_poll_mseconds)
+			msleep_interruptible(sbi->dd_poll_mseconds);
+		
+		if (kthread_should_stop())
+			break;
+		
+		nova_dedup_test(sb);
+		schedule();
+	}
+	
+	flush_signals(current);
+	
+	nova_info("DeNOVA Deduplication Daemon exited.\n");
+	return 0;
+}
+
+int nova_dedup_wakeup_DD(struct nova_sb_info *sbi)
+{
+	int ret = 0;
+	sbi->dd = kthread_run(nova_dedup_DD, sbi, "DeNOVA Deduplication Daemon");
+	if (IS_ERR(sbi->snapshot_cleaner_thread)) {
+		nova_info("Failed to start DeNOVA Deduplication Daemon\n");
+		ret = -1;
+	}
+	nova_info("Start DeNOVA Deduplication Daemon.\n");
+	return ret;
+}
+
+int nova_dedup_terminate_DD(struct nova_sb_info *sbi)
+{
+	int ret = 0;
+	if (sbi->dd) {
+		send_sig_info(SIGABRT, SEND_SIG_NOINFO, sbi->dd);
+		kthread_stop(sbi->dd);
+		sbi->dd = NULL;
+	}
+	return ret;
 }

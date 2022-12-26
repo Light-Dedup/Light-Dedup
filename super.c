@@ -181,7 +181,7 @@ static loff_t nova_max_size(int bits)
 
 enum {
 	Opt_bpi, Opt_init, Opt_snapshot, Opt_mode, Opt_uid,
-	Opt_gid, Opt_dax, Opt_data_cow, Opt_wprotect,
+	Opt_gid, Opt_dd_poll_ms, Opt_dax, Opt_data_cow, Opt_wprotect,
 	Opt_err_cont, Opt_err_panic, Opt_err_ro,
 	Opt_dbgmask, Opt_err
 };
@@ -193,6 +193,7 @@ static const match_table_t tokens = {
 	{ Opt_mode,	     "mode=%o"		  },
 	{ Opt_uid,	     "uid=%u"		  },
 	{ Opt_gid,	     "gid=%u"		  },
+	{ Opt_dd_poll_ms, "dd_poll_ms=%lu" },
 	{ Opt_dax,	     "dax"		  },
 	{ Opt_data_cow,	     "data_cow"		  },
 	{ Opt_wprotect,	     "wprotect"		  },
@@ -209,6 +210,7 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
 	int option;
+	u64 u64_option;
 	kuid_t uid;
 
 	if (!options)
@@ -241,6 +243,11 @@ static int nova_parse_options(char *options, struct nova_sb_info *sbi,
 			if (match_int(&args[0], &option))
 				goto bad_val;
 			sbi->gid = make_kgid(current_user_ns(), option);
+			break;
+		case Opt_dd_poll_ms:
+			if (match_u64(&args[0], &u64_option))
+				goto bad_val;
+			sbi->dd_poll_mseconds = u64_option;
 			break;
 		case Opt_mode:
 			if (match_octal(&args[0], &option))
@@ -502,6 +509,7 @@ static inline void set_default_opts(struct nova_sb_info *sbi)
 {
 	set_opt(sbi->s_mount_opt, HUGEIOREMAP);
 	set_opt(sbi->s_mount_opt, ERRORS_CONT);
+	sbi->dd_poll_mseconds = 0;
 	sbi->head_reserved_blocks = HEAD_RESERVED_BLOCKS(sbi);
 	sbi->tail_reserved_blocks = TAIL_RESERVED_BLOCKS;
 	sbi->cpus = num_online_cpus();
@@ -641,7 +649,7 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 	/* log 2 upper of num */
 	sbi->fact_entry_prefix = ilog2(sbi->fact_entry_num - 1) + 1;
 	nova_info("fact_entry_num %lu, fact_entry_prefix %d\n", sbi->fact_entry_num, sbi->fact_entry_prefix);
-	
+
 	set_default_opts(sbi);
 
 	/* Currently the log page supports 64 journal pointer pairs */
@@ -820,6 +828,9 @@ setup_sb:
 
 	nova_print_curr_epoch_id(sb);
 
+	/* OK, we wake up dd here */
+	retval = nova_dedup_wakeup_DD(sbi);
+
 	retval = 0;
 	NOVA_END_TIMING(mount_t, mount_time);
 	return retval;
@@ -941,6 +952,9 @@ static void nova_put_super(struct super_block *sb)
 	int i;
 
 	nova_print_curr_epoch_id(sb);
+	
+	/* terminate DD here */
+	nova_dedup_terminate_DD(sbi);
 
 	/* It's unmount time, so unmap the nova memory */
 //	nova_print_free_lists(sb);

@@ -208,6 +208,10 @@ struct nova_sb_info {
 	/* fact related */
 	u64 fact_entry_num;
 	u64 fact_entry_prefix;
+	
+	/* deduplication daemon */
+	struct task_struct *dd;
+	u64 dd_poll_mseconds;
 };
 
 static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)
