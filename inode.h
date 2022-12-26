@@ -385,8 +385,6 @@ int nova_delete_file_tree(struct super_block *sb,
 	struct nova_inode_info_header *sih, unsigned long start_blocknr,
 	unsigned long last_blocknr, bool delete_nvmm,
 	bool delete_dead, u64 trasn_id);
-void nova_truncate_file_blocks(struct inode *inode, loff_t start,
-				    loff_t end, u64 epoch_id);
 u64 nova_new_nova_inode(struct super_block *sb, u64 *pi_addr);
 extern struct inode *nova_new_vfs_inode(enum nova_new_inode_type,
 	struct inode *dir, u64 pi_addr, u64 ino, umode_t mode,

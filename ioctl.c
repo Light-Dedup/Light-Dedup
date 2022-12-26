@@ -20,6 +20,12 @@
 #include <linux/mount.h>
 #include "nova.h"
 #include "inode.h"
+#include "dedup.h"
+
+/* ------ NOVA DEDUP by KHJ --------- */
+static int nova_dedup(struct file *filp){
+	return nova_dedup_test(filp);	
+}
 
 long nova_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
@@ -155,6 +161,10 @@ setversion_out:
 	}
 	case NOVA_PRINT_FREE_LISTS: {
 		nova_print_free_lists(sb);
+		return 0;
+	}
+	case NOVA_OFFLINE_DEDUP: {
+		nova_dedup(filp);
 		return 0;
 	}
 	default:

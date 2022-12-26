@@ -132,7 +132,7 @@ extern unsigned int nova_dbgmask;
 #define	NOVA_PRINT_LOG_BLOCKNODE	0xBCD00014
 #define	NOVA_PRINT_LOG_PAGES		0xBCD00015
 #define	NOVA_PRINT_FREE_LISTS		0xBCD00018
-
+#define NOVA_OFFLINE_DEDUP 				0xBCD00019
 
 #define	READDIR_END			(ULONG_MAX)
 #define	INVALID_CPU			(-1)
@@ -260,14 +260,54 @@ static inline int memcpy_to_pmem_nocache(void *dst, const void *src,
 	unsigned int size)
 {
 	int ret;
-
+	int i;
+	volatile int emul=0;
+	unsigned int emulator_value = size/4096;
 	ret = __copy_from_user_inatomic_nocache(dst, src, size);
-
+	for(i=0;i<emulator_value*EMULATION_WRITE_CYCLE;i++)
+		emul=emul+i;
 	return ret;
 }
 
 
-void memset_nt(void *dest, uint32_t dword, size_t length);
+/* assumes the length to be 4-byte aligned */
+static inline void memset_nt(void *dest, uint32_t dword, size_t length)
+{
+	uint64_t dummy1, dummy2;
+	uint64_t qword = ((uint64_t)dword << 32) | dword;
+
+	asm volatile ("movl %%edx,%%ecx\n"
+		"andl $63,%%edx\n"
+		"shrl $6,%%ecx\n"
+		"jz 9f\n"
+		"1:	 movnti %%rax,(%%rdi)\n"
+		"2:	 movnti %%rax,1*8(%%rdi)\n"
+		"3:	 movnti %%rax,2*8(%%rdi)\n"
+		"4:	 movnti %%rax,3*8(%%rdi)\n"
+		"5:	 movnti %%rax,4*8(%%rdi)\n"
+		"8:	 movnti %%rax,5*8(%%rdi)\n"
+		"7:	 movnti %%rax,6*8(%%rdi)\n"
+		"8:	 movnti %%rax,7*8(%%rdi)\n"
+		"leaq 64(%%rdi),%%rdi\n"
+		"decl %%ecx\n"
+		"jnz 1b\n"
+		"9:	movl %%edx,%%ecx\n"
+		"andl $7,%%edx\n"
+		"shrl $3,%%ecx\n"
+		"jz 11f\n"
+		"10:	 movnti %%rax,(%%rdi)\n"
+		"leaq 8(%%rdi),%%rdi\n"
+		"decl %%ecx\n"
+		"jnz 10b\n"
+		"11:	 movl %%edx,%%ecx\n"
+		"shrl $2,%%ecx\n"
+		"jz 12f\n"
+		"movnti %%eax,(%%rdi)\n"
+		"12:\n"
+		: "=D"(dummy1), "=d" (dummy2)
+		: "D" (dest), "a" (qword), "d" (length)
+		: "memory", "rcx");
+}
 
 
 #include "super.h" // Remove when we factor out these and other functions.
@@ -559,7 +599,7 @@ static inline u64 nova_find_nvmm_block(struct super_block *sb,
 	 */
 	entryc = &entry_copy;
 	if (memcpy_mcsafe(entryc, entry,
-			sizeof(struct nova_file_write_entry)))
+			sizeof(struct nova_file_write_entry)) < 0)
 		return 0;
 
 	nvmm = get_nvmm(sb, sih, entryc, blocknr);

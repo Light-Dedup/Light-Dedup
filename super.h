@@ -50,11 +50,44 @@ struct nova_super_block {
  * Block 16 - 31 contain pointers to inode table.
  * Block 32 - 47 contain pointers to replica inode table.
  * Block 48 - 63 contain pointers to journal pages.
- *
+ * 
+ * 
  * If data protection is enabled, more blocks are reserverd for checksums and
  * parities and the number is derived according to the whole storage size.
  */
-#define	HEAD_RESERVED_BLOCKS	64
+
+/* NOVA DEDUP KHJ */
+/*
+ * 4G Environment
+ * Index 0 ~ (2^20 - 1)
+
+ * 32G Environment
+ * Index 0 ~ (2^23 - 1)
+
+ * 750G Environment
+ * Index 0 ~ (750*2^18 - 1)
+
+ * 1T Environment
+ * Index 0 ~ (2^28 - 1)
+ */
+// #define FACT_TABLE_INDEX_MAX 2097151 // 2^21 - 1  (4G ENV)
+// #define FACT_TABLE_INDEX_MAX 4194303 // 2^22 - 1 (8G ENV)
+// #define FACT_TABLE_INDEX_MAX 8388607 // 2^23 - 1 (16G ENV)
+//#define FACT_TABLE_INDEX_MAX 16777215 // 2^24 - 1 (32G ENV)
+// #define FACT_TABLE_INDEX_MAX 33554431 // 2^25 - 1 (64G ENV)
+// #define FACT_TABLE_INDEX_MAX 67108863 // 2^26 - 1 (128G ENV)
+#define FACT_TABLE_INDEX_MAX 134217727 // 2^27 - 1 (256G ENV)
+// #define FACT_TABLE_INDEX_MAX 536870911 // 2^29 -1  (1TB ENV)
+// #define FACT_TABLE_INDEX_MAX (unsigned long)196607999 // 750 * 2^19 - 1 (750GB ENV)
+
+#define	HEAD_RESERVED_BLOCKS (unsigned long)63 + ((unsigned long)(FACT_TABLE_INDEX_MAX+1)*64)/4096
+
+// #define FACT_TABLE_INDIRECT_AREA_START_INDEX 524288 // 2^19 (4G ENV)
+#define FACT_TABLE_INDIRECT_AREA_START_INDEX 8388608 // 2^23 (64G ENV)
+// #define FACT_TABLE_INDIRECT_AREA_START_INDEX 134217728 // 2^27 (1T, 750G ENV)
+
+// 64 - FACT entry size
+// 4096 - Block size
 #define	NUM_JOURNAL_PAGES	16
 
 #define SUPER_BLOCK_START       0 // Superblock
@@ -62,6 +95,10 @@ struct nova_super_block {
 #define	INODE_TABLE0_START	16 // inode table
 #define	INODE_TABLE1_START	32 // replica inode table
 #define	JOURNAL_START		48 // journal pointer table
+
+/* NOVA DEDUP KHJ */
+#define FACT_TABLE_START 64
+
 
 /* For replica super block and replica reserved inodes */
 #define	TAIL_RESERVED_BLOCKS	2
@@ -127,6 +164,8 @@ struct nova_sb_info {
 	atomic_t	next_generation;
 	/* inode tracking */
 	unsigned long	s_inodes_used_count;
+	unsigned long	head_reserved_blocks;
+	unsigned long	tail_reserved_blocks;
 
 	struct mutex	s_lock;	/* protects the SB's buffer-head */
 
@@ -172,8 +211,7 @@ struct nova_sb_info {
 	/* Per-CPU free block list */
 	struct free_list *free_lists;
 	unsigned long per_list_blocks;
-	unsigned long	block_start;
-	unsigned long	block_end;
+
 };
 
 static inline struct nova_sb_info *NOVA_SB(struct super_block *sb)

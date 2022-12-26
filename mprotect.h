@@ -159,7 +159,7 @@ static inline void nova_memunlock_reserved(struct super_block *sb,
 
 	if (nova_is_protected(sb))
 		__nova_memunlock_range(ps,
-			sbi->block_start * NOVA_DEF_BLOCK_SIZE_4K, flags);
+			sbi->head_reserved_blocks * NOVA_DEF_BLOCK_SIZE_4K, flags);
 }
 
 static inline void nova_memlock_reserved(struct super_block *sb,
@@ -169,7 +169,7 @@ static inline void nova_memlock_reserved(struct super_block *sb,
 
 	if (nova_is_protected(sb))
 		__nova_memlock_range(ps,
-			sbi->block_start * NOVA_DEF_BLOCK_SIZE_4K, flags);
+			sbi->head_reserved_blocks * NOVA_DEF_BLOCK_SIZE_4K, flags);
 }
 
 static inline void nova_memunlock_journal(struct super_block *sb, unsigned long *flags)

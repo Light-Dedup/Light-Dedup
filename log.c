@@ -19,6 +19,7 @@
 #include "journal.h"
 #include "inode.h"
 #include "log.h"
+#include "dedup.h"
 
 static int nova_execute_invalidate_reassign_logentry(struct super_block *sb,
 	void *entry, enum nova_entry_type type, int reassign,
@@ -151,7 +152,6 @@ unsigned int nova_free_old_entry(struct super_block *sb,
 	}
 
 	old_nvmm = get_nvmm(sb, sih, entryc, pgoff);
-
 	if (!delete_dead) {
 		ret = nova_append_data_to_snapshot(sb, entryc, old_nvmm,
 				num_free, epoch_id);
@@ -403,6 +403,9 @@ static int nova_append_log_entry(struct super_block *sb,
 	void *entry, *alter_entry;
 	enum nova_entry_type type = entry_info->type;
 	struct nova_inode_update *update = entry_info->update;
+	/* DEDUP NOVA KHJ */
+	struct nova_file_write_entry *target_entry = entry_info->data;
+	/* -------------- */
 	u64 tail, alter_tail;
 	u64 curr_p, alter_curr_p;
 	size_t size;
@@ -421,6 +424,7 @@ static int nova_append_log_entry(struct super_block *sb,
 						MAIN_LOG, 0, &extended);
 	if (curr_p == 0)
 		return -ENOSPC;
+
 
 	nova_dbg_verbose("%s: inode %lu attr change entry @ 0x%llx\n",
 				__func__, sih->ino, curr_p);
@@ -452,6 +456,16 @@ static int nova_append_log_entry(struct super_block *sb,
 	}
 
 	entry_info->curr_p = curr_p;
+
+	/* DEDUP NOVA KHJ */
+  // The Write Entries that are doing deduplication should not be here
+	// Check 'dedup_flag' 
+	if(type == FILE_WRITE){
+		if(target_entry->dedup_flag == 0)
+			nova_dedup_queue_push(curr_p, pi->nova_ino);
+  }
+  /*****************/
+	
 	return 0;
 }
 
@@ -1184,7 +1198,6 @@ static int nova_initialize_inode_log(struct super_block *sb,
 		sih->log_pages++;
 		nova_flush_buffer(&pi->alter_log_head, CACHELINE_SIZE, 1);
 	}
-	nova_update_inode_checksum(pi);
 	nova_memlock_inode(sb, pi, &irq_flags);
 
 	return 0;
@@ -1221,10 +1234,15 @@ static u64 nova_extend_inode_log(struct super_block *sb, struct nova_inode *pi,
 			nova_memlock_inode(sb, pi, &irq_flags);
 		}
 
+		nova_memunlock_inode(sb, pi, &irq_flags);
+		nova_update_inode_checksum(pi);
+		nova_memlock_inode(sb, pi, &irq_flags);
+
 		return sih->log_head;
 	}
 
-	num_pages = sih->log_pages;
+	num_pages = sih->log_pages >= EXTEND_THRESHOLD ?
+				EXTEND_THRESHOLD : sih->log_pages;
 //	nova_dbg("Before append log pages:\n");
 //	nova_print_inode_log_page(sb, inode);
 	allocated = nova_allocate_inode_log_pages(sb, sih,

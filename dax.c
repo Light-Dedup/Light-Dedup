@@ -252,6 +252,11 @@ void nova_init_file_write_entry(struct super_block *sb,
 	entry->entry_type = FILE_WRITE;
 	entry->reassigned = 0;
 	entry->updating = 0;
+	
+	/* DEDUP NOVA KHJ */
+	entry->dedup_flag = 0;
+	/* -------------- */
+
 	entry->epoch_id = epoch_id;
 	entry->trans_id = sih->trans_id;
 	entry->pgoff = cpu_to_le64(pgoff);
@@ -721,7 +726,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			nova_init_file_write_entry(sb, sih, &entry_data,
 						epoch_id, start_blk, allocated,
 						blocknr, time, file_size);
-
+			
 			ret = nova_append_file_write_entry(sb, pi, inode,
 						&entry_data, &update);
 			if (ret) {
@@ -789,7 +794,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 
 	ret = written;
 	NOVA_STATS_ADD(inplace_write_breaks, step);
-	nova_dbgv("blocks: %llu, %lu\n", (u64)inode->i_blocks, sih->i_blocks);
+	nova_dbgv("blocks: %lu, %lu\n", inode->i_blocks, sih->i_blocks);
 
 	*ppos = pos;
 	if (pos > inode->i_size) {
@@ -902,8 +907,8 @@ static int nova_dax_get_blocks(struct inode *inode, sector_t iblock,
 
 	NOVA_START_TIMING(dax_get_block_t, get_block_time);
 
-	nova_dbgv("%s: pgoff %llu, num %lu, create %d\n",
-				__func__, (u64)iblock, max_blocks, create);
+	nova_dbgv("%s: pgoff %lu, num %lu, create %d\n",
+				__func__, iblock, max_blocks, create);
 
 	epoch_id = nova_get_epoch_id(sb);
 
@@ -920,8 +925,8 @@ again:
 	if (entry) {
 		if (create == 0 || inplace) {
 			nvmm = get_nvmm(sb, sih, entryc, iblock);
-			nova_dbgv("%s: found pgoff %llu, block %lu\n",
-					__func__, (u64)iblock, nvmm);
+			nova_dbgv("%s: found pgoff %lu, block %lu\n",
+					__func__, iblock, nvmm);
 			goto out;
 		}
 	}

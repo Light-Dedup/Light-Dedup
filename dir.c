@@ -449,6 +449,7 @@ int nova_remove_dentry(struct dentry *dentry, int dec_link,
 	sih->trans_id++;
 out:
 	NOVA_END_TIMING(remove_dentry_t, remove_dentry_time);
+	
 	return ret;
 }
 

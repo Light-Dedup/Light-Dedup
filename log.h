@@ -35,6 +35,8 @@ struct	nova_inode_log_page {
 	struct nova_inode_page_tail page_tail;
 } __attribute((__packed__));
 
+#define	EXTEND_THRESHOLD	256
+
 enum nova_entry_type {
 	FILE_WRITE = 1,
 	DIR_LOG,
@@ -71,7 +73,7 @@ struct nova_file_write_entry {
 	u8	entry_type;
 	u8	reassigned;	/* Data is not latest */
 	u8	updating;	/* Data is being written */
-	u8	padding;
+	u8	dedup_flag; /* NOVA DEDUP KHJ */
 	__le32	num_pages;
 	__le64	block;          /* offset of first block in this write */
 	__le64	pgoff;          /* file offset at the beginning of this write */

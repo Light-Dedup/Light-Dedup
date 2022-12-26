@@ -108,9 +108,9 @@ static inline void PERSISTENT_BARRIER(void)
 	asm volatile ("sfence\n" : : );
 }
 
-static inline void nova_flush_buffer(void *buf, size_t len, bool fence)
+static inline void nova_flush_buffer(void *buf, uint32_t len, bool fence)
 {
-	size_t i;
+	uint32_t i;
 
 	len = len + ((unsigned long)(buf) & (CACHELINE_SIZE - 1));
 	if (support_clwb) {
@@ -152,4 +152,8 @@ static inline void nova_flush_buffer(void *buf, size_t len, bool fence)
 #define NOVA_STRIPE_SHIFT	(9) /* size should be no less than PR_SIZE */
 #define NOVA_STRIPE_SIZE	(1 << NOVA_STRIPE_SHIFT)
 
+/* NOVA DEDUP KHJ */
+#define NOVA_FACT_ENTRY_SIZE 64
+#define EMULATION_WRITE_CYCLE 140
+#define EMULATION_READ_CYCLE 400
 #endif /* _LINUX_NOVA_DEF_H */
