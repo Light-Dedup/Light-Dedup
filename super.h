@@ -75,9 +75,7 @@ struct nova_super_block {
 
 #define	HEAD_RESERVED_BLOCKS(sbi) (unsigned long)63 + ((unsigned long)(FACT_TABLE_INDEX_MAX(sbi)+1)*64)/4096
 
-// #define FACT_TABLE_INDIRECT_AREA_START_INDEX 524288 // 2^19 (4G ENV)
-#define FACT_TABLE_INDIRECT_AREA_START_INDEX 8388608 // 2^23 (64G ENV)
-// #define FACT_TABLE_INDIRECT_AREA_START_INDEX 134217728 // 2^27 (1T, 750G ENV)
+#define FACT_TABLE_INDIRECT_AREA_START_INDEX(sbi) (sbi->fact_IAA_start_idx)
 
 // 64 - FACT entry size
 // 4096 - Block size
@@ -207,8 +205,10 @@ struct nova_sb_info {
 
 	/* fact related */
 	u64 fact_entry_num;
+	u64 fact_DAA_IAA_entry_num;
 	u64 fact_entry_prefix;
-	
+	u64 fact_IAA_start_idx;
+
 	/* deduplication daemon */
 	struct task_struct *dd;
 	u64 dd_poll_mseconds;

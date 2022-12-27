@@ -316,7 +316,7 @@ int nova_dedup_FACT_recovery(struct super_block *sb)
         }
 
         // Check reordering process
-        if (target_index < FACT_TABLE_INDIRECT_AREA_START_INDEX && target_entry->prev != 0) {
+        if (target_index < FACT_TABLE_INDIRECT_AREA_START_INDEX(sbi) && target_entry->prev != 0) {
             if (target_entry->prev == target_index) {
                 // Undo reorder process
                 nova_dedup_FACT_reorder_undo(sb, target_index);
@@ -463,7 +463,7 @@ int nova_dedup_FACT_index_head(struct nova_sb_info *sbi, u64 index)
 {
     if (nova_dedup_FACT_index_check(sbi, index))
         return 0;
-    if (index < FACT_TABLE_INDIRECT_AREA_START_INDEX)
+    if (index < FACT_TABLE_INDIRECT_AREA_START_INDEX(sbi))
         return 0;
     else
         return 1;
@@ -583,10 +583,10 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
     head_index = index;
     // Read Entries until it finds a match, or finds a empty slot
     do {
-        if (hop > 500) {
-            printk("IAA Infinite loop, bug exists\n");
-            return 2;
-        }
+        // if (hop > 500) {
+        //     printk("IAA Infinite loop, bug exists\n");
+        //     return 2;
+        // }
 
         target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
         pmem_te = (struct fact_entry *)nova_get_block(sb, target_index);
@@ -618,7 +618,7 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
             prev_index = 0;
         } else { // write in IAA
             prev_index = index;
-            index = find_next_zero_bit(FACT_free_list->bitmap, FACT_free_list->bitmap_size, FACT_TABLE_INDIRECT_AREA_START_INDEX);
+            index = find_next_zero_bit(FACT_free_list->bitmap, FACT_free_list->bitmap_size, FACT_TABLE_INDIRECT_AREA_START_INDEX(sbi));
             set_bit(index, FACT_free_list->bitmap);
         }
 
@@ -672,7 +672,9 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
         nova_memlock_range(sb, pmem_te, NOVA_FACT_ENTRY_SIZE, &irq_flags);
     }
 
-    // nova_dedup_FACT_reorder(sb,head_index);
+	if (hop > REORDER_THRESHOLD) {
+    	nova_dedup_FACT_reorder(sb,head_index);
+	}
 
     return ret;
 }
@@ -912,6 +914,10 @@ int nova_dedup_test(struct super_block *sb)
     fingerprint = kmalloc(FINGERPRINT_SIZE, GFP_KERNEL);
 
     do {
+		if (kthread_should_stop()) {
+			nova_info("Force Break Deduplication Loop\n");
+			break;
+		}
         // Pop TWE(Target Write Entry)
         entry_address = nova_dedup_queue_get_next_entry(&target_inode_number);
         // target_inode_number should exist
@@ -998,11 +1004,12 @@ int nova_dedup_test(struct super_block *sb)
                 index++;
             }
             // Lookup & Add to FACT table
-            for (i = 0; i < num_pages; i++)
+            for (i = 0; i < num_pages; i++) {
                 if (duplicate_check[i] != 2) {
                     duplicate_check[i] = nova_dedup_FACT_insert(sb, &lookup_data[i]);
                     num_new_entry += duplicate_check[i];
                 }
+			}
             // Test
             /*
                              for(i=0;i<num_pages;i++)
