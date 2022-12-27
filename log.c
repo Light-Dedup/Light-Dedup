@@ -458,13 +458,12 @@ static int nova_append_log_entry(struct super_block *sb,
 	entry_info->curr_p = curr_p;
 
 	/* DEDUP NOVA KHJ */
-  // The Write Entries that are doing deduplication should not be here
+  	// The Write Entries that are doing deduplication should not be here
 	// Check 'dedup_flag' 
 	if(type == FILE_WRITE){
 		if(target_entry->dedup_flag == 0)
 			nova_dedup_queue_push(curr_p, pi->nova_ino);
-  }
-  /*****************/
+    }
 	
 	return 0;
 }

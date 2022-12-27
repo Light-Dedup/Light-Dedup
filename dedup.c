@@ -600,6 +600,9 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
             break;
         } else if (te.next != 0 && te.next != head_index) { // next exists
             index = te.next;
+            if (hop != 0) {
+				nova_dbg("head index: %llu, next index: %llu, hop: %d\n", head_index, index, hop);
+			}
         } else { // need new entry
             ret = 0;
             break;
@@ -1113,6 +1116,7 @@ int nova_dedup_test(struct super_block *sb)
             sb_end_write(target_inode->i_sb);
         }
         iput(target_inode); // Release Inode
+        schedule(); /* be nice */
     } while (dedup_loop_count--);
 
     // nova_dedup_FACT_utilize(sb);
