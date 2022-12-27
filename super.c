@@ -645,12 +645,12 @@ static int nova_fill_super(struct super_block *sb, void *data, int silent)
 		goto out;
 	}
 
-	sbi->fact_DAA_IAA_entry_num = sbi->initsize >> PAGE_SHIFT;
+	sbi->fact_DAA_IAA_entry_num = roundup_pow_of_two(sbi->initsize) >> PAGE_SHIFT;
 	sbi->fact_entry_num = 2 * sbi->fact_DAA_IAA_entry_num;
 	/* log 2 upper of num */
 	sbi->fact_entry_prefix = ilog2(sbi->fact_DAA_IAA_entry_num - 1) + 1;
 	sbi->fact_IAA_start_idx = sbi->fact_DAA_IAA_entry_num;
-	nova_info("fact entry num %lu, fact_entry_prefix %d, DAA/IAA entry num %lu, IAA start %lu", sbi->fact_entry_num, sbi->fact_entry_prefix, sbi->fact_DAA_IAA_entry_num, sbi->fact_IAA_start_idx);
+	nova_info("env prob %luG, fact entry num %lu, fact_entry_prefix %d, DAA/IAA entry num %lu, IAA start %lu", roundup_pow_of_two(sbi->initsize) >> 30, sbi->fact_entry_num, sbi->fact_entry_prefix, sbi->fact_DAA_IAA_entry_num, sbi->fact_IAA_start_idx);
 
 	set_default_opts(sbi);
 

@@ -583,10 +583,10 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
     head_index = index;
     // Read Entries until it finds a match, or finds a empty slot
     do {
-        // if (hop > 500) {
-        //     printk("IAA Infinite loop, bug exists\n");
-        //     return 2;
-        // }
+        if (hop > 500) {
+            printk("IAA Infinite loop, bug exists\n");
+            return 2;
+        }
 
         target_index = NOVA_DEF_BLOCK_SIZE_4K * FACT_TABLE_START + index * NOVA_FACT_ENTRY_SIZE;
         pmem_te = (struct fact_entry *)nova_get_block(sb, target_index);
@@ -600,8 +600,8 @@ int nova_dedup_FACT_insert(struct super_block *sb, struct fingerprint_lookup_dat
             break;
         } else if (te.next != 0 && te.next != head_index) { // next exists
             index = te.next;
-            if (hop != 0) {
-				nova_dbg("head index: %llu, next index: %llu, hop: %d\n", head_index, index, hop);
+            if (hop >= 498) {
+				nova_dbgv("head index: %llu, next index: %llu, hop: %d\n", head_index, index, hop);
 			}
         } else { // need new entry
             ret = 0;
