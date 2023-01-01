@@ -932,7 +932,7 @@ int nova_dedup_test(struct super_block *sb)
         // Read TI(Target Inode)
         target_inode = nova_iget(sb, target_inode_number);
         // Inode Could've been deleted
-        if (target_inode == ERR_PTR(-ESTALE)) {
+        if (IS_ERR(target_inode)) {
             // nova_info("%s: inode %llu does not exist.", __func__,target_inode_number);
             // iput(target_inode);	// Release Inode
             continue;
