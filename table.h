@@ -109,7 +109,7 @@ struct nova_write_para_continuous {
 };
 
 void nova_table_deref_block(struct nova_mm_table *table,
-	struct nova_pmm_entry *pentry);
+	struct nova_pmm_entry *pentry, struct nova_pmm_entry **last_pentry);
 int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp);
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp);
 // refcount-- only if refcount == 1

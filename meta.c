@@ -101,7 +101,8 @@ nova_blocknr_pmm_entry(struct nova_meta_table *table, unsigned long blocknr)
 		le64_to_cpu(
 			table->entry_allocator.map_blocknr_to_pentry[blocknr]));
 }
-void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
+void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr,
+	struct nova_pmm_entry **last_pentry)
 {
 	struct super_block *sb = table->sblock;
 	INIT_TIMING(decr_ref_time);
@@ -118,7 +119,7 @@ void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr)
 	}
 	BUG_ON(nova_pmm_entry_blocknr(pentry) != blocknr);
 	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
-	nova_table_deref_block(&table->metas, pentry);
+	nova_table_deref_block(&table->metas, pentry, last_pentry);
 	NOVA_END_TIMING(decr_ref_t, decr_ref_time);
 }
 

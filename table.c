@@ -386,7 +386,7 @@ retry:
 }
 
 void nova_table_deref_block(struct nova_mm_table *table,
-	struct nova_pmm_entry *pentry)
+	struct nova_pmm_entry *pentry, struct nova_pmm_entry **last_pentry)
 {
 	struct super_block *sb = table->sblock;
 	struct rhashtable *rht = &table->rht;
@@ -416,7 +416,11 @@ void nova_table_deref_block(struct nova_mm_table *table,
 		rcu_read_unlock();
 		free_rht_entry(table, rht, entry);
 	} else {
-		nova_flush_entry(table->entry_allocator, pentry);
+		if (!in_the_same_cacheline(pentry, *last_pentry) &&
+				*last_pentry) {
+			nova_flush_entry_if_not_null(*last_pentry, false);
+		}
+		*last_pentry = pentry;
 	}
 }
 

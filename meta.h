@@ -24,7 +24,8 @@ int nova_meta_table_init(struct nova_meta_table *table, struct super_block* sblo
 int nova_meta_table_restore(struct nova_meta_table *table, struct super_block *sb);
 void nova_meta_table_save(struct nova_meta_table *table);
 
-void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr);
+void nova_meta_table_decr(struct nova_meta_table *table, unsigned long blocknr,
+	struct nova_pmm_entry **last_pentry);
 long nova_meta_table_decr1(struct nova_meta_table *table, const void *addr, unsigned long blocknr);
 
 // extern long nova_meta_table_find_weak(struct nova_meta_table *table, struct nova_meta_entry *entry, const struct nova_fp_mem *fp, const void* addr);
