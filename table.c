@@ -198,6 +198,7 @@ static int alloc_and_fill_block(
 	// nova_memlock_block(sb, xmem, &irq_flags);
 	return 0;
 }
+#if 0
 static int rewrite_block(
 	struct super_block *sb,
 	struct nova_write_para_normal *__wp)
@@ -215,6 +216,7 @@ static int rewrite_block(
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	return 0;
 }
+#endif
 static void assign_entry(
 	struct nova_rht_entry *entry,
 	struct nova_pmm_entry *pentry,
@@ -432,11 +434,13 @@ int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para
 	return upsert_block(table, wp, alloc_and_fill_block);
 }
 // Inplace 
+#if 0
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
 {
 	return upsert_block(table, (struct nova_write_para_normal *)wp,
 		rewrite_block);
 }
+#endif
 
 // refcount-- only if refcount == 1
 int nova_table_upsert_decr1(
