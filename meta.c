@@ -2,14 +2,24 @@
 #include "meta.h"
 #include "config.h"
 
-static void *allocate_kbuf(gfp_t flags)
+static struct llist_node *allocate_kbuf(gfp_t flags)
 {
-	return kmalloc(PAGE_SIZE, flags);
+	struct kbuf_obj *obj = kmalloc(sizeof(struct kbuf_obj), flags);
+	if (obj == NULL)
+		return NULL;
+	obj->kbuf = kmalloc(PAGE_SIZE, flags);
+	if (obj->kbuf == NULL) {
+		kfree(obj);
+		return NULL;
+	}
+	return &obj->node;
 }
 
-static void free_kbuf(void *kbuf)
+static void free_kbuf(struct llist_node *node)
 {
-	kfree(kbuf);
+	struct kbuf_obj *obj = container_of(node, struct kbuf_obj, node);
+	kfree(obj->kbuf);
+	kfree(obj);
 }
 
 int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,

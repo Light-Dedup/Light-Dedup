@@ -17,6 +17,11 @@ struct nova_meta_table {
 	atomic64_t thread_num;
 };
 
+struct kbuf_obj {
+	struct llist_node node;
+	void *kbuf;
+};
+
 int nova_meta_table_alloc(struct nova_meta_table *table, struct super_block *sb,
 	size_t nelem_hint);
 void nova_meta_table_free(struct nova_meta_table *table);

@@ -584,6 +584,8 @@ static long try_inplace_file_write(struct super_block *sb,
 ssize_t do_nova_inplace_file_write(struct file *filp,
 	const char __user *buf,	size_t len, loff_t *ppos)
 {
+	BUG(); // Not supported yet
+#if 0
 	struct address_space *mapping = filp->f_mapping;
 	struct inode	*inode = mapping->host;
 	struct nova_inode_info *si = NOVA_I(inode);
@@ -818,7 +820,7 @@ protected:
 
 	sih->trans_id++;
 out:
-	generic_cache_free(&table->kbuf_cache, (void **)kbuf_p);
+	generic_cache_free(&table->kbuf_cache, kbuf_p);
 	if (ret < 0) {
 		long ret2;
 		ret2 = nova_cleanup_incomplete_write(sb, sih, new_blocknr, 1,
@@ -830,6 +832,7 @@ out:
 	NOVA_END_TIMING(inplace_write_t, inplace_write_time);
 	NOVA_STATS_ADD(inplace_write_bytes, written);
 	return ret;
+#endif
 }
 
 /* 
