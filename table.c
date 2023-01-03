@@ -418,7 +418,9 @@ void nova_table_deref_block(struct nova_mm_table *table,
 	} else {
 		if (!in_the_same_cacheline(pentry, *last_pentry) &&
 				*last_pentry) {
-			nova_flush_entry_if_not_null(*last_pentry, false);
+			if (*last_pentry != NULL) {
+				nova_flush_cacheline(*last_pentry, false);
+			}
 		}
 		*last_pentry = pentry;
 	}

@@ -216,7 +216,7 @@ nova_deref_blocks(struct super_block *sb, unsigned long blocknr,
 		blocknr += 1;
 	}
 	if (last_pentry) {
-		nova_flush_entry_if_not_null(last_pentry, true);
+		nova_flush_cacheline(last_pentry, true);
 	}
 }
 
