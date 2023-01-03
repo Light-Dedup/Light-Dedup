@@ -536,6 +536,7 @@ out:
  * 		=0: Do COW.
  * 		>0: New blocknr(protected).
  */
+#if 0
 static long try_inplace_file_write(struct super_block *sb,
 	unsigned long old_blocknr, char *kbuf, const char __user *buf,
 	size_t offset, size_t bytes, struct nova_write_para_normal *wp_normal,
@@ -576,6 +577,7 @@ static long try_inplace_file_write(struct super_block *sb,
 	} // Else an existing block found. Already protected.
 	return wp.normal.blocknr;
 }
+#endif
 
 /*
  * Do an inplace write.  This function assumes that the lock on the inode is
