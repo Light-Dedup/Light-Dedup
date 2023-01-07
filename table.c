@@ -182,6 +182,7 @@ static int alloc_and_fill_block(
 	// nova_memlock_block(sb, xmem, &irq_flags);
 	return 0;
 }
+#if 0
 static int rewrite_block(
 	struct super_block *sb,
 	struct nova_write_para_normal *__wp)
@@ -199,6 +200,7 @@ static int rewrite_block(
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	return 0;
 }
+#endif
 static void assign_entry(
 	struct nova_rht_entry *entry,
 	struct nova_pmm_entry *pentry,
@@ -360,7 +362,7 @@ retry:
 }
 
 void nova_table_deref_block(struct nova_mm_table *table,
-	struct nova_pmm_entry *pentry)
+	struct nova_pmm_entry *pentry, struct nova_pmm_entry **last_pentry)
 {
 	struct rhashtable *rht = &table->rht;
 	struct nova_rht_entry *entry;
@@ -384,7 +386,13 @@ void nova_table_deref_block(struct nova_mm_table *table,
 		rcu_read_unlock();
 		free_rht_entry(table, rht, entry);
 	} else {
-		nova_flush_entry(table->entry_allocator, pentry);
+		if (!in_the_same_cacheline(pentry, *last_pentry) &&
+				*last_pentry) {
+			if (*last_pentry != NULL) {
+				nova_flush_cacheline(*last_pentry, false);
+			}
+		}
+		*last_pentry = pentry;
 	}
 }
 
@@ -394,11 +402,13 @@ int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para
 	return upsert_block(table, wp, alloc_and_fill_block);
 }
 // Inplace 
+#if 0
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
 {
 	return upsert_block(table, (struct nova_write_para_normal *)wp,
 		rewrite_block);
 }
+#endif
 
 // refcount-- only if refcount == 1
 int nova_table_upsert_decr1(
@@ -457,9 +467,11 @@ int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
 {
 	struct nova_rht_entry *entry = nova_rht_entry_alloc(table);
 	int ret;
+	INIT_TIMING(insert_entry_time);
 
 	if (entry == NULL)
 		return -ENOMEM;
+	NOVA_START_TIMING(insert_entry_t, insert_entry_time);
 	assign_entry(entry, pentry, fp);
 	while (1) {
 		ret = rhashtable_insert_fast(&table->rht, &entry->node,
@@ -473,6 +485,7 @@ int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
 			__func__, ret);
 		nova_rht_entry_free(entry, table->rht_entry_cache);
 	}
+	NOVA_END_TIMING(insert_entry_t, insert_entry_time);
 	return ret;
 }
 
@@ -1164,9 +1177,11 @@ int nova_table_recover(struct nova_mm_table *table)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	entrynr_t n = le64_to_cpu(recover_meta->refcount_record_num);
-	unsigned long entry_per_thread_bit = max_ul(20, ceil_log_2(n / sbi->cpus));
-	unsigned long entry_per_thread = 1UL << entry_per_thread_bit;
-	unsigned long i, thread_num = ((n - 1) >> entry_per_thread_bit) + 1;
+	unsigned long entry_per_thread_max =
+		max_ul(1UL << 10, (n + sbi->cpus - 1) / sbi->cpus);
+	unsigned long thread_num =
+		(n + entry_per_thread_max - 1) / entry_per_thread_max;
+	unsigned long i;
 	unsigned long base;
 	struct table_recover_para *para = NULL;
 	struct task_struct **tasks = NULL;
@@ -1193,7 +1208,7 @@ int nova_table_recover(struct nova_mm_table *table)
 		init_completion(&para[i].entered);
 		para[i].table = table;
 		para[i].entry_start = base;
-		base += entry_per_thread;
+		base += entry_per_thread_max;
 		para[i].entry_end = base < n ? base : n;
 		tasks[i] = kthread_create(table_recover_func, para + i,
 			"%s_%lu", __func__, i);
