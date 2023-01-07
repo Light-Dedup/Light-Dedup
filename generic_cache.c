@@ -2,66 +2,48 @@
 
 #include <linux/slab.h>
 
-void generic_cache_init(struct generic_cache *cache, void *(*allocate)(gfp_t),
-	void (*free)(void *))
+void generic_cache_init(struct generic_cache *cache,
+	struct llist_node *(*allocate)(gfp_t),
+	void (*free)(struct llist_node *))
 {
 	spin_lock_init(&cache->lock);
-	cache->head = NULL;
+	init_llist_head(&cache->head);
 	cache->allocate = allocate;
 	cache->free = free;
 	cache->allocated = 0;
 }
 
-static void **new_obj(struct generic_cache *cache, gfp_t flags)
+struct llist_node *generic_cache_alloc(struct generic_cache *cache, gfp_t flags)
 {
-	struct generic_cache_node *node =
-		kmalloc(sizeof(struct generic_cache_node), flags);
-	if (node == NULL)
-		return NULL;
-	node->obj = cache->allocate(flags);
-	if (node->obj == NULL) {
-		kfree(node);
-		return NULL;
-	}
-	return &node->obj;
-}
-
-void **generic_cache_alloc(struct generic_cache *cache, gfp_t flags)
-{
-	void **ret;
+	struct llist_node *ret;
 	spin_lock(&cache->lock);
-	if (cache->head == NULL) {
+	if (cache->head.first == NULL) {
 		cache->allocated += 1;
 		spin_unlock(&cache->lock);
-		return new_obj(cache, flags);
+		return cache->allocate(flags);
 	}
-	ret = &cache->head->obj;
-	cache->head = cache->head->next;
+	ret = cache->head.first;
+	cache->head.first = ret->next;
 	spin_unlock(&cache->lock);
 	return ret;
 }
 
-void generic_cache_free(struct generic_cache *cache, void **obj_p)
+void generic_cache_free(struct generic_cache *cache, struct llist_node *node)
 {
-	struct generic_cache_node *node;
-	if (obj_p == NULL)
-		return;
-	node = container_of(obj_p, struct generic_cache_node, obj);
 	spin_lock(&cache->lock);
-	node->next = cache->head;
-	cache->head = node;
+	node->next = cache->head.first;
+	cache->head.first = node;
 	spin_unlock(&cache->lock);
 }
 
 // Make sure that there is no other threads accessing it
 void generic_cache_destroy(struct generic_cache *cache)
 {
-	struct generic_cache_node *cur = cache->head, *next;
+	struct llist_node *cur = cache->head.first, *next;
 	printk("Generic cache allocated %lu\n", cache->allocated);
 	while (cur != NULL) {
-		cache->free(cur->obj);
 		next = cur->next;
-		kfree(cur);
+		cache->free(cur);
 		cur = next;
 	}
 }
