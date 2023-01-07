@@ -1224,9 +1224,11 @@ int nova_table_recover(struct nova_mm_table *table)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	entrynr_t n = le64_to_cpu(recover_meta->refcount_record_num);
-	unsigned long entry_per_thread_bit = max_ul(20, ceil_log_2(n / sbi->cpus));
-	unsigned long entry_per_thread = 1UL << entry_per_thread_bit;
-	unsigned long i, thread_num = ((n - 1) >> entry_per_thread_bit) + 1;
+	unsigned long entry_per_thread_max =
+		max_ul(1UL << 10, (n + sbi->cpus - 1) / sbi->cpus);
+	unsigned long thread_num =
+		(n + entry_per_thread_max - 1) / entry_per_thread_max;
+	unsigned long i;
 	unsigned long base;
 	struct table_recover_para *para = NULL;
 	struct task_struct **tasks = NULL;
@@ -1253,7 +1255,7 @@ int nova_table_recover(struct nova_mm_table *table)
 		init_completion(&para[i].entered);
 		para[i].table = table;
 		para[i].entry_start = base;
-		base += entry_per_thread;
+		base += entry_per_thread_max;
 		para[i].entry_end = base < n ? base : n;
 		tasks[i] = kthread_create(table_recover_func, para + i,
 			"%s_%lu", __func__, i);
