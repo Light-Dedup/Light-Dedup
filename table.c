@@ -499,9 +499,11 @@ int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
 {
 	struct nova_rht_entry *entry = nova_rht_entry_alloc(table);
 	int ret;
+	INIT_TIMING(insert_entry_time);
 
 	if (entry == NULL)
 		return -ENOMEM;
+	NOVA_START_TIMING(insert_entry_t, insert_entry_time);
 	assign_entry(entry, pentry, fp);
 	while (1) {
 		ret = rhashtable_insert_fast(&table->rht, &entry->node,
@@ -515,6 +517,7 @@ int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
 			__func__, ret);
 		nova_rht_entry_free(entry, table->rht_entry_cache);
 	}
+	NOVA_END_TIMING(insert_entry_t, insert_entry_time);
 	return ret;
 }
 
