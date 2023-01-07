@@ -184,6 +184,7 @@ const char *Timingstring[TIMING_NUM] = {
 	"table_init",
 	"save_refcount",
 	"save_entry_allocator",
+	"insert_entry",
 	"normal_recover_fp_table",
 	"normal_recover_entry_allocator",
 	"scan_fp_entry_table",
