@@ -182,6 +182,7 @@ enum timing_category {
 	table_init_t,
 	save_refcount_t,
 	save_entry_allocator_t,
+	insert_entry_t,
 	normal_recover_fp_table_t,
 	normal_recover_entry_allocator_t,
 	scan_fp_entry_table_t,
