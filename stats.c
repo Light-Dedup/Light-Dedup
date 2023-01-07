@@ -183,6 +183,7 @@ const char *Timingstring[TIMING_NUM] = {
 	"prefetch_cmp",
 	"table_init",
 	"save_refcount",
+	"table_free",
 	"save_entry_allocator",
 	"insert_entry",
 	"normal_recover_fp_table",

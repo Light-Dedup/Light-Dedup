@@ -1130,11 +1130,15 @@ void nova_table_free(struct nova_mm_table *table)
 void nova_table_save(struct nova_mm_table* table)
 {
 	INIT_TIMING(save_refcount_time);
+	INIT_TIMING(table_free_time);
 
 	NOVA_START_TIMING(save_refcount_t, save_refcount_time);
 	table_save(table);
-	nova_table_free(table);
 	NOVA_END_TIMING(save_refcount_t, save_refcount_time);
+
+	NOVA_START_TIMING(table_free_t, table_free_time);
+	nova_table_free(table);
+	NOVA_END_TIMING(table_free_t, table_free_time);
 }
 
 // nelem_hint: If 0 then use default

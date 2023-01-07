@@ -187,6 +187,7 @@ enum timing_category {
 	prefetch_cmp_t,
 	table_init_t,
 	save_refcount_t,
+	table_free_t,
 	save_entry_allocator_t,
 	insert_entry_t,
 	normal_recover_fp_table_t,
