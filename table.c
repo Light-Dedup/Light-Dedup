@@ -154,6 +154,7 @@ static int alloc_and_fill_block(
 	// nova_memlock_block(sb, xmem, &irq_flags);
 	return 0;
 }
+#if 0
 static int rewrite_block(
 	struct super_block *sb,
 	struct nova_write_para_normal *__wp)
@@ -171,6 +172,7 @@ static int rewrite_block(
 	NOVA_END_TIMING(memcpy_data_block_t, memcpy_time);
 	return 0;
 }
+#endif
 
 static int nova_table_leaf_insert(
 	struct nova_mm_table *table,
@@ -318,7 +320,7 @@ retry:
 }
 
 void nova_table_deref_block(struct nova_mm_table *table,
-	struct nova_pmm_entry *pentry)
+	struct nova_pmm_entry *pentry, struct nova_pmm_entry **last_pentry)
 {
 	struct super_block *sb = table->sblock;
 	struct nova_pmm_entry *pentries = table->pentries;
@@ -347,7 +349,13 @@ void nova_table_deref_block(struct nova_mm_table *table,
 		rcu_read_unlock();
 		free_pentry(table, pentry);
 	} else {
-		nova_flush_entry(table->entry_allocator, pentry);
+		if (!in_the_same_cacheline(pentry, *last_pentry) &&
+				*last_pentry) {
+			if (*last_pentry != NULL) {
+				nova_flush_cacheline(*last_pentry, false);
+			}
+		}
+		*last_pentry = pentry;
 	}
 }
 
@@ -357,11 +365,13 @@ int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para
 	return upsert_block(table, wp, alloc_and_fill_block);
 }
 // Inplace 
+#if 0
 int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
 {
 	return upsert_block(table, (struct nova_write_para_normal *)wp,
 		rewrite_block);
 }
+#endif
 
 // refcount-- only if refcount == 1
 int nova_table_upsert_decr1(

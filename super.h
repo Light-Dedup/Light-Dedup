@@ -212,10 +212,14 @@ nova_deref_blocks(struct super_block *sb, unsigned long blocknr,
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_meta_table *table = &sbi->meta_table;
+	struct nova_pmm_entry *last_pentry = NULL;
 	while (num) {
-		nova_meta_table_decr(table, blocknr);
+		nova_meta_table_decr(table, blocknr, &last_pentry);
 		num -= 1;
 		blocknr += 1;
+	}
+	if (last_pentry) {
+		nova_flush_cacheline(last_pentry, true);
 	}
 }
 
