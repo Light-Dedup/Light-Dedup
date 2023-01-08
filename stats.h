@@ -187,12 +187,12 @@ enum timing_category {
 	prefetch_cmp_t,
 	table_init_t,
 	save_refcount_t,
+	table_free_t,
 	save_entry_allocator_t,
 	insert_entry_t,
 	normal_recover_fp_table_t,
 	normal_recover_entry_allocator_t,
 	scan_fp_entry_table_t,
-	upsert_fp_entry_t,
 	invalidate_unused_fp_entry_t,
 
 	/* xatable */

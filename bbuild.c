@@ -34,7 +34,7 @@
 #include "super.h"
 #include "inode.h"
 #include "log.h"
-#include "multithread.h"
+#include "joinable.h"
 #include "xatable.h"
 #include "arithmetic.h"
 
@@ -626,11 +626,10 @@ struct failure_recovery_info {
 };
 
 struct invalidate_unused_fp_entry_para {
-	struct completion entered;
 	struct nova_sb_info *sbi;
 	struct scan_bitmap *final_bm;
 	struct xatable *map_blocknr_pentry;
-	atomic64_t *cur_xa;
+	atomic64_t cur_xa;
 };
 static void __invalidate_unused_fp_entry_xa(
 	struct nova_sb_info *sbi,
@@ -670,17 +669,8 @@ static int invalidate_unused_fp_entry_func(void *__para)
 {
 	struct invalidate_unused_fp_entry_para *para =
 		(struct invalidate_unused_fp_entry_para *)__para;
-	// printk("%s\n", __func__);
-	complete(&para->entered);
 	__invalidate_unused_fp_entry_func(para->sbi,
-		para->final_bm, para->map_blocknr_pentry, para->cur_xa);
-	// printk("%s waiting for kthread_stop\n", __func__);
-	/* Wait for kthread_stop */
-	set_current_state(TASK_INTERRUPTIBLE);
-	while (!kthread_should_stop()) {
-		schedule();
-		set_current_state(TASK_INTERRUPTIBLE);
-	}
+		para->final_bm, para->map_blocknr_pentry, &para->cur_xa);
 	return 0;
 }
 static int invalidate_unused_fp_entry(
@@ -689,48 +679,30 @@ static int invalidate_unused_fp_entry(
 	struct scan_bitmap *final_bm)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	unsigned long i, thread_num = sbi->cpus;
-	struct invalidate_unused_fp_entry_para *para = NULL;
-	struct task_struct **tasks = NULL;
-	atomic64_t cur_xa;
-	int ret = 0, ret2;
+	int i, thread_num = sbi->cpus;
+	struct joinable_kthread *ts;
+	struct invalidate_unused_fp_entry_para para;
+	int ret = 0;
 	INIT_TIMING(time);
 
 	NOVA_START_TIMING(invalidate_unused_fp_entry_t, time);
-	para = kmalloc(thread_num * sizeof(para[0]), GFP_KERNEL);
-	if (para == NULL) {
+	ts = kmalloc(sizeof(ts[0]) * thread_num, GFP_KERNEL);
+	if (ts == NULL) {
 		ret = -ENOMEM;
-		goto out;
+		goto out0;
 	}
-	tasks = kmalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
-	if (tasks == NULL) {
-		ret = -ENOMEM;
-		goto out;
-	}
-	atomic64_set(&cur_xa, -1);
+	para.sbi = sbi;
+	para.final_bm = final_bm;
+	para.map_blocknr_pentry = map_blocknr_pentry;
+	atomic64_set(&para.cur_xa, -1);
 	for (i = 0; i < thread_num; ++i) {
-		init_completion(&para[i].entered);
-		para[i].sbi = sbi;
-		para[i].final_bm = final_bm;
-		para[i].map_blocknr_pentry = map_blocknr_pentry;
-		para[i].cur_xa = &cur_xa;
-		tasks[i] = kthread_create(invalidate_unused_fp_entry_func, para + i,
-			"%s_%lu", __func__, i);
-		if (IS_ERR(tasks[i])) {
-			ret = PTR_ERR(tasks[i]);
-			nova_err(sb, "%lu: kthread_create %lu return %d\n",
-				__func__, i, ret);
-			break;
-		}
+		ts[i].threadfn = invalidate_unused_fp_entry_func;
+		ts[i].data = &para;
 	}
-	ret2 = run_and_stop_kthreads(tasks, para, thread_num, i);
-	if (ret2 < 0)
-		ret = ret2;
-out:
-	if (para)
-		kfree(para);
-	if (tasks)
-		kfree(tasks);
+	ret = joinable_kthreads_run_join_check_lt_zero(ts, thread_num,
+		__func__);
+	kfree(ts);
+out0:
 	NOVA_END_TIMING(invalidate_unused_fp_entry_t, time);
 	return ret;
 }
@@ -1342,7 +1314,6 @@ static void free_resources(struct super_block *sb)
 static int failure_thread_func(void *data);
 
 struct failure_recovery_thread_para {
-	struct completion entered;
 	struct super_block *sb;
 	struct failure_recovery_info *info;
 };
@@ -1488,16 +1459,7 @@ static int failure_thread_func(void *__data)
 {
 	struct failure_recovery_thread_para *para =
 		(struct failure_recovery_thread_para *)__data;
-	int ret;
-	complete(&para->entered);
-	ret = __failure_thread_func(para->sb, para->info);
-	/* Wait for kthread_stop */
-	set_current_state(TASK_INTERRUPTIBLE);
-	while (!kthread_should_stop()) {
-		schedule();
-		set_current_state(TASK_INTERRUPTIBLE);
-	}
-	return ret;
+	return __failure_thread_func(para->sb, para->info);
 }
 
 static int failure_recovery_multithread(
@@ -1505,44 +1467,34 @@ static int failure_recovery_multithread(
 	struct failure_recovery_info *info)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct failure_recovery_thread_para *para = NULL;
-	struct task_struct **tasks = NULL;
-	unsigned long thread_num = sbi->cpus;
-	unsigned long i;
-	int ret = 0, ret2;
+	struct joinable_kthread *ts;
+	struct failure_recovery_thread_para para;
+	int i, thread_num = sbi->cpus;
+	int ret = 0;
 
-	para = kmalloc(thread_num * sizeof(para[0]), GFP_KERNEL);
-	if (para == NULL) {
+	ts = kmalloc(sizeof(ts[0]) * thread_num, GFP_KERNEL);
+	if (ts == NULL) {
 		ret = -ENOMEM;
 		goto out;
 	}
-	tasks = kmalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
-	if (!tasks) {
-		ret = -ENOMEM;
-		goto out;
-	}
+	para.sb = sb;
+	para.info = info;
 	for (i = 0; i < thread_num; ++i) {
-		init_completion(&para[i].entered);
-		para[i].sb = sb;
-		para[i].info = info;
-		tasks[i] = kthread_create(failure_thread_func,
-						para + i, "recovery_thread_%lu", i);
-		if (IS_ERR(tasks[i])) {
-			ret = PTR_ERR(tasks[i]);
-			nova_err(sb, "%lu: kthread_create %lu return %d\n",
-				__func__, i, ret);
-			break;
-		}
-		kthread_bind(tasks[i], i);
+		ts[i].threadfn = failure_thread_func;
+		ts[i].data = &para;
 	}
-	ret2 = run_and_stop_kthreads(tasks, para, thread_num, i);
-	if (ret2 < 0)
-		ret = ret2;
+	ret = joinable_kthreads_create(ts, thread_num, "recovery_thread_");
+	if (ret < 0)
+		goto out1;
+	for (i = 0; i < thread_num; ++i) {
+		joinable_kthread_bind(ts + i, i);
+		joinable_kthread_wake_up(ts + i);
+	}
+	ret = __joinable_kthreads_join_check_lt_zero(ts, thread_num,
+		"recovery_thread_");
+out1:
+	kfree(ts);
 out:
-	if (para)
-		kfree(para);
-	if (tasks)
-		kfree(tasks);
 	return ret;
 }
 
