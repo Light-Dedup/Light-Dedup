@@ -592,6 +592,27 @@ static u32 rhashtable_jhash2(const void *key, u32 length, u32 seed)
 	return jhash2(key, length, seed);
 }
 
+static void rhashtable_free_one(struct rhashtable *ht, struct rhash_head *obj,
+				void (*free_fn)(void *ptr, void *arg),
+				void *arg)
+{
+	struct rhlist_head *list;
+
+	if (!ht->rhlist) {
+		free_fn(rht_obj(ht, obj), arg);
+		return;
+	}
+
+	list = container_of(obj, struct rhlist_head, rhead);
+	do {
+		obj = &list->rhead;
+		list = rht_dereference(list->next, ht);
+		free_fn(rht_obj(ht, obj), arg);
+	} while (list);
+}
+
+// Customized code below.
+
 int rhashtable_init_large(struct rhashtable *ht, size_t nelem_hint,
 		    const struct rhashtable_params *params)
 {
@@ -657,4 +678,105 @@ int rhashtable_init_large(struct rhashtable *ht, size_t nelem_hint,
 	INIT_WORK(&ht->run_work, rht_deferred_worker);
 
 	return 0;
+}
+
+static void free_elements(struct rhashtable *ht,
+	void (*free_fn)(void *ptr, void *arg), void *arg,
+	struct bucket_table *tbl, unsigned int start, unsigned end)
+{
+	unsigned int i;
+	for (i = start; i < end; i++) {
+		struct rhash_head *pos, *next;
+		cond_resched();
+		pos = rht_dereference(*rht_bucket(tbl, i), ht);
+		while (!rht_is_a_nulls(pos)) {
+			next = rht_dereference(pos->next, ht);
+			rhashtable_free_one(ht, pos, free_fn, arg);
+			pos = next;
+		}
+	}
+}
+struct free_elements_task_para {
+	struct rhashtable *ht;
+        struct bucket_table *tbl;
+	void (*free_fn)(void *ptr, void *arg);
+	void *arg;
+	unsigned int start, end;
+};
+static int free_elements_func(void *__para)
+{
+	struct free_elements_task_para *para =
+		(struct free_elements_task_para *)__para;
+	free_elements(para->ht, para->free_fn, para->arg, para->tbl,
+		para->start, para->end);
+	return 0;
+}
+static int __bucket_table_free_elements(struct rhashtable *ht,
+	void (*free_fn)(void *ptr, void *arg), void *arg, int thread_num,
+	struct bucket_table *tbl)
+{
+	unsigned int per_thread;
+	struct free_elements_task_para *para;
+	struct joinable_kthread *ts;
+	unsigned int i, base;
+	int ret;
+
+	per_thread = (tbl->size + thread_num - 1) / thread_num;
+	para = kmalloc(thread_num * sizeof(struct free_elements_task_para),
+		GFP_KERNEL);
+	if (para == NULL) {
+		ret = -ENOMEM;
+		goto out0;
+	}
+	ts = kmalloc(thread_num * sizeof(ts[0]), GFP_KERNEL);
+	if (ts == NULL) {
+		ret = -ENOMEM;
+		goto out1;
+	}
+	base = 0;
+	for (i = 0; i < thread_num; ++i) {
+		para[i].ht = ht;
+		para[i].tbl = tbl;
+		para[i].free_fn = free_fn;
+		para[i].arg = arg;
+		para[i].start = base;
+		base += per_thread;
+		para[i].end = base < tbl->size ? base : tbl->size;
+		ts[i].threadfn = free_elements_func;
+		ts[i].data = para + i;
+	}
+	ret = joinable_kthreads_run_join_check_lt_zero(ts, thread_num,
+		"rhashtable_free_");
+	kfree(ts);
+out1:
+	kfree(para);
+out0:
+	return ret;
+}
+
+static void bucket_table_free_elements(struct rhashtable *ht,
+	void (*free_fn)(void *ptr, void *arg), void *arg, int thread_num,
+	struct bucket_table *tbl)
+{
+	if (!free_fn)
+		return;
+	__bucket_table_free_elements(ht, free_fn, arg, thread_num, tbl);
+}
+
+void rhashtable_free_and_destroy_multithread(struct rhashtable *ht,
+	void (*free_fn)(void *ptr, void *arg), void *arg, int thread_num)
+{
+	struct bucket_table *tbl, *next_tbl;
+
+	cancel_work_sync(&ht->run_work);
+
+	mutex_lock(&ht->mutex);
+	tbl = rht_dereference(ht->tbl, ht);
+	do {
+		bucket_table_free_elements(ht, free_fn, arg, thread_num, tbl);
+		next_tbl = rht_dereference(tbl->future_tbl, ht);
+		bucket_table_free(tbl);
+		tbl = next_tbl;
+	} while (tbl);
+	mutex_unlock(&ht->mutex);
 }

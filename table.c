@@ -1125,8 +1125,10 @@ static void table_save(struct nova_mm_table *table)
 
 void nova_table_free(struct nova_mm_table *table)
 {
-	rhashtable_free_and_destroy(&table->rht, nova_rht_entry_free,
-		table->rht_entry_cache);
+	struct super_block *sb = table->sblock;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	rhashtable_free_and_destroy_multithread(&table->rht,
+		nova_rht_entry_free, table->rht_entry_cache, sbi->cpus);
 	kmem_cache_destroy(table->rht_entry_cache);
 }
 void nova_table_save(struct nova_mm_table* table)
