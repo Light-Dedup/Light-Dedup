@@ -4,7 +4,7 @@
 #include "nova.h"
 #include "faststr.h"
 #include "arithmetic.h"
-#include "multithread.h"
+#include "joinable.h"
 #include "rhashtable-ext.h"
 #include "uaccess-ext.h"
 
@@ -1049,6 +1049,8 @@ static void *table_save_local_arg_factory(void *factory_arg) {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct table_save_local_arg *local_arg = kmalloc(
 		sizeof(struct table_save_local_arg), GFP_ATOMIC);
+	if (local_arg == NULL)
+		return ERR_PTR(-ENOMEM);
 	local_arg->cur = 0;
 	local_arg->end = 0;
 	local_arg->rec = nova_sbi_blocknr_to_addr(
@@ -1178,7 +1180,6 @@ err_out0:
 }
 
 struct table_recover_para {
-	struct completion entered;
 	struct nova_mm_table *table;
 	entrynr_t entry_start, entry_end;
 };
@@ -1209,18 +1210,8 @@ static int __table_recover_func(struct nova_mm_table *table,
 static int table_recover_func(void *__para)
 {
 	struct table_recover_para *para = (struct table_recover_para *)__para;
-	int ret;
-	// printk("%s\n", __func__);
-	complete(&para->entered);
-	ret = __table_recover_func(para->table, para->entry_start, para->entry_end);
-	// printk("%s waiting for kthread_stop\n", __func__);
-	/* Wait for kthread_stop */
-	set_current_state(TASK_INTERRUPTIBLE);
-	while (!kthread_should_stop()) {
-		schedule();
-		set_current_state(TASK_INTERRUPTIBLE);
-	}
-	return ret;
+	return __table_recover_func(para->table, para->entry_start,
+		para->entry_end);
 }
 int nova_table_recover(struct nova_mm_table *table)
 {
@@ -1234,9 +1225,9 @@ int nova_table_recover(struct nova_mm_table *table)
 		(n + entry_per_thread_max - 1) / entry_per_thread_max;
 	unsigned long i;
 	unsigned long base;
-	struct table_recover_para *para = NULL;
-	struct task_struct **tasks = NULL;
-	int ret = 0, ret2;
+	struct table_recover_para *para;
+	struct joinable_kthread *ts;
+	int ret = 0;
 
 	nova_info("About %lu hash table entries found.\n", (unsigned long)n);
 	if (n == 0)
@@ -1247,37 +1238,28 @@ int nova_table_recover(struct nova_mm_table *table)
 	para = kmalloc(thread_num * sizeof(para[0]), GFP_KERNEL);
 	if (para == NULL) {
 		ret = -ENOMEM;
-		goto out;
+		goto out0;
 	}
-	tasks = kmalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
-	if (tasks == NULL) {
+	ts = kmalloc(thread_num * sizeof(ts[0]), GFP_KERNEL);
+	if (ts == NULL) {
 		ret = -ENOMEM;
-		goto out;
+		goto out1;
 	}
 	base = 0;
 	for (i = 0; i < thread_num; ++i) {
-		init_completion(&para[i].entered);
 		para[i].table = table;
 		para[i].entry_start = base;
 		base += entry_per_thread_max;
 		para[i].entry_end = base < n ? base : n;
-		tasks[i] = kthread_create(table_recover_func, para + i,
-			"%s_%lu", __func__, i);
-		if (IS_ERR(tasks[i])) {
-			ret = PTR_ERR(tasks[i]);
-			nova_err(sb, "%lu: kthread_create %lu return %d\n",
-				__func__, i, ret);
-			break;
-		}
+		ts[i].threadfn = table_recover_func;
+		ts[i].data = para + i;
 	}
-	ret2 = run_and_stop_kthreads(tasks, para, thread_num, i);
-	if (ret2 < 0)
-		ret = ret2;
-out:
-	if (para)
-		kfree(para);
-	if (tasks)
-		kfree(tasks);
+	ret = joinable_kthreads_run_join_check_lt_zero(ts, thread_num,
+		__func__);
+	kfree(ts);
+out1:
+	kfree(para);
+out0:
 	return ret;
 }
 
