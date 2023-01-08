@@ -189,7 +189,6 @@ const char *Timingstring[TIMING_NUM] = {
 	"normal_recover_fp_table",
 	"normal_recover_entry_allocator",
 	"scan_fp_entry_table",
-	"upsert_fp_entry",
 	"invalidate_unused_fp_entry",
 
 	/* xatable */
