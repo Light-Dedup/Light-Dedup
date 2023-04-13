@@ -8,7 +8,6 @@
 // If the number of free entries in a region is greater or equal to FREE_THRESHOLD, then the region is regarded as free.
 #define FREE_THRESHOLD (REAL_ENTRY_PER_REGION / 2)
 
-DECLARE_PER_CPU(uint8_t, stream_trust_degree_per_cpu);
 DECLARE_PER_CPU(struct nova_pmm_entry *, last_new_fpentry_per_cpu);
 
 DEFINE_PER_CPU(struct entry_allocator_cpu, entry_allocator_per_cpu);
@@ -28,8 +27,6 @@ static int entry_allocator_alloc(struct nova_sb_info *sbi, struct entry_allocato
 		allocator_cpu->top_entry = NULL_PENTRY;
 		allocator_cpu->allocated = 0;
 		per_cpu(last_new_fpentry_per_cpu, cpu) = NULL_PENTRY;
-		per_cpu(stream_trust_degree_per_cpu, cpu) =
-			HINT_TRUST_DEGREE_THRESHOLD;
 	}
 	spin_lock_init(&allocator->lock);
 	allocator->map_blocknr_to_pentry =
@@ -525,8 +522,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	nova_memunlock(sbi, &irq_flags);
 	NOVA_START_TIMING(write_new_entry_t, write_new_entry_time);
 	pentry->fp = fp;
-	atomic64_set(&pentry->next_hint,
-		cpu_to_le64(HINT_TRUST_DEGREE_THRESHOLD));
+	atomic64_set(&pentry->next_hint, 0);
 	BUG_ON(pentry->blocknr != 0);
 	pentry->blocknr = cpu_to_le64(blocknr);
 	++allocator_cpu->allocated; // Commit the allocation

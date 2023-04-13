@@ -101,8 +101,6 @@ struct nova_write_para_continuous {
 	char *kbuf;
 	const char *block_prefetching;
 	// Depends on the results of previous hints.
-	// [-4, 3]
-	uint8_t stream_trust_degree;
 	// For stats
 	// [0] is the lastest prefetched blocknr.
 	unsigned long prefetched_blocknr[2];
