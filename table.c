@@ -886,7 +886,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
-	if (atomic64_read(&meta->thread_num) < 6) {
+	if (atomic64_read(&meta->thread_num) < transition_threshold) {
 		handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 		NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 		// Prefetch with stride 256B first in case that this block have
