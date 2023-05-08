@@ -122,8 +122,6 @@ int nova_table_insert_entry(struct nova_mm_table *rht, struct nova_fp fp,
 int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
 	struct nova_write_para_normal *wp);
 
-int nova_fp_table_incr_continuous_kbuf(struct nova_sb_info *sbi,
-	struct nova_write_para_continuous *wp);
 int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp);
 
