@@ -179,20 +179,20 @@ enum timing_category {
 	new_region_t,
 	alloc_entry_t,
 	write_new_entry_t,
-	mem_bucket_find_t,
+	index_lookup_t,
 	index_insert_new_entry_t,
 	memcmp_t,
 	prefetch_next_stage_1_t,
 	prefetch_next_stage_2_t,
 	prefetch_cmp_t,
-	table_init_t,
-	save_refcount_t,
-	table_free_t,
+	meta_alloc_t,
+	rht_save_t,
+	rht_free_t,
 	save_entry_allocator_t,
-	insert_entry_t,
-	normal_recover_fp_table_t,
+	insert_rht_entry_t,
+	normal_recover_rht_t,
 	normal_recover_entry_allocator_t,
-	scan_fp_entry_table_t,
+	scan_entry_table_t,
 	invalidate_unused_fp_entry_t,
 
 	/* xatable */
@@ -256,8 +256,8 @@ typedef struct timespec timing_t;
 
 // For example
 // #define mem_bucket_find_t_disabled 1
-// _Static_assert(NOVA_TIMER_DISABLED(mem_bucket_find_t),
-// 	"mem_bucket_find_t not disabled!");
+// _Static_assert(NOVA_TIMER_DISABLED(index_lookup_t),
+// 	"index_lookup_t not disabled!");
 
 #define NOVA_START_TIMING(name, start)	do { 			\
 	if (measure_timing && !NOVA_TIMER_DISABLED(name))	\

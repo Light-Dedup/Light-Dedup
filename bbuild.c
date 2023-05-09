@@ -821,10 +821,10 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 		goto err_out1;
 	}
 
-	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
+	NOVA_START_TIMING(scan_entry_table_t, scan_fp_entry_table_time);
 	ret = nova_scan_entry_table(sb, allocator, xat,
 		info->global_bm[0].bitmap, &tot);
-	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
+	NOVA_END_TIMING(scan_entry_table_t, scan_fp_entry_table_time);
 	if (ret < 0)
 		goto err_out2;
 

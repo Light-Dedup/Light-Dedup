@@ -335,9 +335,9 @@ static int incr_ref(struct light_dedup_meta *meta,
 
 retry:
 	rcu_read_lock();
-	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+	NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
 	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
-	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+	NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
 	// We have to hold the read lock because if it is a hash collision,
 	// then the entry, pentry, and blocknr could be freed by another thread.
 	if (entry == NULL) {
@@ -435,9 +435,9 @@ static void decr_ref(struct light_dedup_meta *meta, struct nova_pmm_entry *pentr
 		// Now only we can free the entry,
 		// because there are no any other deleter.
 		rcu_read_lock();
-		NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+		NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
 		entry = rhashtable_lookup(rht, &pentry->fp, nova_rht_params);
-		NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+		NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
 		BUG_ON(entry == NULL);
 		BUG_ON(entry->pentry != pentry);
 		rcu_read_unlock();
@@ -487,9 +487,9 @@ static int decr_ref_1(
 	INIT_TIMING(mem_bucket_find_time);
 
 	rcu_read_lock();
-	NOVA_START_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+	NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
 	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
-	NOVA_END_TIMING(mem_bucket_find_t, mem_bucket_find_time);
+	NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
 	// We have to hold the read lock because if it is a hash collision,
 	// then the entry could be freed by another thread.
 	if (!entry) {
@@ -552,7 +552,7 @@ int light_dedup_insert_rht_entry(struct light_dedup_meta *meta,
 
 	if (entry == NULL)
 		return -ENOMEM;
-	NOVA_START_TIMING(insert_entry_t, insert_entry_time);
+	NOVA_START_TIMING(insert_rht_entry_t, insert_entry_time);
 	assign_entry(entry, pentry, fp);
 	while (1) {
 		ret = rhashtable_insert_fast(&meta->rht, &entry->node,
@@ -566,7 +566,7 @@ int light_dedup_insert_rht_entry(struct light_dedup_meta *meta,
 			__func__, ret);
 		nova_rht_entry_free(entry, meta->rht_entry_cache);
 	}
-	NOVA_END_TIMING(insert_entry_t, insert_entry_time);
+	NOVA_END_TIMING(insert_rht_entry_t, insert_entry_time);
 	return ret;
 }
 
@@ -1124,7 +1124,7 @@ static void rht_save(struct nova_sb_info *sbi,
 	uint64_t saved;
 	INIT_TIMING(save_refcount_time);
 
-	NOVA_START_TIMING(save_refcount_t, save_refcount_time);
+	NOVA_START_TIMING(rht_save_t, save_refcount_time);
 	atomic64_set(&factory_arg.saved, 0);
 	factory_arg.sbi = sbi;
 	if (rhashtable_traverse_multithread(
@@ -1139,7 +1139,7 @@ static void rht_save(struct nova_sb_info *sbi,
 	nova_unlock_write_flush(sbi, &recover_meta->refcount_record_num,
 		cpu_to_le64(saved), true);
 	printk("About %llu entries in hash table saved in NVM.", saved);
-	NOVA_END_TIMING(save_refcount_t, save_refcount_time);
+	NOVA_END_TIMING(rht_save_t, save_refcount_time);
 }
 
 struct rht_recover_para {
@@ -1254,7 +1254,7 @@ int light_dedup_meta_alloc(struct light_dedup_meta *meta,
 	int ret;
 	INIT_TIMING(table_init_time);
 
-	NOVA_START_TIMING(table_init_t, table_init_time);
+	NOVA_START_TIMING(meta_alloc_t, table_init_time);
 	printk("psb = %p\n", psb);
 	meta->sblock = sb;
 	generic_cache_init(&meta->kbuf_cache, allocate_kbuf, free_kbuf);
@@ -1273,7 +1273,7 @@ int light_dedup_meta_alloc(struct light_dedup_meta *meta,
 		goto err_out2;
 	}
 	atomic64_set(&meta->thread_num, 0);
-	NOVA_END_TIMING(table_init_t, table_init_time);
+	NOVA_END_TIMING(meta_alloc_t, table_init_time);
 	return 0;
 err_out2:
 	rhashtable_free_and_destroy(&meta->rht, nova_rht_entry_free,
@@ -1281,7 +1281,7 @@ err_out2:
 err_out1:
 	nova_fp_strong_ctx_free(&meta->fp_ctx);
 err_out0:
-	NOVA_END_TIMING(table_init_t, table_init_time);
+	NOVA_END_TIMING(meta_alloc_t, table_init_time);
 	return ret;
 }
 // Free everything except entry_allocator
@@ -1294,11 +1294,11 @@ void light_dedup_meta_free(struct light_dedup_meta *meta)
 	generic_cache_destroy(&meta->kbuf_cache);
 	nova_fp_strong_ctx_free(&meta->fp_ctx);
 
-	NOVA_START_TIMING(table_free_t, table_free_time);
+	NOVA_START_TIMING(rht_free_t, table_free_time);
 	rhashtable_free_and_destroy_multithread(&meta->rht,
 		nova_rht_entry_free, meta->rht_entry_cache, sbi->cpus);
 	kmem_cache_destroy(meta->rht_entry_cache);
-	NOVA_END_TIMING(table_free_t, table_free_time);
+	NOVA_END_TIMING(rht_free_t, table_free_time);
 }
 int light_dedup_meta_init(struct light_dedup_meta *meta, struct super_block* sb)
 {
@@ -1330,9 +1330,9 @@ int light_dedup_meta_restore(struct light_dedup_meta *meta,
 	if (ret < 0)
 		goto err_out1;
 
-	NOVA_START_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
+	NOVA_START_TIMING(normal_recover_rht_t, normal_recover_fp_table_time);
 	ret = rht_recover(meta, sbi, recover_meta);
-	NOVA_END_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
+	NOVA_END_TIMING(normal_recover_rht_t, normal_recover_fp_table_time);
 
 	if (ret < 0)
 		goto err_out2;
