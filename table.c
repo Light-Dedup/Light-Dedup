@@ -412,45 +412,42 @@ int light_dedup_incr_ref(struct light_dedup_meta *meta, const void* addr,
 	return ret;
 }
 
-static void decr_ref(struct light_dedup_meta *meta, struct nova_pmm_entry *pentry,
-	struct nova_pmm_entry **last_pentry)
+static void free_pentry(struct light_dedup_meta *meta,
+	struct nova_pmm_entry *pentry)
 {
-	struct super_block *sb = meta->sblock;
 	struct rhashtable *rht = &meta->rht;
 	struct nova_rht_entry *entry;
+	INIT_TIMING(mem_bucket_find_time);
+
+	rcu_read_lock();
+	NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
+	entry = rhashtable_lookup(rht, &pentry->fp, nova_rht_params);
+	NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
+	BUG_ON(entry == NULL);
+	BUG_ON(entry->pentry != pentry);
+	rcu_read_unlock();
+	free_rht_entry(meta, entry);
+}
+static int64_t decr_ref(struct light_dedup_meta *meta,
+	struct nova_pmm_entry *pentry)
+{
 	unsigned long blocknr;
 	int64_t refcount;
-	unsigned long irq_flags = 0;
-	INIT_TIMING(mem_bucket_find_time);
 
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
-	nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
-		&irq_flags);
+	// nova_memunlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+	// 	&irq_flags);
 	refcount = atomic64_add_return(-1, &pentry->refcount);
-	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
-		&irq_flags);
+	// nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
+	// 	&irq_flags);
 	BUG_ON(refcount < 0);
 	if (refcount == 0) {
 		// Now only we can free the entry,
 		// because there are no any other deleter.
-		rcu_read_lock();
-		NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
-		entry = rhashtable_lookup(rht, &pentry->fp, nova_rht_params);
-		NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
-		BUG_ON(entry == NULL);
-		BUG_ON(entry->pentry != pentry);
-		rcu_read_unlock();
-		free_rht_entry(meta, entry);
-	} else {
-		if (!in_the_same_cacheline(pentry, *last_pentry) &&
-				*last_pentry) {
-			if (*last_pentry != NULL) {
-				nova_flush_cacheline(*last_pentry, false);
-			}
-		}
-		*last_pentry = pentry;
+		free_pentry(meta, pentry);
 	}
+	return refcount;
 }
 void light_dedup_decr_ref(struct light_dedup_meta *meta, unsigned long blocknr,
 	struct nova_pmm_entry **last_pentry)
@@ -458,6 +455,7 @@ void light_dedup_decr_ref(struct light_dedup_meta *meta, unsigned long blocknr,
 	struct super_block *sb = meta->sblock;
 	INIT_TIMING(decr_ref_time);
 	struct nova_pmm_entry *pentry;
+	int64_t refcount;
 	BUG_ON(blocknr == 0);
 	// for (i = 0; i < 64; ++i)
 	// 	prefetcht0(addr + i * 64);
@@ -470,8 +468,17 @@ void light_dedup_decr_ref(struct light_dedup_meta *meta, unsigned long blocknr,
 	}
 	BUG_ON(nova_pmm_entry_blocknr(pentry) != blocknr);
 	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
-	decr_ref(meta, pentry, last_pentry);
+	refcount = decr_ref(meta, pentry);
 	NOVA_END_TIMING(decr_ref_t, decr_ref_time);
+	if (refcount != 0) {
+		if (!in_the_same_cacheline(pentry, *last_pentry) &&
+				*last_pentry) {
+			if (*last_pentry != NULL) {
+				nova_flush_cacheline(*last_pentry, false);
+			}
+		}
+		*last_pentry = pentry;
+	}
 }
 
 // refcount-- only if refcount == 1
@@ -851,7 +858,6 @@ static inline void prefetch_next_stage_2(struct nova_write_para_continuous *wp)
 	wp->block_prefetching = NULL;
 }
 
-// The caller should hold rcu_read_lock
 // Return whether the block is deduplicated successfully.
 static int check_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
@@ -866,8 +872,14 @@ static int check_hint(struct nova_sb_info *sbi,
 	INIT_TIMING(cmp_user_time);
 	INIT_TIMING(hit_incr_ref_time);
 
-	if (!nova_pmm_entry_is_readable(pentry))
+	// To make sure that pentry will not be released while we
+	// are reading its content.
+	rcu_read_lock();
+
+	if (!nova_pmm_entry_is_readable(pentry)) {
+		rcu_read_unlock();
 		return 0;
+	}
 	blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
 	// It is guaranteed that the block will not be freed,
@@ -896,6 +908,22 @@ static int check_hint(struct nova_sb_info *sbi,
 		NOVA_END_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 	}
 
+	// Increase refcount speculatively
+	NOVA_START_TIMING(hit_incr_ref_t, hit_incr_ref_time);
+	// nova_memunlock_range(sbi->sb, &pentry->refcount,
+	// 	sizeof(pentry->refcount), &irq_flags);
+	ret = atomic64_add_unless(&pentry->refcount, 1, 0);
+	// nova_memlock_range(sbi->sb, &pentry->refcount,
+	// 	sizeof(pentry->refcount), &irq_flags);
+	NOVA_END_TIMING(hit_incr_ref_t, hit_incr_ref_time);
+	if (ret == false) {
+		rcu_read_unlock();
+		return 0;
+	}
+
+	// The blocknr will not be released now, because we are referencing it.
+	rcu_read_unlock();
+
 	prefetch_next_stage_1(wp);
 
 	NOVA_START_TIMING(cmp_user_t, cmp_user_time);
@@ -904,28 +932,20 @@ static int check_hint(struct nova_sb_info *sbi,
 
 	prefetch_next_stage_2(wp);
 
-	if (ret < 0)
+	if (ret < 0) {
+		decr_ref(meta, pentry);
 		return -EFAULT;
+	}
 	if (ret != 0) {
 		// printk("Prediction miss: %lld\n", ret);
 		// BUG_ON(copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE));
 		// print(wp->kbuf);
 		// printk("\n");
 		// print(addr);
+		decr_ref(meta, pentry);
 		return 0;
 	}
 
-	NOVA_START_TIMING(hit_incr_ref_t, hit_incr_ref_time);
-	// nova_memunlock_range(sbi->sb, &pentry->refcount,
-	// 	sizeof(pentry->refcount), &irq_flags);
-	ret = atomic64_add_unless(&pentry->refcount, 1, 0);
-	// nova_memlock_range(sbi->sb, &pentry->refcount,
-	// 	sizeof(pentry->refcount), &irq_flags);
-	NOVA_END_TIMING(hit_incr_ref_t, hit_incr_ref_time);
-
-	if (ret == false)
-		return 0;
-	// The blocknr will not be released now, because we are referencing it.
 	if (blocknr == wp->prefetched_blocknr[1] ||
 			blocknr == wp->prefetched_blocknr[0]) {
 		// The hit counts of prefetching is slightly underestimated
@@ -959,11 +979,7 @@ static int handle_hint(struct nova_sb_info *sbi,
 	}
 	pentry = nova_sbi_get_block(sbi, offset);
 
-	// To make sure that pentry will not be released while we
-	// are reading its content.
-	rcu_read_lock();
 	ret = check_hint(sbi, wp, pentry);
-	rcu_read_unlock();
 
 	if (ret < 0)
 		return ret;
