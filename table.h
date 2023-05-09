@@ -14,44 +14,6 @@ struct nova_entry_refcount_record {
 
 _Static_assert(sizeof(unsigned long) == sizeof(void *), "sizeof unsigned long != sizeof void * !!!");
 
-static inline bool nova_is_inner_node(unsigned long node_p)
-{
-	return node_p & 1;
-}
-
-static inline bool nova_is_leaf_node(unsigned long node_p)
-{
-	return (node_p & 1) == 0;
-}
-
-// static inline void *
-// nova_node_p_to_pointer(unsigned long node_p)
-// {
-// 	return (void *)(node_p & ~1);
-// }
-
-static inline struct nova_bucket *
-nova_node_p_to_bucket(unsigned long node_p)
-{
-	return (struct nova_bucket *)node_p;
-}
-
-static inline struct nova_inner *
-nova_node_p_to_inner(unsigned long node_p)
-{
-	return (struct nova_inner *)(node_p - 1);
-}
-
-static inline unsigned long
-nova_bucket_to_node_p(struct nova_bucket *bucket) {
-	return (unsigned long)bucket;
-}
-
-static inline unsigned long
-nova_inner_to_node_p(struct nova_inner *inner) {
-	return (unsigned long)inner | 1;
-}
-
 struct nova_write_para_base {
 	struct nova_fp fp;
 	int64_t refcount;
