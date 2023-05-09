@@ -1,5 +1,5 @@
 #include "nova.h"
-#include "multithread.h"
+#include "joinable.h"
 #include "arithmetic.h"
 
 // #define static _Static_assert(1, "2333");
@@ -43,12 +43,12 @@ void nova_free_entry_allocator(struct entry_allocator *allocator)
 	return;
 }
 
-struct scan_para {
-	struct completion entered;
+struct scan_thread_data {
 	struct nova_sb_info *sbi;
 	struct xatable *xat;
 	regionnr_t start;
 	regionnr_t end;
+	struct joinable_kthread t;
 };
 int nova_scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat,
@@ -67,9 +67,9 @@ void nova_flush_entry(struct entry_allocator *allocator,
 
 entrynr_t nova_alloc_entry(struct entry_allocator *allocator, struct nova_fp fp)
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct nova_pmm_entry *pentries = meta_table->pentries;
+	struct light_dedup_meta *meta =
+		entry_allocator_to_light_dedup_meta(allocator);
+	struct nova_pmm_entry *pentries = meta->pentries;
 	entrynr_t index = fp.value % (allocator->num_entry);
 	entrynr_t base = index & ~(ENTRY_PER_REGION - 1);
 	entrynr_t offset = index & (ENTRY_PER_REGION - 1);
@@ -86,10 +86,10 @@ entrynr_t nova_alloc_entry(struct entry_allocator *allocator, struct nova_fp fp)
 void nova_write_entry(struct entry_allocator *allocator, entrynr_t entrynr,
 	struct nova_fp fp, unsigned long blocknr)
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct super_block *sb = meta_table->sblock;
-	struct nova_pmm_entry *pentries = meta_table->pentries;
+	struct light_dedup_meta *meta =
+		entry_allocator_to_light_dedup_meta(allocator);
+	struct super_block *sb = meta->sblock;
+	struct nova_pmm_entry *pentries = meta->pentries;
 	struct nova_pmm_entry *pentry = pentries + entrynr;
 	unsigned long irq_flags = 0;
 	INIT_TIMING(write_new_entry_time);
@@ -120,10 +120,7 @@ nova_clear_pmm_entry_at_blocknr(struct super_block *sb, unsigned long blocknr)
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct super_block *sb = meta_table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
 
 	spin_lock_bh(&allocator->lock);
 	BUG_ON(atomic64_read(&pentry->refcount) != 0);

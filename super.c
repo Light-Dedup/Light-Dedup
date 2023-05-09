@@ -42,7 +42,7 @@
 #include "journal.h"
 #include "super.h"
 #include "inode.h"
-#include "meta.h"
+#include "table.h"
 #include "arithmetic.h"
 
 int measure_timing;
@@ -505,7 +505,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	PERSISTENT_MARK();
 	PERSISTENT_BARRIER();
 
-	ret = nova_meta_table_init(&sbi->meta_table, sb);
+	ret = light_dedup_meta_init(&sbi->light_dedup_meta, sb);
 	if (ret < 0)
 		return ERR_PTR(ret);
 
@@ -948,7 +948,7 @@ static void nova_put_super(struct super_block *sb)
 
 	nova_print_curr_epoch_id(sb);
 
-	nova_meta_table_save(&sbi->meta_table);
+	light_dedup_meta_save(&sbi->light_dedup_meta);
 	/* It's unmount time, so unmap the nova memory */
 //	nova_print_free_lists(sb);
 	if (sbi->virt_addr) {
