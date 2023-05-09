@@ -163,14 +163,14 @@ enum timing_category {
 	append_snapshot_file_t,
 	append_snapshot_inode_t,
 
-	/* Fingerprint table */
-	fingerprint_table_title_t,
+	/* Light-Dedup */
+	light_dedup_title_t,
 	copy_from_user_t,
 	fp_calc_t,
 	incr_ref_t,
 	decr_ref_t,
 	memcpy_data_block_t,
-	incr_continuous_t,
+	incr_ref_continuous_t,
 	cmp_user_t,
 	hit_incr_ref_t,
 	update_hint_t,

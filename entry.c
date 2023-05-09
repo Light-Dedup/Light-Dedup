@@ -198,8 +198,8 @@ static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
 static int __scan_worker(struct nova_sb_info *sbi, struct xatable *xat,
 	regionnr_t region_start, regionnr_t region_end)
 {
-	struct nova_meta_table *meta_table = &sbi->meta_table;
-	struct entry_allocator *allocator = &meta_table->entry_allocator;
+	struct entry_allocator *allocator =
+		&sbi->light_dedup_meta.entry_allocator;
 	__le64 *blocknrs = nova_sbi_blocknr_to_addr(
 		sbi, sbi->region_blocknr_start);
 	regionnr_t i;
@@ -343,10 +343,8 @@ void nova_flush_entry(struct entry_allocator *allocator,
 static int
 alloc_region(struct entry_allocator *allocator)
 {
-	struct nova_meta_table *meta_table = container_of(
-		allocator, struct nova_meta_table, entry_allocator);
-	struct super_block *sb = meta_table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
+	struct super_block *sb = sbi->sb;
 	__le64 *region_blocknrs = nova_sbi_blocknr_to_addr(
 		sbi, sbi->region_blocknr_start);
 	unsigned long region_blocknr = nova_new_log_block(sb, true, ANY_CPU);
@@ -432,10 +430,7 @@ new_region(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu,
 	unsigned long *new_region_blocknr)
 {
-	struct nova_meta_table *meta_table = container_of(
-		allocator, struct nova_meta_table, entry_allocator);
-	struct nova_sb_info *sbi = container_of(
-		meta_table, struct nova_sb_info, meta_table);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
 	unsigned long blocknr;
 	int16_t count;
 	int ret;
@@ -482,10 +477,7 @@ struct nova_pmm_entry *
 nova_alloc_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu)
 {
-	struct nova_meta_table *meta_table = container_of(
-		allocator, struct nova_meta_table, entry_allocator);
-	struct nova_sb_info *sbi = container_of(
-		meta_table, struct nova_sb_info, meta_table);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
 	struct nova_pmm_entry *pentry = allocator_cpu->top_entry;
 	unsigned long new_region_blocknr;
 	int ret;
@@ -513,10 +505,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu,
 	struct nova_pmm_entry *pentry, struct nova_fp fp, unsigned long blocknr)
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct super_block *sb = meta_table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
 	unsigned long irq_flags = 0;
 	INIT_TIMING(write_new_entry_time);
 
@@ -538,10 +527,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct nova_sb_info *sbi = container_of(
-		meta_table, struct nova_sb_info, meta_table);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
 	unsigned long blocknr = nova_get_addr_off(sbi, pentry) / PAGE_SIZE;
 	int16_t count = add_valid_count(&allocator->valid_entry, blocknr, -1);
 

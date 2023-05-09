@@ -159,14 +159,14 @@ const char *Timingstring[TIMING_NUM] = {
 	"append_snapshot_filedata",
 	"append_snapshot_inode",
 
-	/* Fingerprint table */
-	"=================== Fingerprint table ===================",
+	/* Light-Dedup */
+	"============== Light-Dedup ================",
 	"copy_from_user",
 	"fp_calc",
 	"incr_ref",
 	"decr_ref",
 	"memcpy_data_block",
-	"incr_continuous",
+	"incr_ref_continuous",
 	"cmp_user",
 	"hit_incr_ref",
 	"update_hint",

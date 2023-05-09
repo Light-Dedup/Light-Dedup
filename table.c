@@ -11,16 +11,12 @@
 // #define static _Static_assert(1, "2333");
 
 static inline void
-nova_assign_pmm_entry_to_blocknr(struct entry_allocator *allocator,
+assign_pmm_entry_to_blocknr(struct light_dedup_meta *meta,
 	unsigned long blocknr, struct nova_pmm_entry *pentry,
 	struct nova_write_para_normal *wp)
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table,
-			entry_allocator);
-	struct nova_sb_info *sbi =
-		container_of(meta_table, struct nova_sb_info, meta_table);
-	__le64 *offset = allocator->map_blocknr_to_pentry + blocknr;
+	struct nova_sb_info *sbi = light_dedup_meta_to_sbi(meta);
+	__le64 *offset = meta->entry_allocator.map_blocknr_to_pentry + blocknr;
 	*offset = nova_get_addr_off(sbi, pentry);
 	if (!in_the_same_cacheline(offset, wp->dirty_map_blocknr_to_pentry) &&
 		wp->dirty_map_blocknr_to_pentry != NULL)
@@ -31,17 +27,20 @@ nova_assign_pmm_entry_to_blocknr(struct entry_allocator *allocator,
 }
 
 static inline void
-nova_clear_pmm_entry_at_blocknr(struct entry_allocator *allocator,
+clear_pmm_entry_at_blocknr(struct light_dedup_meta *meta,
 	unsigned long blocknr) 
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table,
-			entry_allocator);
-	struct nova_sb_info *sbi =
-		container_of(meta_table, struct nova_sb_info, meta_table);
-	__le64 *offset = allocator->map_blocknr_to_pentry + blocknr;
+	struct nova_sb_info *sbi = light_dedup_meta_to_sbi(meta);
+	__le64 *offset = meta->entry_allocator.map_blocknr_to_pentry + blocknr;
 	BUG_ON(*offset == 0);
 	nova_unlock_write_flush(sbi, offset, 0, false);
+}
+static inline struct nova_pmm_entry *
+blocknr_pmm_entry(struct light_dedup_meta *meta, unsigned long blocknr)
+{
+	return nova_get_block(meta->sblock,
+		le64_to_cpu(
+			meta->entry_allocator.map_blocknr_to_pentry[blocknr]));
 }
 
 struct nova_rht_entry {
@@ -81,10 +80,10 @@ const struct rhashtable_params nova_rht_params = {
 	.obj_cmpfn = nova_rht_key_entry_cmp,
 };
 
-static inline struct nova_rht_entry* nova_rht_entry_alloc(
-	struct nova_mm_table *table)
+static inline struct nova_rht_entry* rht_entry_alloc(
+	struct light_dedup_meta *meta)
 {
-	return kmem_cache_alloc(table->rht_entry_cache, GFP_ATOMIC);
+	return kmem_cache_alloc(meta->rht_entry_cache, GFP_ATOMIC);
 }
 
 static void nova_rht_entry_free(void *entry, void *arg)
@@ -108,12 +107,12 @@ struct rht_entry_free_task {
 static void __rcu_pentry_free(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
-	struct nova_meta_table *meta_table = container_of(allocator,
-		struct nova_meta_table, entry_allocator);
-	struct super_block *sb = meta_table->sblock;
+	struct light_dedup_meta *meta =
+		entry_allocator_to_light_dedup_meta(allocator);
+	struct super_block *sb = meta->sblock;
 	unsigned long blocknr = nova_pmm_entry_blocknr(pentry);
 	BUG_ON(blocknr == 0);
-	nova_clear_pmm_entry_at_blocknr(allocator, blocknr);
+	clear_pmm_entry_at_blocknr(meta, blocknr);
 	nova_free_data_block(sb, blocknr);
 	nova_free_entry(allocator, pentry);
 }
@@ -121,10 +120,9 @@ static void __rcu_pentry_free(struct entry_allocator *allocator,
 static void __rcu_rht_entry_free(struct entry_allocator *allocator,
 	struct nova_rht_entry *entry)
 {
-	struct nova_meta_table *meta_table = container_of(allocator,
-		struct nova_meta_table, entry_allocator);
-	struct nova_mm_table *table = &meta_table->metas;
-	struct kmem_cache *rht_entry_cache = table->rht_entry_cache;
+	struct light_dedup_meta *meta =
+		entry_allocator_to_light_dedup_meta(allocator);
+	struct kmem_cache *rht_entry_cache = meta->rht_entry_cache;
 	struct nova_pmm_entry *pentry = entry->pentry;
 	__rcu_pentry_free(allocator, pentry);
 	nova_rht_entry_free(entry, rht_entry_cache);
@@ -148,26 +146,25 @@ static inline void new_dirty_fpentry(struct nova_pmm_entry *last_pentries[2],
 }
 
 static void free_rht_entry(
-	struct nova_mm_table *table,
-	struct rhashtable *rht,
+	struct light_dedup_meta *meta,
 	struct nova_rht_entry *entry)
 {
 	struct rht_entry_free_task *task;
 	// Remove the entry first to make it invisible to other threads.
-	int ret = rhashtable_remove_fast(rht, &entry->node, nova_rht_params);
+	int ret = rhashtable_remove_fast(&meta->rht, &entry->node, nova_rht_params);
 	BUG_ON(ret < 0);
 	// printk("Block %lu removed from rhashtable\n",
 	// 	nova_pmm_entry_blocknr(entry->pentry));
 	nova_pmm_entry_mark_to_be_freed(entry->pentry);
 	task = kmalloc(sizeof(struct rht_entry_free_task), GFP_ATOMIC);
 	if (task) {
-		task->allocator = table->entry_allocator;
+		task->allocator = &meta->entry_allocator;
 		task->entry = entry;
 		call_rcu(&task->head, rcu_rht_entry_free);
 	} else {
 		// printk(KERN_ERR "%s: Fail to allocate task\n", __func__);
 		synchronize_rcu();
-		__rcu_rht_entry_free(table->entry_allocator, entry);
+		__rcu_rht_entry_free(&meta->entry_allocator, entry);
 	}
 }
 
@@ -225,13 +222,12 @@ static void assign_entry(
 	entry->fp = fp;
 	entry->pentry = pentry;
 }
-static int nova_table_leaf_insert(
-	struct nova_mm_table *table,
-	struct rhashtable *rht,
+static int handle_new_block(
+	struct light_dedup_meta *meta,
 	struct nova_write_para_normal *wp,
 	int get_new_block(struct super_block *, struct nova_write_para_normal *))
 {
-	struct super_block *sb = table->sblock;
+	struct super_block *sb = meta->sblock;
 	struct nova_rht_entry *entry;
 	struct nova_fp fp = wp->base.fp;
 	int cpu;
@@ -242,14 +238,14 @@ static int nova_table_leaf_insert(
 	// unsigned long irq_flags = 0;
 	INIT_TIMING(index_insert_new_entry_time);
 
-	entry = nova_rht_entry_alloc(table);
+	entry = rht_entry_alloc(meta);
 	if (entry == NULL) {
 		ret = -ENOMEM;
 		goto fail0;
 	}
 	cpu = get_cpu();
 	allocator_cpu = &per_cpu(entry_allocator_per_cpu, cpu);
-	pentry = nova_alloc_entry(table->entry_allocator, allocator_cpu);
+	pentry = nova_alloc_entry(&meta->entry_allocator, allocator_cpu);
 	if (IS_ERR(pentry)) {
 		put_cpu();
 		ret = PTR_ERR(pentry);
@@ -261,16 +257,15 @@ static int nova_table_leaf_insert(
 		put_cpu();
 		goto fail1;
 	}
-	nova_assign_pmm_entry_to_blocknr(table->entry_allocator, wp->blocknr,
-		pentry, wp);
-	nova_write_entry(table->entry_allocator, allocator_cpu, pentry, fp,
+	assign_pmm_entry_to_blocknr(meta, wp->blocknr, pentry, wp);
+	nova_write_entry(&meta->entry_allocator, allocator_cpu, pentry, fp,
 		wp->blocknr);
 	put_cpu(); // Calls barrier() inside
 	// Now the pentry won't be allocated by others
 	assign_entry(entry, pentry, fp);
 	NOVA_START_TIMING(index_insert_new_entry_t,
 		index_insert_new_entry_time);
-	ret = rhashtable_lookup_insert_key(rht, &fp, &entry->node,
+	ret = rhashtable_lookup_insert_key(&meta->rht, &fp, &entry->node,
 		nova_rht_params);
 	NOVA_END_TIMING(index_insert_new_entry_t, index_insert_new_entry_time);
 	if (ret < 0) {
@@ -293,9 +288,9 @@ static int nova_table_leaf_insert(
 fail2:
 	// The pentry can not be referenced by others, because its refcount is
 	// zero, so is not considered readable.
-	__rcu_pentry_free(table->entry_allocator, pentry);
+	__rcu_pentry_free(&meta->entry_allocator, pentry);
 fail1:
-	nova_rht_entry_free(entry, table->rht_entry_cache);
+	nova_rht_entry_free(entry, meta->rht_entry_cache);
 fail0:
 	return ret;
 }
@@ -324,13 +319,13 @@ static bool cmp_content(struct super_block *sb, unsigned long blocknr, const voi
 	return res;
 }
 
-static int upsert_block(struct nova_mm_table *table,
+static int incr_ref(struct light_dedup_meta *meta,
 	struct nova_write_para_normal *wp,
 	int (*get_new_block)(struct super_block *,
 		struct nova_write_para_normal *))
 {
-	struct super_block *sb = table->sblock;
-	struct rhashtable *rht = &table->rht;
+	struct super_block *sb = meta->sblock;
+	struct rhashtable *rht = &meta->rht;
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
@@ -349,7 +344,7 @@ retry:
 		rcu_read_unlock();
 		// printk("Block with fp %llx not found in rhashtable %p\n",
 		// 	wp->base.fp.value, rht);
-		ret = nova_table_leaf_insert(table, rht, wp, get_new_block);
+		ret = handle_new_block(meta, wp, get_new_block);
 		if (ret == -EEXIST)
 			goto retry;
 		wp->base.refcount = 1;
@@ -386,12 +381,42 @@ retry:
 	// 	wp->blocknr, pentry, wp->base.refcount);
 	return 0;
 }
-
-void nova_table_deref_block(struct nova_mm_table *table,
-	struct nova_pmm_entry *pentry, struct nova_pmm_entry **last_pentry)
+static int incr_ref_normal(struct light_dedup_meta *meta,
+	struct nova_write_para_normal *wp)
 {
-	struct super_block *sb = table->sblock;
-	struct rhashtable *rht = &table->rht;
+	return incr_ref(meta, wp, alloc_and_fill_block);
+}
+static int light_dedup_incr_ref_atomic(struct light_dedup_meta *meta,
+	const void *addr, struct nova_write_para_normal *wp)
+{
+	int ret;
+	INIT_TIMING(incr_ref_time);
+
+	NOVA_START_TIMING(incr_ref_t, incr_ref_time);
+	BUG_ON(nova_fp_calc(&meta->fp_ctx, addr, &wp->base.fp));
+	wp->addr = addr;
+	ret = incr_ref_normal(meta, wp);
+	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
+	return ret;
+}
+int light_dedup_incr_ref(struct light_dedup_meta *meta, const void* addr,
+	struct nova_write_para_normal *wp)
+{
+	int ret;
+	while (1) {
+		ret = light_dedup_incr_ref_atomic(meta, addr, wp);
+		if (likely(ret != -EAGAIN))
+			break;
+		schedule();
+	};
+	return ret;
+}
+
+static void decr_ref(struct light_dedup_meta *meta, struct nova_pmm_entry *pentry,
+	struct nova_pmm_entry **last_pentry)
+{
+	struct super_block *sb = meta->sblock;
+	struct rhashtable *rht = &meta->rht;
 	struct nova_rht_entry *entry;
 	unsigned long blocknr;
 	int64_t refcount;
@@ -416,7 +441,7 @@ void nova_table_deref_block(struct nova_mm_table *table,
 		BUG_ON(entry == NULL);
 		BUG_ON(entry->pentry != pentry);
 		rcu_read_unlock();
-		free_rht_entry(table, rht, entry);
+		free_rht_entry(meta, entry);
 	} else {
 		if (!in_the_same_cacheline(pentry, *last_pentry) &&
 				*last_pentry) {
@@ -427,27 +452,34 @@ void nova_table_deref_block(struct nova_mm_table *table,
 		*last_pentry = pentry;
 	}
 }
-
-// Upsert : update or insert
-int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp)
+void light_dedup_decr_ref(struct light_dedup_meta *meta, unsigned long blocknr,
+	struct nova_pmm_entry **last_pentry)
 {
-	return upsert_block(table, wp, alloc_and_fill_block);
+	struct super_block *sb = meta->sblock;
+	INIT_TIMING(decr_ref_time);
+	struct nova_pmm_entry *pentry;
+	BUG_ON(blocknr == 0);
+	// for (i = 0; i < 64; ++i)
+	// 	prefetcht0(addr + i * 64);
+	// BUG_ON(nova_fp_calc(&table->fp_ctx, addr, &wp.base.fp));
+	pentry = blocknr_pmm_entry(meta, blocknr);
+	if (pentry == NULL) {
+		printk("Block without deduplication: %lu\n", blocknr);
+		nova_free_data_block(sb, blocknr);
+		return;
+	}
+	BUG_ON(nova_pmm_entry_blocknr(pentry) != blocknr);
+	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
+	decr_ref(meta, pentry, last_pentry);
+	NOVA_END_TIMING(decr_ref_t, decr_ref_time);
 }
-// Inplace 
-#if 0
-int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp)
-{
-	return upsert_block(table, (struct nova_write_para_normal *)wp,
-		rewrite_block);
-}
-#endif
 
 // refcount-- only if refcount == 1
-int nova_table_upsert_decr1(
-	struct nova_mm_table *table,
+static int decr_ref_1(
+	struct light_dedup_meta *meta,
 	struct nova_write_para_normal *wp)
 {
-	struct rhashtable *rht = &table->rht;
+	struct rhashtable *rht = &meta->rht;
 	struct nova_rht_entry *entry;
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
@@ -484,7 +516,7 @@ int nova_table_upsert_decr1(
 	refcount = atomic64_cmpxchg(&pentry->refcount, 1, 0);
 	BUG_ON(refcount == 0);
 	if (refcount == 1) {
-		free_rht_entry(table, rht, entry);
+		free_rht_entry(meta, entry);
 		wp->base.refcount = 0;
 		return 0;
 	}
@@ -493,11 +525,28 @@ int nova_table_upsert_decr1(
 	// printk(KERN_WARNING " found at %d, ref %llu\n", leaf_index, refcount);
 	return 0;
 }
-
-int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
-	struct nova_pmm_entry *pentry)
+long light_dedup_decr_ref_1(struct light_dedup_meta *meta, const void *addr,
+	unsigned long blocknr)
 {
-	struct nova_rht_entry *entry = nova_rht_entry_alloc(table);
+	struct nova_write_para_normal wp;
+	int    retval;
+	INIT_TIMING(decr_ref_time);
+
+	BUG_ON(blocknr == 0);
+	BUG_ON(nova_fp_calc(&meta->fp_ctx, addr, &wp.base.fp));
+
+	wp.addr = addr;
+	wp.blocknr = blocknr;
+	NOVA_START_TIMING(decr_ref_t, decr_ref_time);
+	retval = decr_ref_1(meta, &wp);
+	NOVA_END_TIMING(decr_ref_t, decr_ref_time);
+	return retval < 0 ? retval : wp.base.refcount;
+}
+
+int light_dedup_insert_rht_entry(struct light_dedup_meta *meta,
+	struct nova_fp fp, struct nova_pmm_entry *pentry)
+{
+	struct nova_rht_entry *entry = rht_entry_alloc(meta);
 	int ret;
 	INIT_TIMING(insert_entry_time);
 
@@ -506,7 +555,7 @@ int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
 	NOVA_START_TIMING(insert_entry_t, insert_entry_time);
 	assign_entry(entry, pentry, fp);
 	while (1) {
-		ret = rhashtable_insert_fast(&table->rht, &entry->node,
+		ret = rhashtable_insert_fast(&meta->rht, &entry->node,
 			nova_rht_params);
 		if (ret != -EBUSY)
 			break;
@@ -515,38 +564,9 @@ int nova_table_insert_entry(struct nova_mm_table *table, struct nova_fp fp,
 	if (ret < 0) {
 		printk("%s: rhashtable_insert_fast returns %d\n",
 			__func__, ret);
-		nova_rht_entry_free(entry, table->rht_entry_cache);
+		nova_rht_entry_free(entry, meta->rht_entry_cache);
 	}
 	NOVA_END_TIMING(insert_entry_t, insert_entry_time);
-	return ret;
-}
-
-static int nova_fp_table_incr_atomic(struct nova_mm_table *table,
-	const void *addr, struct nova_write_para_normal *wp)
-{
-	struct super_block *sb = table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	int ret;
-	INIT_TIMING(incr_ref_time);
-
-	NOVA_START_TIMING(incr_ref_t, incr_ref_time);
-	BUG_ON(nova_fp_calc(&sbi->meta_table.fp_ctx, addr, &wp->base.fp));
-	wp->addr = addr;
-	ret = nova_table_upsert_normal(table, wp);
-	NOVA_END_TIMING(incr_ref_t, incr_ref_time);
-	return ret;
-}
-
-int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
-	struct nova_write_para_normal *wp)
-{
-	int ret;
-	while (1) {
-		ret = nova_fp_table_incr_atomic(table, addr, wp);
-		if (likely(ret != -EAGAIN))
-			break;
-		schedule();
-	};
 	return ret;
 }
 
@@ -696,7 +716,7 @@ static inline void attach_blocknr(struct nova_write_para_continuous *wp,
 	}
 }
 
-static int copy_from_user_incr(struct nova_sb_info *sbi,
+static int copy_from_user_incr_ref(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
 	int ret;
@@ -707,7 +727,7 @@ static int copy_from_user_incr(struct nova_sb_info *sbi,
 	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 	if (ret)
 		return -EFAULT;
-	ret = nova_fp_table_incr_atomic(&sbi->meta_table.metas, wp->kbuf,
+	ret = light_dedup_incr_ref_atomic(&sbi->light_dedup_meta, wp->kbuf,
 		&wp->normal);
 	if (ret < 0)
 		return ret;
@@ -726,7 +746,7 @@ static int handle_no_hint(struct nova_sb_info *sbi,
 	// unsigned long irq_flags = 0;
 	INIT_TIMING(update_hint_time);
 
-	ret = copy_from_user_incr(sbi, wp);
+	ret = copy_from_user_incr_ref(sbi, wp);
 	if (ret < 0)
 		return ret;
 	NOVA_STATS_ADD(no_hint, 1);
@@ -755,7 +775,7 @@ static int handle_not_trust(struct nova_sb_info *sbi,
 {
 	u64 offset_new;
 	int ret;
-	ret = copy_from_user_incr(sbi, wp);
+	ret = copy_from_user_incr_ref(sbi, wp);
 	if (ret < 0)
 		return ret;
 	if (unlikely(wp->normal.last_accessed == NULL))
@@ -836,7 +856,7 @@ static inline void prefetch_next_stage_2(struct nova_write_para_continuous *wp)
 static int check_hint(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp, struct nova_pmm_entry *pentry)
 {
-	struct nova_meta_table *table = &sbi->meta_table;
+	struct light_dedup_meta *meta = &sbi->light_dedup_meta;
 	unsigned long blocknr;
 	const char *addr;
 	size_t i;
@@ -854,7 +874,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
-	if (atomic64_read(&table->thread_num) < 6) {
+	if (atomic64_read(&meta->thread_num) < 6) {
 		handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 		NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 		// Prefetch with stride 256B first in case that this block have
@@ -955,7 +975,7 @@ static int handle_hint(struct nova_sb_info *sbi,
 	}
 	NOVA_STATS_ADD(predict_miss, 1);
 	BUG_ON(ret != 0);
-	ret = copy_from_user_incr(sbi, wp);
+	ret = copy_from_user_incr_ref(sbi, wp);
 	if (ret < 0)
 		return ret;
 	if (unlikely(wp->normal.last_accessed == NULL))
@@ -993,11 +1013,11 @@ static int handle_last_accessed_pentry(struct nova_sb_info *sbi,
 	if (pentry) {
 		return handle_hint(sbi, wp, &pentry->next_hint);
 	} else {
-		return copy_from_user_incr(sbi, wp);
+		return copy_from_user_incr_ref(sbi, wp);
 	}
 }
 
-int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
+int light_dedup_incr_ref_continuous(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp)
 {
 	struct nova_pmm_entry *last_pentry;
@@ -1006,7 +1026,7 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 	// unsigned long irq_flags = 0;
 	INIT_TIMING(time);
 
-	NOVA_START_TIMING(incr_continuous_t, time);
+	NOVA_START_TIMING(incr_ref_continuous_t, time);
 	// Unlock here because it seems that wprotect will affect prefetching
 	// nova_memunlock(sbi, &irq_flags);
 	while (wp->blocknr_next == 0 && wp->len >= PAGE_SIZE) {
@@ -1026,29 +1046,27 @@ int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
 		first = false;
 	}
 	// nova_memlock(sbi, &irq_flags);
-	NOVA_END_TIMING(incr_continuous_t, time);
+	NOVA_END_TIMING(incr_ref_continuous_t, time);
 	return ret;
 }
 
-struct table_save_local_arg {
+struct rht_save_local_arg {
 	size_t cur, end;
 	struct nova_entry_refcount_record *rec;
 	atomic64_t *saved;
 	struct nova_sb_info *sbi;
 	unsigned long irq_flags;
 };
-struct table_save_factory_arg {
-	struct nova_mm_table *table;
+struct rht_save_factory_arg {
+	struct nova_sb_info *sbi;
 	atomic64_t saved;
 };
-static void *table_save_local_arg_factory(void *factory_arg) {
-	struct table_save_factory_arg *arg =
-		(struct table_save_factory_arg *)factory_arg;
-	struct nova_mm_table *table = arg->table;
-	struct super_block *sb = table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct table_save_local_arg *local_arg = kmalloc(
-		sizeof(struct table_save_local_arg), GFP_ATOMIC);
+static void *rht_save_local_arg_factory(void *factory_arg) {
+	struct rht_save_factory_arg *arg =
+		(struct rht_save_factory_arg *)factory_arg;
+	struct nova_sb_info *sbi = arg->sbi;
+	struct rht_save_local_arg *local_arg = kmalloc(
+		sizeof(struct rht_save_local_arg), GFP_ATOMIC);
 	if (local_arg == NULL)
 		return ERR_PTR(-ENOMEM);
 	local_arg->cur = 0;
@@ -1060,34 +1078,34 @@ static void *table_save_local_arg_factory(void *factory_arg) {
 	local_arg->irq_flags = 0;
 	return local_arg;
 }
-static void table_save_local_arg_recycler(void *local_arg)
+static void rht_save_local_arg_recycler(void *local_arg)
 {
-	struct table_save_local_arg *arg =
-		(struct table_save_local_arg *)local_arg;
+	struct rht_save_local_arg *arg =
+		(struct rht_save_local_arg *)local_arg;
 	memset_nt(arg->rec + arg->cur,
 		(arg->end - arg->cur) *
 			sizeof(struct nova_entry_refcount_record),
 		0);
 	kfree(arg);
 }
-static void table_save_worker_init(void *local_arg)
+static void rht_save_worker_init(void *local_arg)
 {
-	struct table_save_local_arg *arg =
-		(struct table_save_local_arg *)local_arg;
+	struct rht_save_local_arg *arg =
+		(struct rht_save_local_arg *)local_arg;
 	nova_memunlock(arg->sbi, &arg->irq_flags);
 }
-static void table_save_worker_finish(void *local_arg)
+static void rht_save_worker_finish(void *local_arg)
 {
-	struct table_save_local_arg *arg =
-		(struct table_save_local_arg *)local_arg;
+	struct rht_save_local_arg *arg =
+		(struct rht_save_local_arg *)local_arg;
 	nova_memlock(arg->sbi, &arg->irq_flags);
 	PERSISTENT_BARRIER();
 }
-static void table_save_func(void *ptr, void *local_arg)
+static void rht_save_func(void *ptr, void *local_arg)
 {
 	struct nova_rht_entry *entry = (struct nova_rht_entry *)ptr;
-	struct table_save_local_arg *arg =
-		(struct table_save_local_arg *)local_arg;
+	struct rht_save_local_arg *arg =
+		(struct rht_save_local_arg *)local_arg;
 	// printk("%s: entry = %p, rec = %p, cur = %lu\n", __func__, entry, arg->rec, arg->cur);
 	// TODO: Make it a list
 	if (arg->cur == arg->end) {
@@ -1099,20 +1117,20 @@ static void table_save_func(void *ptr, void *local_arg)
 		cpu_to_le64(nova_get_addr_off(arg->sbi, entry->pentry)));
 	++arg->cur;
 }
-static void table_save(struct nova_mm_table *table)
+static void rht_save(struct nova_sb_info *sbi,
+	struct nova_recover_meta *recover_meta, struct rhashtable *rht)
 {
-	struct super_block *sb = table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
-	struct table_save_factory_arg factory_arg;
+	struct rht_save_factory_arg factory_arg;
 	uint64_t saved;
+	INIT_TIMING(save_refcount_time);
 
+	NOVA_START_TIMING(save_refcount_t, save_refcount_time);
 	atomic64_set(&factory_arg.saved, 0);
-	factory_arg.table = table;
+	factory_arg.sbi = sbi;
 	if (rhashtable_traverse_multithread(
-		&table->rht, sbi->cpus, table_save_func, table_save_worker_init,
-		table_save_worker_finish, table_save_local_arg_factory,
-		table_save_local_arg_recycler, &factory_arg) < 0)
+		rht, sbi->cpus, rht_save_func, rht_save_worker_init,
+		rht_save_worker_finish, rht_save_local_arg_factory,
+		rht_save_local_arg_recycler, &factory_arg) < 0)
 	{
 		nova_warn("%s: Fail to save the fingerprint table with multithread. Fall back to single thread.", __func__);
 		BUG(); // TODO
@@ -1121,74 +1139,17 @@ static void table_save(struct nova_mm_table *table)
 	nova_unlock_write_flush(sbi, &recover_meta->refcount_record_num,
 		cpu_to_le64(saved), true);
 	printk("About %llu entries in hash table saved in NVM.", saved);
-}
-
-void nova_table_free(struct nova_mm_table *table)
-{
-	struct super_block *sb = table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	rhashtable_free_and_destroy_multithread(&table->rht,
-		nova_rht_entry_free, table->rht_entry_cache, sbi->cpus);
-	kmem_cache_destroy(table->rht_entry_cache);
-}
-void nova_table_save(struct nova_mm_table* table)
-{
-	INIT_TIMING(save_refcount_time);
-	INIT_TIMING(table_free_time);
-
-	NOVA_START_TIMING(save_refcount_t, save_refcount_time);
-	table_save(table);
 	NOVA_END_TIMING(save_refcount_t, save_refcount_time);
-
-	NOVA_START_TIMING(table_free_t, table_free_time);
-	nova_table_free(table);
-	NOVA_END_TIMING(table_free_t, table_free_time);
 }
 
-// nelem_hint: If 0 then use default
-int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
-	size_t nelem_hint)
-{
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_super_block *psb = (struct nova_super_block *)sbi->virt_addr;
-	int ret;
-	INIT_TIMING(table_init_time);
-
-	NOVA_START_TIMING(table_init_t, table_init_time);
-	printk("psb = %p\n", psb);
-
-	table->sblock = sb;
-	table->entry_allocator = &sbi->meta_table.entry_allocator;
-
-	ret = rhashtable_init_large(&table->rht, nelem_hint,
-		&nova_rht_params);
-	if (ret < 0)
-		goto err_out0;
-
-	table->rht_entry_cache = kmem_cache_create("rht_entry_cache",
-		sizeof(struct nova_rht_entry), 0, TABLE_KMEM_CACHE_FLAGS, NULL);
-	if (table->rht_entry_cache == NULL) {
-		ret = -ENOMEM;
-		goto err_out1;
-	}
-	NOVA_END_TIMING(table_init_t, table_init_time);
-	return 0;
-err_out1:
-	rhashtable_free_and_destroy(&table->rht, nova_rht_entry_free,
-		table->rht_entry_cache);
-err_out0:
-	NOVA_END_TIMING(table_init_t, table_init_time);
-	return ret;
-}
-
-struct table_recover_para {
-	struct nova_mm_table *table;
+struct rht_recover_para {
+	struct light_dedup_meta *meta;
 	entrynr_t entry_start, entry_end;
 };
-static int __table_recover_func(struct nova_mm_table *table,
+static int __rht_recover_func(struct light_dedup_meta *meta,
 	entrynr_t entry_start, entrynr_t entry_end)
 {
-	struct super_block *sb = table->sblock;
+	struct super_block *sb = meta->sblock;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_entry_refcount_record *rec = nova_sbi_blocknr_to_addr(
 		sbi, sbi->entry_refcount_record_start);
@@ -1202,24 +1163,22 @@ static int __table_recover_func(struct nova_mm_table *table,
 		pentry = (struct nova_pmm_entry *)nova_sbi_get_block(sbi,
 			le64_to_cpu(rec[i].entry_offset));
 		BUG_ON(nova_pmm_entry_is_free(pentry));
-		ret = nova_table_insert_entry(table, pentry->fp,
+		ret = light_dedup_insert_rht_entry(meta, pentry->fp,
 			pentry);
 		if (ret < 0)
 			break;
 	}
 	return ret;
 }
-static int table_recover_func(void *__para)
+static int rht_recover_func(void *__para)
 {
-	struct table_recover_para *para = (struct table_recover_para *)__para;
-	return __table_recover_func(para->table, para->entry_start,
+	struct rht_recover_para *para = (struct rht_recover_para *)__para;
+	return __rht_recover_func(para->meta, para->entry_start,
 		para->entry_end);
 }
-int nova_table_recover(struct nova_mm_table *table)
+static int rht_recover(struct light_dedup_meta *meta, struct nova_sb_info *sbi,
+	struct nova_recover_meta *recover_meta)
 {
-	struct super_block *sb = table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
 	entrynr_t n = le64_to_cpu(recover_meta->refcount_record_num);
 	unsigned long entry_per_thread_max =
 		max_ul(1UL << 10, (n + sbi->cpus - 1) / sbi->cpus);
@@ -1227,7 +1186,7 @@ int nova_table_recover(struct nova_mm_table *table)
 		(n + entry_per_thread_max - 1) / entry_per_thread_max;
 	unsigned long i;
 	unsigned long base;
-	struct table_recover_para *para;
+	struct rht_recover_para *para;
 	struct joinable_kthread *ts;
 	int ret = 0;
 
@@ -1236,7 +1195,7 @@ int nova_table_recover(struct nova_mm_table *table)
 		return 0;
 	nova_info("Recover fingerprint table using %lu thread(s)\n", thread_num);
 	if (thread_num == 1)
-		return __table_recover_func(table, 0, n);
+		return __rht_recover_func(meta, 0, n);
 	para = kmalloc(thread_num * sizeof(para[0]), GFP_KERNEL);
 	if (para == NULL) {
 		ret = -ENOMEM;
@@ -1249,11 +1208,11 @@ int nova_table_recover(struct nova_mm_table *table)
 	}
 	base = 0;
 	for (i = 0; i < thread_num; ++i) {
-		para[i].table = table;
+		para[i].meta = meta;
 		para[i].entry_start = base;
 		base += entry_per_thread_max;
 		para[i].entry_end = base < n ? base : n;
-		ts[i].threadfn = table_recover_func;
+		ts[i].threadfn = rht_recover_func;
 		ts[i].data = para + i;
 	}
 	ret = joinable_kthreads_run_join_check_lt_zero(ts, thread_num,
@@ -1265,12 +1224,143 @@ out0:
 	return ret;
 }
 
+static struct llist_node *allocate_kbuf(gfp_t flags)
+{
+	struct kbuf_obj *obj = kmalloc(sizeof(struct kbuf_obj), flags);
+	if (obj == NULL)
+		return NULL;
+	obj->kbuf = kmalloc(PAGE_SIZE, flags);
+	if (obj->kbuf == NULL) {
+		kfree(obj);
+		return NULL;
+	}
+	return &obj->node;
+}
+
+static void free_kbuf(struct llist_node *node)
+{
+	struct kbuf_obj *obj = container_of(node, struct kbuf_obj, node);
+	kfree(obj->kbuf);
+	kfree(obj);
+}
+
+// nelem_hint: If 0 then use default
+// entry_allocator is left for the caller to initialize
+int light_dedup_meta_alloc(struct light_dedup_meta *meta,
+	struct super_block *sb, size_t nelem_hint)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_super_block *psb = (struct nova_super_block *)sbi->virt_addr;
+	int ret;
+	INIT_TIMING(table_init_time);
+
+	NOVA_START_TIMING(table_init_t, table_init_time);
+	printk("psb = %p\n", psb);
+	meta->sblock = sb;
+	generic_cache_init(&meta->kbuf_cache, allocate_kbuf, free_kbuf);
+	ret = nova_fp_strong_ctx_init(&meta->fp_ctx);
+	if (ret < 0)
+		goto err_out0;
+
+	ret = rhashtable_init_large(&meta->rht, nelem_hint, &nova_rht_params);
+	if (ret < 0)
+		goto err_out1;
+
+	meta->rht_entry_cache = kmem_cache_create("rht_entry_cache",
+		sizeof(struct nova_rht_entry), 0, TABLE_KMEM_CACHE_FLAGS, NULL);
+	if (meta->rht_entry_cache == NULL) {
+		ret = -ENOMEM;
+		goto err_out2;
+	}
+	atomic64_set(&meta->thread_num, 0);
+	NOVA_END_TIMING(table_init_t, table_init_time);
+	return 0;
+err_out2:
+	rhashtable_free_and_destroy(&meta->rht, nova_rht_entry_free,
+		meta->rht_entry_cache);
+err_out1:
+	nova_fp_strong_ctx_free(&meta->fp_ctx);
+err_out0:
+	NOVA_END_TIMING(table_init_t, table_init_time);
+	return ret;
+}
+// Free everything except entry_allocator
+void light_dedup_meta_free(struct light_dedup_meta *meta)
+{
+	struct super_block *sb = meta->sblock;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	INIT_TIMING(table_free_time);
+
+	generic_cache_destroy(&meta->kbuf_cache);
+	nova_fp_strong_ctx_free(&meta->fp_ctx);
+
+	NOVA_START_TIMING(table_free_t, table_free_time);
+	rhashtable_free_and_destroy_multithread(&meta->rht,
+		nova_rht_entry_free, meta->rht_entry_cache, sbi->cpus);
+	kmem_cache_destroy(meta->rht_entry_cache);
+	NOVA_END_TIMING(table_free_t, table_free_time);
+}
+int light_dedup_meta_init(struct light_dedup_meta *meta, struct super_block* sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	int ret;
+	ret = light_dedup_meta_alloc(meta, sb, 0);
+	if (ret < 0)
+		return ret;
+	ret = nova_init_entry_allocator(sbi, &meta->entry_allocator);
+	if (ret < 0) {
+		light_dedup_meta_free(meta);
+		return ret;
+	}
+	return 0;
+}
+int light_dedup_meta_restore(struct light_dedup_meta *meta,
+	struct super_block *sb)
+{
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
+	int ret;
+	INIT_TIMING(normal_recover_fp_table_time);
+
+	ret = light_dedup_meta_alloc(meta, sb,
+		le64_to_cpu(recover_meta->refcount_record_num));
+	if (ret < 0)
+		goto err_out0;
+	ret = nova_entry_allocator_recover(sbi, &meta->entry_allocator);
+	if (ret < 0)
+		goto err_out1;
+
+	NOVA_START_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
+	ret = rht_recover(meta, sbi, recover_meta);
+	NOVA_END_TIMING(normal_recover_fp_table_t, normal_recover_fp_table_time);
+
+	if (ret < 0)
+		goto err_out2;
+	return 0;
+err_out2:
+	nova_free_entry_allocator(&meta->entry_allocator);
+err_out1:
+	light_dedup_meta_free(meta);
+err_out0:
+	return ret;
+}
+void light_dedup_meta_save(struct light_dedup_meta *meta)
+{
+	struct super_block *sb = meta->sblock;
+	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
+	rht_save(sbi, recover_meta, &meta->rht);
+	nova_save_entry_allocator(sb, &meta->entry_allocator);
+	nova_unlock_write_flush(sbi, &recover_meta->saved,
+		NOVA_RECOVER_META_FLAG_COMPLETE, true);
+	light_dedup_meta_free(meta);
+}
+
 int nova_table_stats(struct file *file)
 {
 	struct inode *inode = file_inode(file);
 	struct super_block *sb = inode->i_sb;
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_meta_table *meta_table = &sbi->meta_table;
-	struct nova_mm_table *table = &meta_table->metas;
-	return __nova_entry_allocator_stats(sbi, table->entry_allocator);
+	struct light_dedup_meta *meta = &sbi->light_dedup_meta;
+	return __nova_entry_allocator_stats(sbi, &meta->entry_allocator);
 }
