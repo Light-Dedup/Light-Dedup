@@ -608,7 +608,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	struct address_space *mapping = filp->f_mapping;
 	struct cow_write_env env;
 	struct nova_sb_info *sbi;
-	struct nova_meta_table *table;
+	struct light_dedup_meta *meta;
 	struct nova_inode inode_copy;
 	size_t offset, bytes;
 	unsigned long num_blocks;
@@ -676,15 +676,15 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 	env.step = 0;
 
 	sbi = NOVA_SB(env.sb);
-	table = &sbi->meta_table;
-	atomic64_fetch_add_relaxed(1, &table->thread_num);
+	meta = &sbi->light_dedup_meta;
+	atomic64_fetch_add_relaxed(1, &meta->thread_num);
 
 	wp.ubuf = buf;
 	wp.len = len;
 	wp.blocknr = 0;
 	wp.num = 0;
 	wp.blocknr_next = 0;
-	kbuf_node = generic_cache_alloc(&table->kbuf_cache, GFP_KERNEL);
+	kbuf_node = generic_cache_alloc(&meta->kbuf_cache, GFP_KERNEL);
 	if (kbuf_node == NULL) {
 		ret = -ENOMEM;
 		goto err_out1;
@@ -723,7 +723,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 		wp.ubuf += bytes;
 		wp.len -= bytes;
-		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp.normal);
+		ret = light_dedup_incr_ref(meta, wp.kbuf, &wp.normal);
 		if (ret < 0)
 			goto err_out2;
 		wp.blocknr = wp.normal.blocknr;
@@ -733,7 +733,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 			goto err_out2;
 	}
 	while (wp.len >= env.sb->s_blocksize) {
-		ret = nova_fp_table_incr_continuous(sbi, &wp);
+		ret = light_dedup_incr_ref_continuous(sbi, &wp);
 		if (ret < 0)
 			goto err_out2;
 		ret = advance(&env, wp.num * env.sb->s_blocksize, &wp);
@@ -762,7 +762,7 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 		NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
 		wp.ubuf += bytes;
 		wp.len -= bytes;
-		ret = nova_fp_table_incr(&table->metas, wp.kbuf, &wp.normal);
+		ret = light_dedup_incr_ref(meta, wp.kbuf, &wp.normal);
 		if (ret < 0)
 			goto err_out2;
 		wp.blocknr = wp.normal.blocknr;
@@ -813,8 +813,8 @@ static ssize_t do_nova_cow_file_write(struct file *filp,
 
 	env.sih->trans_id++;
 	NOVA_STATS_ADD(cow_write_bytes, env.written);
-	generic_cache_free(&table->kbuf_cache, kbuf_node);
-	atomic64_fetch_sub_relaxed(1, &table->thread_num);
+	generic_cache_free(&meta->kbuf_cache, kbuf_node);
+	atomic64_fetch_sub_relaxed(1, &meta->thread_num);
 	return env.written;
 err_out2:
 	// TODO: Make sure that the clean up does not fail.
@@ -823,9 +823,9 @@ err_out2:
 	}
 	BUG_ON(nova_cleanup_incomplete_write(env.sb, env.sih,
 		wp.blocknr, wp.num, env.begin_tail, env.update.tail) < 0);
-	generic_cache_free(&table->kbuf_cache, kbuf_node);
+	generic_cache_free(&meta->kbuf_cache, kbuf_node);
 err_out1:
-	atomic64_fetch_sub_relaxed(1, &table->thread_num);
+	atomic64_fetch_sub_relaxed(1, &meta->thread_num);
 err_out0:
 	NOVA_END_TIMING(do_cow_write_t, cow_write_time);
 	return ret;
