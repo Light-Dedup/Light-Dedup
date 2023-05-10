@@ -547,7 +547,7 @@ static long try_inplace_file_write(struct super_block *sb,
 	struct nova_write_para_rewrite wp;
 	long ret;
 
-	ret = nova_meta_table_decr1(table, kbuf, old_blocknr);
+	ret = light_dedup_decr_ref_1(table, kbuf, old_blocknr);
 	if (ret < 0)
 		return ret;
 	if (ret > 0)
@@ -719,7 +719,7 @@ ssize_t do_nova_inplace_file_write(struct file *filp,
 			ret = -EFAULT;
 			goto out;
 		}
-		ret = nova_fp_table_incr(&table->metas, kbuf, &wp);
+		ret = light_dedup_incr_ref(&table->metas, kbuf, &wp);
 		if (ret < 0)
 			goto out;
 		new_blocknr = wp.blocknr;
@@ -1079,8 +1079,8 @@ int nova_iomap_begin(struct inode *inode, loff_t offset, loff_t length,
 	if (flags & IOMAP_WRITE) {
 		if (new)
 			return 0;
-		refcount = nova_meta_table_decr1(
-			&sbi->meta_table,
+		refcount = light_dedup_decr_ref_1(
+			&sbi->light_dedup_meta,
 			nova_sbi_blocknr_to_addr(sbi, bno),
 			bno);
 		if (refcount < 0)

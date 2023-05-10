@@ -116,3 +116,4 @@ void nova_save_entry_allocator(struct super_block *sb, struct entry_allocator *a
 int __nova_entry_allocator_stats(struct nova_sb_info *sbi, struct entry_allocator *allocator);
 
 #endif // __NOVA_ENTRY_H
+
