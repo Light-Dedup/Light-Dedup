@@ -3,6 +3,7 @@
 
 #include <linux/mutex.h>
 #include "nova_def.h"
+#include "generic_cache.h"
 #include "entry.h"
 
 _Static_assert(sizeof(unsigned long) == sizeof(uint64_t), "You should make all blocknr 64 bit");
@@ -12,51 +13,6 @@ struct nova_entry_refcount_record {
 };
 
 _Static_assert(sizeof(unsigned long) == sizeof(void *), "sizeof unsigned long != sizeof void * !!!");
-
-static inline bool nova_is_inner_node(unsigned long node_p)
-{
-	return node_p & 1;
-}
-
-static inline bool nova_is_leaf_node(unsigned long node_p)
-{
-	return (node_p & 1) == 0;
-}
-
-// static inline void *
-// nova_node_p_to_pointer(unsigned long node_p)
-// {
-// 	return (void *)(node_p & ~1);
-// }
-
-static inline struct nova_bucket *
-nova_node_p_to_bucket(unsigned long node_p)
-{
-	return (struct nova_bucket *)node_p;
-}
-
-static inline struct nova_inner *
-nova_node_p_to_inner(unsigned long node_p)
-{
-	return (struct nova_inner *)(node_p - 1);
-}
-
-static inline unsigned long
-nova_bucket_to_node_p(struct nova_bucket *bucket) {
-	return (unsigned long)bucket;
-}
-
-static inline unsigned long
-nova_inner_to_node_p(struct nova_inner *inner) {
-	return (unsigned long)inner | 1;
-}
-
-struct nova_mm_table {
-	struct super_block    *sblock;
-	struct entry_allocator *entry_allocator;
-	struct rhashtable	rht;
-	struct kmem_cache *rht_entry_cache;
-};
 
 struct nova_write_para_base {
 	struct nova_fp fp;
@@ -105,30 +61,49 @@ struct nova_write_para_continuous {
 	uint8_t stream_trust_degree;
 };
 
-void nova_table_deref_block(struct nova_mm_table *table,
-	struct nova_pmm_entry *pentry, struct nova_pmm_entry **last_pentry);
-int nova_table_upsert_normal(struct nova_mm_table *table, struct nova_write_para_normal *wp);
-#if 0
-int nova_table_upsert_rewrite(struct nova_mm_table *table, struct nova_write_para_rewrite *wp);
-#endif
-// refcount-- only if refcount == 1
-int nova_table_upsert_decr1(struct nova_mm_table *table, struct nova_write_para_normal *wp);
-int nova_table_insert_entry(struct nova_mm_table *rht, struct nova_fp fp,
-	struct nova_pmm_entry *pentry);
+struct light_dedup_meta {
+	struct super_block *sblock;
+	struct generic_cache kbuf_cache;
+	struct nova_fp_strong_ctx fp_ctx;
+	struct entry_allocator entry_allocator;
+	struct rhashtable rht;
+	struct kmem_cache *rht_entry_cache;
+	atomic64_t thread_num;
+};
 
-int nova_fp_table_incr(struct nova_mm_table *table, const void* addr,
+static inline struct light_dedup_meta *
+entry_allocator_to_light_dedup_meta(struct entry_allocator *allocator)
+{
+	return container_of(
+		allocator, struct light_dedup_meta, entry_allocator);
+}
+
+struct kbuf_obj {
+	struct llist_node node;
+	void *kbuf;
+};
+
+int light_dedup_incr_ref(struct light_dedup_meta *meta, const void* addr,
 	struct nova_write_para_normal *wp);
 
-int nova_fp_table_incr_continuous_kbuf(struct nova_sb_info *sbi,
-	struct nova_write_para_continuous *wp);
-int nova_fp_table_incr_continuous(struct nova_sb_info *sbi,
+void light_dedup_decr_ref(struct light_dedup_meta *meta, unsigned long blocknr,
+	struct nova_pmm_entry **last_pentry);
+long light_dedup_decr_ref_1(struct light_dedup_meta *meta, const void *addr,
+	unsigned long blocknr);
+
+int light_dedup_insert_rht_entry(struct light_dedup_meta *meta,
+	struct nova_fp fp, struct nova_pmm_entry *pentry);
+
+int light_dedup_incr_ref_continuous(struct nova_sb_info *sbi,
 	struct nova_write_para_continuous *wp);
 
-int nova_table_init(struct super_block *sb, struct nova_mm_table *table,
-	size_t nelem_hint);
-int nova_table_recover(struct nova_mm_table *table);
-
-void nova_table_free(struct nova_mm_table *table);
-void nova_table_save(struct nova_mm_table* table);
+int light_dedup_meta_alloc(struct light_dedup_meta *meta,
+	struct super_block *sb, size_t nelem_hint);
+void light_dedup_meta_free(struct light_dedup_meta *meta);
+int light_dedup_meta_init(struct light_dedup_meta *meta,
+	struct super_block* sblock);
+int light_dedup_meta_restore(struct light_dedup_meta *meta,
+	struct super_block *sb);
+void light_dedup_meta_save(struct light_dedup_meta *meta);
 
 #endif
