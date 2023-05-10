@@ -1,3 +1,20 @@
+/*
+ * Extensions for rhashtable.
+ *
+ * Copyright (c) 2022 Jiansheng Qiu <jianshengqiu.cs@gmail.com>
+ * Copyright (c) 2015 Herbert Xu <herbert@gondor.apana.org.au>
+ * Copyright (c) 2014-2015 Thomas Graf <tgraf@suug.ch>
+ * Copyright (c) 2008-2014 Patrick McHardy <kaber@trash.net>
+ *
+ * Code partially derived from nft_hash
+ * Rewritten with rehash code from br_multicast plus single list
+ * pointer as suggested by Josh Triplett
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
 #ifndef __RHASHTABLE_EXT_H
 #define __RHASHTABLE_EXT_H
 
