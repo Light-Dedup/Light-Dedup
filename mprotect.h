@@ -3,6 +3,7 @@
  *
  * Memory protection definitions for the NOVA filesystem.
  *
+ * Copyright 2020-2023 Jiansheng Qiu <jianshengqiu.cs@gmail.com>
  * Copyright 2015-2016 Regents of the University of California,
  * UCSD Non-Volatile Systems Lab, Andiry Xu <jix024@cs.ucsd.edu>
  * Copyright 2012-2013 Intel Corporation
