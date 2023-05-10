@@ -620,8 +620,8 @@ static int __nova_build_blocknode_map(struct super_block *sb,
 }
 
 struct failure_recovery_info {
+	struct light_dedup_meta *light_dedup_meta;
 	struct scan_bitmap *global_bm;
-	struct nova_mm_table *fp_table;
 	struct xatable map_blocknr_pentry;
 };
 
@@ -637,7 +637,8 @@ static void __invalidate_unused_fp_entry_xa(
 	struct xatable *map_blocknr_pentry,
 	unsigned long i)
 {
-	struct entry_allocator *allocator = &sbi->meta_table.entry_allocator;
+	struct entry_allocator *allocator =
+		&sbi->light_dedup_meta.entry_allocator;
 	unsigned long index, blocknr;
 	struct nova_pmm_entry *pentry;
 
@@ -803,8 +804,8 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 	struct failure_recovery_info *info)
 {
 	struct nova_sb_info *sbi = NOVA_SB(sb);
-	struct nova_meta_table *table = &sbi->meta_table;
-	struct entry_allocator *allocator = &table->entry_allocator;
+	struct light_dedup_meta *light_dedup_meta = &sbi->light_dedup_meta;
+	struct entry_allocator *allocator = &light_dedup_meta->entry_allocator;
 	struct xatable *xat = &info->map_blocknr_pentry;
 	size_t tot;
 	int ret;
@@ -820,20 +821,20 @@ static int alloc_failure_recovery_info(struct super_block *sb,
 		goto err_out1;
 	}
 
-	NOVA_START_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
+	NOVA_START_TIMING(scan_entry_table_t, scan_fp_entry_table_time);
 	ret = nova_scan_entry_table(sb, allocator, xat,
 		info->global_bm[0].bitmap, &tot);
-	NOVA_END_TIMING(scan_fp_entry_table_t, scan_fp_entry_table_time);
+	NOVA_END_TIMING(scan_entry_table_t, scan_fp_entry_table_time);
 	if (ret < 0)
 		goto err_out2;
 
-	ret = nova_meta_table_alloc(table, sb, tot);
+	ret = light_dedup_meta_alloc(light_dedup_meta, sb, tot);
 	if (ret < 0)
 		goto err_out3;
-	info->fp_table = &table->metas;
+	info->light_dedup_meta = light_dedup_meta;
 	return 0;
 err_out3:
-	nova_meta_table_free(table);
+	light_dedup_meta_free(light_dedup_meta);
 err_out2:
 	free_bm(sbi, info->global_bm);
 err_out1:
@@ -849,18 +850,18 @@ static void free_failure_recovery_info(struct nova_sb_info *sbi, struct failure_
 }
 static void free_all_failure_recovery_info(struct nova_sb_info *sbi, struct failure_recovery_info *info)
 {
-	struct nova_meta_table *table = &sbi->meta_table;
-	struct entry_allocator *allocator = &table->entry_allocator;
+	struct light_dedup_meta *meta = &sbi->light_dedup_meta;
+	struct entry_allocator *allocator = &meta->entry_allocator;
 	free_failure_recovery_info(sbi, info);
-	nova_meta_table_free(table);
+	light_dedup_meta_free(meta);
 	nova_free_entry_allocator(allocator);
 }
 
 static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *info)
 {
 	struct xatable *xat = &info->map_blocknr_pentry;
-	struct nova_mm_table *fp_table = info->fp_table;
-	struct super_block *sb = fp_table->sblock;
+	struct light_dedup_meta *meta = info->light_dedup_meta;
+	struct super_block *sb = meta->sblock;
 	struct nova_pmm_entry *pentry;
 	uint64_t refcount;
 	unsigned long irq_flags = 0;
@@ -874,10 +875,9 @@ static int upsert_blocknr(unsigned long blocknr, struct failure_recovery_info *i
 	refcount = atomic64_add_return(1, &pentry->refcount);
 	nova_memlock_range(sb, &pentry->refcount, sizeof(pentry->refcount),
 		&irq_flags);
-	nova_flush_entry(fp_table->entry_allocator, pentry);
+	nova_flush_entry(&meta->entry_allocator, pentry);
 	if (refcount == 1) {
-		ret = nova_table_insert_entry(fp_table, pentry->fp,
-			pentry);
+		ret = light_dedup_insert_rht_entry(meta, pentry->fp, pentry);
 		if (ret < 0)
 			return ret;
 	}
@@ -1656,7 +1656,6 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	struct nova_inode *pi =  nova_get_inode_by_ino(sb, NOVA_BLOCKNODE_INO);
 	struct nova_recover_meta *recover_meta = nova_get_recover_meta(sbi);
-	struct nova_meta_table *table = &sbi->meta_table;
 	int ret;
 
 	if (recover_meta->saved != NOVA_RECOVER_META_FLAG_COMPLETE)
@@ -1686,7 +1685,7 @@ static bool nova_try_normal_recovery(struct super_block *sb)
 		}
 	}
 
-	ret = nova_meta_table_restore(table, sb);
+	ret = light_dedup_meta_restore(&sbi->light_dedup_meta, sb);
 	if (ret < 0) {
 		nova_err(sb, "Restore meta table failed with return code %d, fall back to failure recovery\n", ret);
 		return false;

@@ -38,11 +38,12 @@
 #include <linux/cred.h>
 #include <linux/list.h>
 #include <linux/dax.h>
+#include "config.h"
 #include "nova.h"
 #include "journal.h"
 #include "super.h"
 #include "inode.h"
-#include "meta.h"
+#include "table.h"
 #include "arithmetic.h"
 
 int measure_timing;
@@ -52,6 +53,7 @@ int data_csum;
 int data_parity;
 int dram_struct_csum;
 int support_clwb;
+int transition_threshold = 6;
 
 module_param(measure_timing, int, 0444);
 MODULE_PARM_DESC(measure_timing, "Timing measurement");
@@ -73,6 +75,11 @@ MODULE_PARM_DESC(dram_struct_csum, "Protect key DRAM data structures with checks
 
 module_param(nova_dbgmask, int, 0444);
 MODULE_PARM_DESC(nova_dbgmask, "Control debugging output");
+
+module_param(transition_threshold, int, 0444);
+MODULE_PARM_DESC(transition_threshold, "If the number of threads that access "
+	"NVM concurrently reaches transition_threshold, then prefetch-next "
+	"will be disabled. Default: 6");
 
 static struct super_operations nova_sops;
 static const struct export_operations nova_export_ops;
@@ -534,7 +541,7 @@ static struct nova_inode *nova_init(struct super_block *sb,
 	PERSISTENT_MARK();
 	PERSISTENT_BARRIER();
 
-	ret = nova_meta_table_init(&sbi->meta_table, sb);
+	ret = light_dedup_meta_init(&sbi->light_dedup_meta, sb);
 	if (ret < 0)
 		return ERR_PTR(ret);
 
@@ -977,7 +984,7 @@ static void nova_put_super(struct super_block *sb)
 
 	nova_print_curr_epoch_id(sb);
 
-	nova_meta_table_save(&sbi->meta_table);
+	light_dedup_meta_save(&sbi->light_dedup_meta);
 	/* It's unmount time, so unmap the nova memory */
 //	nova_print_free_lists(sb);
 	if (sbi->virt_addr) {
