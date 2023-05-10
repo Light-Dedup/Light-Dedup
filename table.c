@@ -845,6 +845,12 @@ static int check_hint(struct nova_sb_info *sbi,
 	INIT_TIMING(copy_from_user_time);
 	INIT_TIMING(incr_ref_time);
 
+	NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
+	ret = copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE);
+	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
+	if (ret)
+		return -EFAULT;
+
 	// To make sure that pentry will not be released while we
 	// are reading its content.
 	rcu_read_lock();
@@ -860,12 +866,6 @@ static int check_hint(struct nova_sb_info *sbi,
 				nova_sbi_blocknr_to_addr(sbi, blocknr);
 		}
 	}
-
-	NOVA_START_TIMING(copy_from_user_t, copy_from_user_time);
-	ret = copy_from_user(wp->kbuf, wp->ubuf, PAGE_SIZE);
-	NOVA_END_TIMING(copy_from_user_t, copy_from_user_time);
-	if (ret)
-		return -EFAULT;
 
 	prefetch_stage_1(wp);
 
