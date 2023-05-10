@@ -269,13 +269,13 @@ static int incr_ref(struct light_dedup_meta *meta,
 	unsigned long blocknr;
 	// unsigned long irq_flags = 0;
 	int ret;
-	INIT_TIMING(mem_bucket_find_time);
+	INIT_TIMING(index_lookup_time);
 
 retry:
 	rcu_read_lock();
-	NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_START_TIMING(index_lookup_t, index_lookup_time);
 	leaf_index = nova_table_leaf_find(meta, &wp->base.fp);
-	NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_END_TIMING(index_lookup_t, index_lookup_time);
 	if (leaf_index == NOVA_TABLE_NOT_FOUND) {
 		rcu_read_unlock();
 		// printk("Block with fp %llx not found in rhashtable %p\n",
@@ -411,12 +411,12 @@ static int decr_ref_1(
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
 	int64_t refcount;
-	INIT_TIMING(mem_bucket_find_time);
+	INIT_TIMING(index_lookup_time);
 
 	rcu_read_lock();
-	NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_START_TIMING(index_lookup_t, index_lookup_time);
 	leaf_index = nova_table_leaf_find(meta, &wp->base.fp);
-	NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_END_TIMING(index_lookup_t, index_lookup_time);
 	if (leaf_index == NOVA_TABLE_NOT_FOUND) {
 		// Collision happened. Just free it.
 		printk("Block %ld can not be found in the hash table.", wp->blocknr);
@@ -776,7 +776,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
-	if (atomic64_read(&meta->thread_num) < 6) {
+	if (atomic64_read(&meta->thread_num) < transition_threshold) {
 		handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 		NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 		// Prefetch with stride 256B first in case that this block have

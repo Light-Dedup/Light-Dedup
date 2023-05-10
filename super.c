@@ -38,6 +38,7 @@
 #include <linux/cred.h>
 #include <linux/list.h>
 #include <linux/dax.h>
+#include "config.h"
 #include "nova.h"
 #include "journal.h"
 #include "super.h"
@@ -52,6 +53,7 @@ int data_csum;
 int data_parity;
 int dram_struct_csum;
 int support_clwb;
+int transition_threshold = 6;
 
 module_param(measure_timing, int, 0444);
 MODULE_PARM_DESC(measure_timing, "Timing measurement");
@@ -73,6 +75,11 @@ MODULE_PARM_DESC(dram_struct_csum, "Protect key DRAM data structures with checks
 
 module_param(nova_dbgmask, int, 0444);
 MODULE_PARM_DESC(nova_dbgmask, "Control debugging output");
+
+module_param(transition_threshold, int, 0444);
+MODULE_PARM_DESC(transition_threshold, "If the number of threads that access "
+	"NVM concurrently reaches transition_threshold, then prefetch-next "
+	"will be disabled. Default: 6");
 
 static struct super_operations nova_sops;
 static const struct export_operations nova_export_ops;

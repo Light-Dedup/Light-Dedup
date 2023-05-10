@@ -8,6 +8,7 @@ extern int wprotect;
 extern int data_csum;
 extern int data_parity;
 extern int dram_struct_csum;
+extern int transition_threshold;
 
 #ifdef MEASURE_DRAM_USAGE
 	#define TABLE_KMEM_CACHE_FLAGS SLAB_POISON
