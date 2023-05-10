@@ -1,7 +1,7 @@
 /*
  * Deduplication metadata table.
  *
- * Copyright (c) 2020-2022 Jiansheng Qiu <jianshengqiu.cs@gmail.com>
+ * Copyright (c) 2020-2023 Jiansheng Qiu <jianshengqiu.cs@gmail.com>
  *
  * This file is licensed under the terms of the GNU General Public
  * License version 2. This program is licensed "as is" without any
