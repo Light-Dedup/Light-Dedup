@@ -1,5 +1,5 @@
 #include "nova.h"
-#include "multithread.h"
+#include "joinable.h"
 #include "arithmetic.h"
 
 // #define static _Static_assert(1, "2333");
@@ -164,12 +164,12 @@ void nova_free_entry_allocator(struct entry_allocator *allocator)
 	nova_queue_destroy(&allocator->free_regions);
 }
 
-struct scan_para {
-	struct completion entered;
+struct scan_thread_data {
 	struct nova_sb_info *sbi;
 	struct xatable *xat;
 	regionnr_t start;
 	regionnr_t end;
+	struct joinable_kthread t;
 };
 static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
 	void *region_start)
@@ -195,20 +195,18 @@ static int scan_region(struct entry_allocator *allocator, struct xatable *xat,
 	nova_flush_buffer(region_start, REGION_SIZE, true);
 	return count;
 }
-static int __scan_worker(struct scan_para *para)
+static int __scan_worker(struct nova_sb_info *sbi, struct xatable *xat,
+	regionnr_t region_start, regionnr_t region_end)
 {
-	struct nova_sb_info *sbi = para->sbi;
-	struct xatable *xat = para->xat;
-	struct nova_meta_table *meta_table = &sbi->meta_table;
-	struct entry_allocator *allocator = &meta_table->entry_allocator;
-	regionnr_t i = para->start;
-	regionnr_t region_end = para->end;
+	struct entry_allocator *allocator =
+		&sbi->light_dedup_meta.entry_allocator;
 	__le64 *blocknrs = nova_sbi_blocknr_to_addr(
 		sbi, sbi->region_blocknr_start);
+	regionnr_t i;
 	unsigned long blocknr;
 	int ret;
 
-	for (; i < region_end; ++i) {
+	for (i = region_start; i < region_end; ++i) {
 		blocknr = blocknrs[i];
 		ret = scan_region(allocator, xat,
 			nova_sbi_blocknr_to_addr(sbi, blocknr));
@@ -226,17 +224,8 @@ static int __scan_worker(struct scan_para *para)
 	return 0;
 }
 static int scan_worker(void *__para) {
-	struct scan_para *para = (struct scan_para *)__para;
-	int ret;
-	complete(&para->entered);
-	ret = __scan_worker(para);
-	/* Wait for kthread_stop */
-	set_current_state(TASK_INTERRUPTIBLE);
-	while (!kthread_should_stop()) {
-		schedule();
-		set_current_state(TASK_INTERRUPTIBLE);
-	}
-	return ret;
+	struct scan_thread_data *data = (struct scan_thread_data *)__para;
+	return __scan_worker(data->sbi, data->xat, data->start, data->end);
 }
 static int scan_entry_table(struct super_block *sb,
 	struct entry_allocator *allocator, struct xatable *xat)
@@ -244,8 +233,7 @@ static int scan_entry_table(struct super_block *sb,
 	struct nova_sb_info *sbi = NOVA_SB(sb);
 	regionnr_t region_per_thread;
 	unsigned long thread_num;
-	struct scan_para *para = NULL;
-	struct task_struct **tasks = NULL;
+	struct scan_thread_data *data = NULL;
 	unsigned long i;
 	regionnr_t cur_start = 0;
 	int ret = 0, ret2;
@@ -255,41 +243,40 @@ static int scan_entry_table(struct super_block *sb,
 	region_per_thread = ceil_div_u32(allocator->region_num, sbi->cpus);
 	thread_num = ceil_div_ul(allocator->region_num, region_per_thread);
 	nova_info("Scan fingerprint entry table using %lu thread(s)\n", thread_num);
-	para = kmalloc(thread_num * sizeof(struct scan_para), GFP_KERNEL);
-	if (para == NULL) {
+	data = kmalloc(sizeof(data[0]) * thread_num, GFP_KERNEL);
+	if (data == NULL) {
 		ret = -ENOMEM;
-		goto out;
-	}
-	tasks = kmalloc(thread_num * sizeof(struct task_struct *), GFP_KERNEL);
-	if (tasks == NULL) {
-		ret = -ENOMEM;
-		goto out;
+		goto out0;
 	}
 	for (i = 0; i < thread_num; ++i) {
-		init_completion(&para[i].entered);
-		para[i].sbi = sbi;
-		para[i].xat = xat;
-		para[i].start = cur_start;
-		para[i].end = min_u32(cur_start + region_per_thread,
-			allocator->region_num);
-		tasks[i] = kthread_create(scan_worker, para + i,
-			"scan_worker_%lu", i);
-		if (IS_ERR(tasks[i])) {
-			ret = PTR_ERR(tasks[i]);
-			tasks[i] = NULL;
-			nova_err(sb, "kthread_create %lu return %d\n", i, ret);
-			break;
-		}
+		data[i].sbi = sbi;
+		data[i].xat = xat;
+		data[i].start = cur_start;
 		cur_start += region_per_thread;
+		data[i].end = min_u32(cur_start, allocator->region_num);
+		data[i].t.threadfn = scan_worker;
+		data[i].t.data = data + i;
+		ret = joinable_kthread_create(&data[i].t, "scan_worker_%lu", i);
+		if (ret < 0) {
+			while (i) {
+				i -= 1;
+				joinable_kthread_abort(&data[i].t);
+			}
+			goto out1;
+		}
 	}
-	ret2 = run_and_stop_kthreads(tasks, para, thread_num, i);
-	if (ret2 < 0)
-		ret = ret2;
-out:
-	if (para)
-		kfree(para);
-	if (tasks)
-		kfree(tasks);
+	for (i = 0; i < thread_num; ++i)
+		joinable_kthread_wake_up(&data[i].t);
+	for (i = 0; i < thread_num; ++i) {
+		ret2 = __joinable_kthread_join(&data[i].t);
+		if (ret2 < 0) {
+			nova_err(sb, "%s: %lu returns %d\n", __func__, i, ret2);
+			ret = ret2;
+		}
+	}
+out1:
+	kfree(data);
+out0:
 	return ret;
 }
 static void scan_region_tails(struct nova_sb_info *sbi,
@@ -356,10 +343,8 @@ void nova_flush_entry(struct entry_allocator *allocator,
 static int
 alloc_region(struct entry_allocator *allocator)
 {
-	struct nova_meta_table *meta_table = container_of(
-		allocator, struct nova_meta_table, entry_allocator);
-	struct super_block *sb = meta_table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
+	struct super_block *sb = sbi->sb;
 	__le64 *region_blocknrs = nova_sbi_blocknr_to_addr(
 		sbi, sbi->region_blocknr_start);
 	unsigned long region_blocknr = nova_new_log_block(sb, true, ANY_CPU);
@@ -445,10 +430,7 @@ new_region(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu,
 	unsigned long *new_region_blocknr)
 {
-	struct nova_meta_table *meta_table = container_of(
-		allocator, struct nova_meta_table, entry_allocator);
-	struct nova_sb_info *sbi = container_of(
-		meta_table, struct nova_sb_info, meta_table);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
 	unsigned long blocknr;
 	int16_t count;
 	int ret;
@@ -495,10 +477,7 @@ struct nova_pmm_entry *
 nova_alloc_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu)
 {
-	struct nova_meta_table *meta_table = container_of(
-		allocator, struct nova_meta_table, entry_allocator);
-	struct nova_sb_info *sbi = container_of(
-		meta_table, struct nova_sb_info, meta_table);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
 	struct nova_pmm_entry *pentry = allocator_cpu->top_entry;
 	unsigned long new_region_blocknr;
 	int ret;
@@ -526,10 +505,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 	struct entry_allocator_cpu *allocator_cpu,
 	struct nova_pmm_entry *pentry, struct nova_fp fp, unsigned long blocknr)
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct super_block *sb = meta_table->sblock;
-	struct nova_sb_info *sbi = NOVA_SB(sb);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
 	unsigned long irq_flags = 0;
 	INIT_TIMING(write_new_entry_time);
 
@@ -551,10 +527,7 @@ void nova_write_entry(struct entry_allocator *allocator,
 void nova_free_entry(struct entry_allocator *allocator,
 	struct nova_pmm_entry *pentry)
 {
-	struct nova_meta_table *meta_table =
-		container_of(allocator, struct nova_meta_table, entry_allocator);
-	struct nova_sb_info *sbi = container_of(
-		meta_table, struct nova_sb_info, meta_table);
+	struct nova_sb_info *sbi = entry_allocator_to_sbi(allocator);
 	unsigned long blocknr = nova_get_addr_off(sbi, pentry) / PAGE_SIZE;
 	int16_t count = add_valid_count(&allocator->valid_entry, blocknr, -1);
 
