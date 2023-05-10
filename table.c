@@ -324,13 +324,13 @@ static int incr_ref(struct light_dedup_meta *meta,
 	unsigned long blocknr;
 	// unsigned long irq_flags = 0;
 	int ret;
-	INIT_TIMING(mem_bucket_find_time);
+	INIT_TIMING(index_lookup_time);
 
 retry:
 	rcu_read_lock();
-	NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_START_TIMING(index_lookup_t, index_lookup_time);
 	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
-	NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_END_TIMING(index_lookup_t, index_lookup_time);
 	// We have to hold the read lock because if it is a hash collision,
 	// then the entry, pentry, and blocknr could be freed by another thread.
 	if (entry == NULL) {
@@ -410,12 +410,12 @@ static void free_pentry(struct light_dedup_meta *meta,
 {
 	struct rhashtable *rht = &meta->rht;
 	struct nova_rht_entry *entry;
-	INIT_TIMING(mem_bucket_find_time);
+	INIT_TIMING(index_lookup_time);
 
 	rcu_read_lock();
-	NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_START_TIMING(index_lookup_t, index_lookup_time);
 	entry = rhashtable_lookup(rht, &pentry->fp, nova_rht_params);
-	NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_END_TIMING(index_lookup_t, index_lookup_time);
 	BUG_ON(entry == NULL);
 	BUG_ON(entry->pentry != pentry);
 	rcu_read_unlock();
@@ -484,12 +484,12 @@ static int decr_ref_1(
 	struct nova_pmm_entry *pentry;
 	unsigned long blocknr;
 	int64_t refcount;
-	INIT_TIMING(mem_bucket_find_time);
+	INIT_TIMING(index_lookup_time);
 
 	rcu_read_lock();
-	NOVA_START_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_START_TIMING(index_lookup_t, index_lookup_time);
 	entry = rhashtable_lookup(rht, &wp->base.fp, nova_rht_params);
-	NOVA_END_TIMING(index_lookup_t, mem_bucket_find_time);
+	NOVA_END_TIMING(index_lookup_t, index_lookup_time);
 	// We have to hold the read lock because if it is a hash collision,
 	// then the entry could be freed by another thread.
 	if (!entry) {
@@ -879,7 +879,7 @@ static int check_hint(struct nova_sb_info *sbi,
 	// because we are holding the RCU read lock.
 	addr = nova_sbi_blocknr_to_addr(sbi, blocknr);
 
-	if (atomic64_read(&meta->thread_num) < 6) {
+	if (atomic64_read(&meta->thread_num) < transition_threshold) {
 		handle_hint_of_hint(sbi, wp, &pentry->next_hint);
 		NOVA_START_TIMING(prefetch_cmp_t, prefetch_cmp_time);
 		// Prefetch with stride 256B first in case that this block have
